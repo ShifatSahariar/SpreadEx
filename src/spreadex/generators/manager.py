@@ -187,6 +187,20 @@ class GeneratorManager:
         except (OSError, subprocess.SubprocessError) as exc:
             return False, None, str(exc)
 
+    def python_for(self, generator_id: str) -> str:
+        """Interpreter to run this generator with: its own environment if it has
+        one, otherwise the host. Keeps a campaign from silently picking up a
+        different version that happens to be on PATH."""
+        env_python = self.env_python(generator_id)
+        return str(env_python) if env_python.exists() else sys.executable
+
+    def executable_for(self, generator_id: str, executable: str) -> str | None:
+        """Resolve a generator's CLI, preferring its isolated environment."""
+        in_env = self.env_bin(generator_id, executable)
+        if in_env.exists():
+            return str(in_env)
+        return shutil.which(executable)
+
     # ------------------------------------------------------------- install
 
     def install(self, generator_id: str, log=print, upgrade: bool = False) -> Status:

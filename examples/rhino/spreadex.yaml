@@ -1,0 +1,51 @@
+# The golden pipeline: JavaScript grammar -> three generators -> Cluster
+# Coverage -> SpreadEx prioritization -> Rhino -> verdicts.
+#
+# Set RHINO_JAR to your Rhino build, e.g.
+#   export RHINO_JAR=.../rhino-all-1.8.1-SNAPSHOT.jar
+sut:
+  command: ["java", "-cp", "${RHINO_JAR}", "org.mozilla.javascript.tools.shell.Main", "{input}"]
+  timeout: 10s
+
+oracle:
+  type: crash
+
+  # Rhino exits 3 both for a script it refused and for an engine crash, so the
+  # exit code cannot separate them. What does: every script-level diagnostic is
+  # prefixed "js: ", while an engine defect surfaces as a Java stack trace.
+  #
+  # crash_patterns are checked FIRST, so the broad "js: " rule below cannot hide
+  # a real bug that also happens to print a js: line.
+  crash_patterns:
+    - "^Exception in thread"
+    - "^\\s*at org\\.mozilla\\.javascript\\."
+    - "StackOverflowError"
+    - "OutOfMemoryError"
+    - "AssertionError"
+
+  rejection_patterns:
+    # Anything Rhino reports about the *script* rather than about itself.
+    # Includes syntax errors, uncaught runtime exceptions, and explicit
+    # `throw new TypeError(...)` -- which Rhino words as "exception from
+    # uncaught JavaScript throw", a phrasing an earlier, narrower pattern list
+    # missed, turning 15 correctly-handled programs into reported crashes.
+    - "^js: "
+
+# Each generator speaks its own dialect, so each gets its own grammar file.
+generators: [fuzzingbook, fandango, isla]
+grammar:
+  fuzzingbook: grammars/rhino.fuzzingbook.py
+  fandango: grammars/rhino.fan
+  isla: grammars/rhino.bnf
+
+generation:
+  count: 150          # per generator
+
+budget:
+  generation: 3m
+  execution: 3m
+
+selection_signal: cc
+embedding:
+  model: tfidf
+seed: 42

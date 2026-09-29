@@ -1,13 +1,12 @@
 """Where generated inputs come from.
 
-v0.1 supports two sources, both of which work today with no new integrations:
+Two kinds of source, behind one interface:
 
-  corpus:     an existing directory of inputs (the "I have no grammar but I do
-              have examples" case -- the small-company persona)
-  fuzzingbook: the one generator adapter in this repo that is fully implemented
+  corpus      an existing directory of inputs -- the "I have no grammar but I do
+              have examples" case
+  generators  grammar-based generators, each driven in its own environment
 
-Fandango, Grammarinator and ISLa land next, behind the same interface: a source
-is anything that yields (bytes, generator_name, cost_ms).
+A source yields bytes plus the generator that produced them and what it cost.
 """
 
 from __future__ import annotations
@@ -15,7 +14,9 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+
+from ..generators import GeneratorError, GeneratorManager
+from ..generators.adapters import generate as run_generator
 
 MAX_INPUT_BYTES = 1 << 20
 
@@ -27,27 +28,68 @@ class GeneratedInput:
     cost_ms: float
 
 
-def collect(config, budget_s: float, log=print) -> list[GeneratedInput]:
+def grammar_for(config, generator_id: str) -> Path | None:
+    """Resolve this generator's grammar.
+
+    Generators speak different dialects, so `grammar:` may name one file per
+    generator. A single `source:` is used for all of them, which is only correct
+    when they share a dialect -- the grammar adapter that converts one grammar
+    into many is a later phase, and until it exists the mapping is explicit.
+
+        grammar:
+          fuzzingbook: grammars/rhino_grammar.py
+          fandango:    grammars/rhino.fan
+          isla:        grammars/rhino.bnf
+    """
+    g = config.grammar or {}
+    path = g.get(generator_id) or g.get("source")
+    if not path:
+        return None
+    return (config.project_root / path).resolve()
+
+
+def collect(config, budget_s: float, log=print, manager: GeneratorManager | None = None):
     """Gather inputs from every configured source, within the generation budget."""
     out: list[GeneratedInput] = []
-    sources = list(config.generators or [])
-    corpus_cfg = (config.raw.get("corpus") or {})
+
+    corpus_cfg = config.raw.get("corpus") or {}
     if corpus_cfg.get("path"):
         out.extend(from_corpus(config.project_root / corpus_cfg["path"], log=log))
 
-    if not sources and not out:
+    generators = list(config.generators or [])
+    if not generators and not out:
         raise RuntimeError(
             "No input source configured.\n"
             "  Fix: add `corpus: {path: ./seeds}` for an existing corpus, or\n"
-            "       `generators: [fuzzingbook]` with `grammar.source` set."
+            "       `generators: [fuzzingbook]` with a `grammar:` entry."
         )
 
-    per_source = budget_s / max(1, len(sources)) if sources else 0.0
-    for name in sources:
-        if name == "fuzzingbook":
-            out.extend(from_fuzzingbook(config, per_source, log=log))
-        else:
-            log(f"  ! generator {name!r} is not wired up yet in v0.1 -- skipping")
+    if generators:
+        mgr = manager or GeneratorManager()
+        # Never install implicitly: report and stop, naming the fix.
+        mgr.ensure(generators, log=log, auto_install=False)
+
+        count = int((config.raw.get("generation") or {}).get("count", 200))
+        # Uniform allocation. The honest default, and the baseline any adaptive
+        # policy has to beat.
+        per_generator = budget_s / len(generators)
+        for gid in generators:
+            grammar = grammar_for(config, gid)
+            if grammar is None:
+                log(f"  ! {gid}: no grammar configured -- skipping")
+                continue
+            try:
+                batch = run_generator(gid, grammar, count, seed=config.seed,
+                                      timeout=per_generator, manager=mgr)
+            except GeneratorError as exc:
+                # One broken generator must not abort a campaign that has others.
+                log(f"  ! {gid}: {exc}")
+                continue
+            log(f"  {gid}: {len(batch.inputs)} inputs in {batch.elapsed_ms / 1000:.1f}s")
+            out.extend(
+                GeneratedInput(data, gid, batch.cost_per_input_ms) for data in batch.inputs
+            )
+
     return out
 
 
@@ -67,38 +109,4 @@ def from_corpus(path: Path, log=print) -> list[GeneratedInput]:
         if 0 < len(data) <= MAX_INPUT_BYTES:
             items.append(GeneratedInput(data, "corpus", 0.0))
     log(f"  corpus: {len(items)} inputs from {path}")
-    return items
-
-
-def from_fuzzingbook(config, budget_s: float, log=print) -> list[GeneratedInput]:
-    """Drive the existing fuzzingbook adapter, then read back what it wrote."""
-    grammar = config.grammar.get("source")
-    if not grammar:
-        log("  ! fuzzingbook needs `grammar.source` in spreadex.yaml -- skipping")
-        return []
-    grammar_path = config.project_root / grammar
-    if not grammar_path.exists():
-        raise RuntimeError(
-            f"Grammar not found: {grammar_path}\n  Fix: correct `grammar.source` in spreadex.yaml."
-        )
-
-    import tempfile
-
-    n = int(config.raw.get("generation", {}).get("count", 500))
-    started = time.perf_counter()
-    with tempfile.TemporaryDirectory(prefix="spreadex-gen-") as tmp:
-        outdir = Path(tmp)
-        try:
-            from webapp.tool_mode.generators.fuzzingbook import generate
-        except ImportError as exc:
-            raise RuntimeError(
-                "The fuzzingbook adapter is unavailable.\n"
-                "  Fix: pip install fuzzingbook, and run from the repository root."
-            ) from exc
-        generate("fuzz_equal", grammar_path, n, outdir)
-        files = sorted(p for p in outdir.rglob("*") if p.is_file())
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        per = elapsed_ms / max(1, len(files))
-        items = [GeneratedInput(p.read_bytes(), "fuzzingbook", per) for p in files]
-    log(f"  fuzzingbook: {len(items)} inputs in {elapsed_ms/1000:.1f}s")
     return items

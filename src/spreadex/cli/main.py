@@ -59,8 +59,18 @@ def cmd_init(args) -> int:
 def cmd_doctor(args) -> int:
     try:
         config = load_config(Path(args.config) if args.config else None)
-    except ConfigError:
-        config = None
+    except ConfigError as exc:
+        # A missing file is something doctor reports as a check. A file that
+        # exists but cannot be loaded is a different problem, and hiding its
+        # message behind "not found" sends the user in the wrong direction.
+        if find_config(Path(args.config) if args.config else None) is None and not args.config:
+            config = None
+        else:
+            print("SpreadEx doctor\n")
+            print(f"  \u2717 spreadex.yaml could not be loaded\n")
+            for line in str(exc).splitlines():
+                print(f"      {line}")
+            return 1
     checks = doctor_mod.run_checks(config)
     print("SpreadEx doctor\n")
     for c in checks:
@@ -108,10 +118,20 @@ def _print_result(r, config) -> None:
     print(f"    Valid ................. {r.valid}")
     print(f"    Prioritized ........... {r.prioritized}")
     if r.generator_scores and len(r.generator_scores) > 1:
-        print("\n  Cluster coverage" + (f"  (k_eff={r.k_eff})" if r.k_eff else ""))
+        print("\n  Generator comparison" + (f"  (k_eff={r.k_eff})" if r.k_eff else ""))
+        print(f"    {'generator':<16} {'CC':>5} {'inputs':>7} {'gen cost':>10}")
         for g, s in sorted(r.generator_scores.items(), key=lambda kv: -kv[1]):
-            bar = "#" * int(round(s * 30))
-            print(f"    {g:<20} {s:>5.2f}  {bar}")
+            n = r.generator_counts.get(g, 0)
+            cost_s = r.generator_cost_ms.get(g, 0.0) / 1000
+            bar = "#" * int(round(s * 20))
+            print(f"    {g:<16} {s:>5.2f} {n:>7} {cost_s:>9.1f}s  {bar}")
+        # Cluster coverage is comparable only when the generators were given a
+        # comparable chance. Wildly different costs mean the comparison is
+        # equal-count, not equal-budget -- say so rather than let it mislead.
+        costs = [c for c in r.generator_cost_ms.values() if c > 0]
+        if len(costs) > 1 and max(costs) > 5 * min(costs):
+            print("    note: generation costs differ by more than 5x, so these "
+                  "CC values compare\n          equal INPUT COUNTS, not equal budgets.")
     print("\n  Execution")
     print(f"    Executed .............. {r.executed}")
     print(f"    Budget ................ {r.exec_budget_s:.1f} s "

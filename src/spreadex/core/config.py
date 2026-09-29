@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -68,6 +70,43 @@ class Config:
         return hashlib.sha256(blob).hexdigest()[:16]
 
 
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand_env(entry: dict, config_path: Path) -> dict:
+    """Expand ${VAR} in a target's command.
+
+    Paths to a built SUT differ per machine, so the config references an
+    environment variable rather than hardcoding one. An unset variable is an
+    error with the variable named -- never a silent empty string, which would
+    produce a baffling "command not found".
+    """
+    command = entry.get("command")
+    if not command:
+        return entry
+
+    expanded = []
+    for part in command:
+        if not isinstance(part, str):
+            expanded.append(part)
+            continue
+
+        def sub(m):
+            name = m.group(1)
+            value = os.environ.get(name)
+            if value is None:
+                raise ConfigError(
+                    f"{config_path}: environment variable ${{{name}}} is referenced by "
+                    f"sut.command but is not set.\n"
+                    f"  Fix: export {name}=... before running, or replace ${{{name}}} "
+                    f"with a literal path."
+                )
+            return value
+
+        expanded.append(_ENV_REF.sub(sub, part))
+    return {**entry, "command": expanded}
+
+
 def find_config(start: Path | None = None) -> Path | None:
     """Walk up from `start` looking for spreadex.yaml, like git does for .git."""
     cur = (start or Path.cwd()).resolve()
@@ -123,9 +162,11 @@ def load_config(path: Path | None = None) -> Config:
 
     targets = []
     seen: set[str] = set()
+
     for i, entry in enumerate(entries):
         if "command" not in entry:
             raise ConfigError(f"{path}: sut.targets[{i}] is missing `command:`.")
+        entry = _expand_env(entry, path)
         t = Target.from_config(entry, defaults, base_dir=path.parent)
         if t.name in seen:
             raise ConfigError(f"{path}: duplicate target name {t.name!r}; names must be unique.")

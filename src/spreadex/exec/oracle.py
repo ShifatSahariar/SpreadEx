@@ -21,6 +21,7 @@ from typing import Iterable, Protocol, Sequence
 from .observation import Observation
 from .signature import (
     failure_signature,
+    looks_like_crash,
     filter_banners,
     looks_like_rejection,
     norm_text,
@@ -63,9 +64,19 @@ class CrashOracle:
 
     name = "crash"
 
-    def __init__(self, expected_exit_codes: Iterable[int] = (0,)) -> None:
+    def __init__(
+        self,
+        expected_exit_codes: Iterable[int] = (0,),
+        rejection_patterns: Sequence[str] | None = None,
+        crash_patterns: Sequence[str] | None = None,
+    ) -> None:
         # Many CLIs exit 1 on invalid input by design; let the user say so.
         self.expected_exit_codes = set(expected_exit_codes)
+        # Regexes identifying this SUT's own "I refused that input" messages.
+        self.rejection_patterns = list(rejection_patterns or [])
+        # Regexes that mean a genuine failure, checked FIRST so that a broad
+        # rejection pattern cannot hide a real bug.
+        self.crash_patterns = list(crash_patterns or [])
 
     def judge(self, observations: Sequence[Observation]) -> Judgement:
         if not observations:
@@ -83,11 +94,19 @@ class CrashOracle:
                 detail=f"signal {obs.signal}",
             )
 
+        # A configured crash marker outranks everything below.
+        if looks_like_crash(obs.stderr_preview, obs.stdout_preview, self.crash_patterns):
+            return Judgement(
+                Verdict.CRASH,
+                signature=failure_signature(obs.stderr_preview, obs.stdout_preview),
+                detail=f"exit {obs.exit_code} (matched a crash pattern)",
+            )
+
         if obs.exit_code in self.expected_exit_codes:
             return Judgement(Verdict.OK)
 
         # Non-zero, no signal: did the SUT *refuse* the input, or did it break?
-        if looks_like_rejection(obs.stderr_preview, obs.stdout_preview):
+        if looks_like_rejection(obs.stderr_preview, obs.stdout_preview, self.rejection_patterns):
             return Judgement(
                 Verdict.EXPECTED_REJECTION,
                 detail=extract_exception_normalized(obs.stderr_preview, obs.stdout_preview),
@@ -114,10 +133,12 @@ class DifferentialOracle:
         banners: tuple[str, ...] = (),
         compare_stdout: bool = True,
         expected_exit_codes: Iterable[int] = (0,),
+        rejection_patterns: Sequence[str] | None = None,
+        crash_patterns: Sequence[str] | None = None,
     ) -> None:
         self.banners = banners
         self.compare_stdout = compare_stdout
-        self._single = CrashOracle(expected_exit_codes)
+        self._single = CrashOracle(expected_exit_codes, rejection_patterns, crash_patterns)
 
     def _fingerprint(self, obs: Observation) -> tuple:
         exc = normalize_exception_for_compare(
@@ -186,12 +207,17 @@ def make_oracle(config: dict | None) -> Oracle:
     config = config or {}
     kind = (config.get("type") or "crash").lower()
     expected = config.get("expected_exit_codes", [0])
+    rejection = config.get("rejection_patterns")
+    crash = config.get("crash_patterns")
     if kind in ("differential", "diff"):
         return DifferentialOracle(
             banners=tuple(config.get("banners", ())),
             compare_stdout=config.get("compare_stdout", True),
             expected_exit_codes=expected,
+            rejection_patterns=rejection,
+            crash_patterns=crash,
         )
     if kind == "crash":
-        return CrashOracle(expected_exit_codes=expected)
+        return CrashOracle(expected_exit_codes=expected, rejection_patterns=rejection,
+                           crash_patterns=crash)
     raise ValueError(f"Unknown oracle type: {kind!r} (expected 'crash' or 'differential')")

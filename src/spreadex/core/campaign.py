@@ -41,6 +41,8 @@ class CampaignResult:
     signatures: list[tuple[str, str, int]] = field(default_factory=list)
     new_signatures: list[str] = field(default_factory=list)
     generator_scores: dict[str, float] = field(default_factory=dict)
+    generator_counts: dict[str, int] = field(default_factory=dict)
+    generator_cost_ms: dict[str, float] = field(default_factory=dict)
     k_eff: int | None = None
     budget_curve: list[tuple[int, int]] = field(default_factory=list)  # (executed, distinct signatures)
     exec_budget_s: float = 0.0
@@ -135,6 +137,11 @@ class Campaign:
                     unique.append(it)
             items = unique
             result.valid = len(items)
+            for gi in generated:
+                result.generator_counts[gi.generator] = \
+                    result.generator_counts.get(gi.generator, 0) + 1
+                result.generator_cost_ms[gi.generator] = \
+                    result.generator_cost_ms.get(gi.generator, 0.0) + gi.cost_ms
             self.log(f"  {result.generated} generated -> {result.valid} valid, unique")
 
             # 3. Signals + 4. Prioritize -------------------------------------
@@ -242,6 +249,8 @@ class Campaign:
                 "valid": result.valid,
                 "prioritized": result.prioritized,
                 "generator_scores": result.generator_scores,
+                "generator_counts": result.generator_counts,
+                "generator_cost_ms": result.generator_cost_ms,
                 "k_eff": result.k_eff,
                 "allocation_s": allocation,
             }

@@ -84,3 +84,21 @@ differ.
 Experiments, SUT build configurations, mutation and coverage infrastructure,
 embedding exports, and statistical analysis stay in the research repository.
 They are the scientific record, not product code.
+
+
+## What the golden pipeline taught us
+
+Running the architecture against a real language runtime surfaced three things
+that no synthetic example would have:
+
+1. **Rhino exits 3 for a refused script and for an engine crash alike.** Exit
+   codes cannot classify a language runtime's behaviour. `rejection_patterns`
+   (the SUT's own diagnostics) and `crash_patterns` (checked first, so a broad
+   rejection rule cannot mask a real bug) were added for this.
+2. **Generated programs legitimately throw.** A program doing
+   `throw new TypeError(...)` is Rhino working correctly. A narrower pattern
+   list classified 15 such programs as crashes — a 100% false-positive rate on
+   the failure count.
+3. **`isla solve -n 150` returns 10 inputs.** Free instantiations default to 10
+   and cap the expansion independently of `-n`. Both are now raised together,
+   and the reason is recorded in the catalog entry.

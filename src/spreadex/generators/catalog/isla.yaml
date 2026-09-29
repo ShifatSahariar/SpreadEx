@@ -18,3 +18,9 @@ check:
 capabilities:
   grammar: bnf
   constraints: true
+generation:
+  # `isla solve -n N` alone yields at most 10 inputs: -f (free instantiations)
+  # defaults to 10 and caps how many concrete inputs each solution expands to.
+  # The adapter raises both together.
+  cli: [solve]
+  caps: [free_instantiations]

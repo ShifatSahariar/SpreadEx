@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import Sequence
 
 NO_EXCEPTION = "<no_exception>"
 
@@ -34,8 +35,12 @@ _LONG_NUM = re.compile(r"\b\d{3,}\b")
 _PATHS = re.compile(r"(/[\w.\-]+)+")
 
 # Messages that mean "the SUT correctly refused this input".
+# Substring match, case-insensitive. Deliberately conservative: a false
+# "rejection" hides a real bug, so anything ambiguous is left out and handled
+# per-SUT via oracle.rejection_patterns instead.
 _REJECTION_MARKERS = (
     "syntaxerror",
+    "syntax error",
     "parseerror",
     "parseexception",
     "parsecancellation",
@@ -137,10 +142,48 @@ def normalize_exception_for_compare(s: str | None) -> str:
     return s.lower()
 
 
-def looks_like_rejection(stderr_s: str | None, stdout_s: str | None = "") -> bool:
-    """True when the SUT reported a parse/syntax refusal rather than failing."""
-    blob = f"{stderr_s or ''}\n{stdout_s or ''}".lower()
-    return any(marker in blob for marker in _REJECTION_MARKERS)
+def matches_any(text: str | None, patterns: Sequence[str]) -> bool:
+    """True if any regex matches, searched per line, case-insensitively."""
+    if not text or not patterns:
+        return False
+    return any(re.search(p, text, re.IGNORECASE | re.MULTILINE) for p in patterns)
+
+
+def looks_like_crash(stderr_s: str | None, stdout_s: str | None,
+                     patterns: Sequence[str] | None) -> bool:
+    """True when output carries a marker that means a genuine failure.
+
+    Checked BEFORE rejection, so a broad rejection pattern can be written
+    without it swallowing real bugs. For Rhino, `^js: ` covers every
+    script-level diagnostic, while an engine defect surfaces as a Java stack
+    trace into org.mozilla.javascript -- which this catches first.
+    """
+    return matches_any(f"{stderr_s or ''}\n{stdout_s or ''}", patterns or [])
+
+
+def looks_like_rejection(
+    stderr_s: str | None,
+    stdout_s: str | None = "",
+    patterns: Sequence[str] | None = None,
+) -> bool:
+    """True when the SUT reported a refusal rather than failing.
+
+    `patterns` are regular expressions from `oracle.rejection_patterns`,
+    matched (with re.search, per line, case-insensitively) against stderr and
+    stdout. When supplied they REPLACE the built-in markers, because a SUT's own
+    diagnostics are far more reliable than generic keywords.
+
+    Example: Rhino exits 3 both for a script it refused to parse and for a Java
+    crash, but prefixes every script-level diagnostic with "js: ". A pattern of
+    `^js: ` separates the two exactly; keyword matching cannot.
+    """
+    text = f"{stderr_s or ''}\n{stdout_s or ''}"
+    if patterns:
+        for pattern in patterns:
+            if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
+                return True
+        return False
+    return any(marker in text.lower() for marker in _REJECTION_MARKERS)
 
 
 def top_frames(stderr_s: str | None, n: int = 5) -> list[str]:

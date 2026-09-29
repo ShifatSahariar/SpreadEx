@@ -67,6 +67,36 @@ generator's pins cannot break another's — or SpreadEx itself. ISLa, for instan
 environment. `spreadex run` never installs anything implicitly: it reports what is missing and
 names the command that fixes it.
 
+## The golden pipeline
+
+[`examples/rhino`](examples/rhino) runs the whole architecture against a real
+JavaScript engine: three generators → Cluster Coverage → SpreadEx
+prioritization → Rhino → verdicts.
+
+```
+  Cluster coverage  (k_eff=43)
+    fandango              0.63  ###################
+    fuzzingbook           0.37  ###########
+    isla                  0.21  ######
+
+  Execution
+    Executed .............. 308
+    Passed ................ 32
+    Rejected (expected) ... 276
+    Crashes ............... 0
+```
+
+Cluster coverage is computed **before anything is executed** — that is the point
+of the signal. Here it says Fandango reaches roughly twice as much of the input
+space as FuzzingBook and three times as much as ISLa, which is what a budget
+allocator needs to know.
+
+The 276 rejections matter as much as the crash count. Rhino exits `3` both for a
+program it refused to parse and for an engine crash, so the exit code cannot
+separate them. `oracle.rejection_patterns` and `crash_patterns` do. Getting this
+wrong is not a theoretical risk: an earlier, narrower pattern list reported 15
+programs that merely did `throw new TypeError(...)` as engine crashes.
+
 ## Selection signals
 
 ```
@@ -117,11 +147,13 @@ versions is one blob with four execution rows.
 ## Status
 
 **v0.1.0-alpha.** Working: execution plane, corpus store, campaign manager, selection signals,
-crash/timeout/differential oracles, manifest and replay, deterministic generator installation,
-CI-friendly exit codes.
+crash/timeout/differential oracles, per-SUT rejection and crash patterns, manifest and replay,
+deterministic generator installation, generator adapters for FuzzingBook, Fandango and ISLa, and
+the golden Rhino pipeline end to end.
 
-Not yet: generator *adapters* (the manager installs them; wiring them into generation is next),
-the grammar adapter, coverage collection, the browser UI, regression mode, adaptive allocation.
+Not yet: Grammarinator generation (needs an ANTLRv4 grammar and the two-step
+process/generate flow), the grammar adapter that derives per-dialect grammars from one source,
+coverage collection, the browser UI, regression mode, adaptive allocation.
 
 ## Development
 

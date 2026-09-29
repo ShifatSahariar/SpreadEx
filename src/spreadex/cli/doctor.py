@@ -64,32 +64,54 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
 
     # Input sources.
     corpus = (config.raw.get("corpus") or {}).get("path")
-    grammar = config.grammar.get("source")
     if corpus:
         p = config.project_root / corpus
         n = sum(1 for x in p.rglob("*") if x.is_file()) if p.exists() else 0
         checks.append(Check("corpus", OK if n else FAIL, f"{n} files in {corpus}",
                             f"put seed inputs in {corpus}/"))
-    if grammar:
-        p = config.project_root / grammar
-        checks.append(Check("grammar", OK if p.exists() else FAIL, str(grammar),
-                            f"create {grammar}, or correct grammar.source"))
-    if not corpus and not grammar:
-        checks.append(Check("input source", FAIL, "neither corpus nor grammar configured",
-                            "add `corpus: {path: ./seeds}` or `grammar: {source: grammar.g4}`"))
+    if not corpus and not config.generators:
+        checks.append(Check("input source", FAIL, "neither a corpus nor any generators",
+                            "add `corpus: {path: ./seeds}` or `generators: [fuzzingbook]`"))
 
-    # Generators.
-    for g in config.generators:
-        if g == "fuzzingbook":
+    # Generators: ask the manager which are actually usable, and check that
+    # each one has a grammar in the dialect it speaks.
+    if config.generators:
+        from ..core.sources import grammar_for
+        from ..generators import GeneratorError, GeneratorManager
+        from ..generators.adapters import ADAPTERS
+
+        mgr = GeneratorManager()
+        for gid in config.generators:
             try:
-                import fuzzingbook  # noqa: F401
-                checks.append(Check("generator 'fuzzingbook'", OK))
-            except ImportError:
-                checks.append(Check("generator 'fuzzingbook'", FAIL, "not installed",
-                                    "pip install fuzzingbook"))
-        else:
-            checks.append(Check(f"generator '{g}'", WARN, "not wired up in v0.1",
-                                "use `generators: [fuzzingbook]` or a corpus for now"))
+                gen = mgr.get(gid)
+            except GeneratorError:
+                checks.append(Check(f"generator '{gid}'", FAIL, "not in the catalog",
+                                    "spreadex generators list"))
+                continue
+
+            st = mgr.status(gid)
+            if not st.installed:
+                checks.append(Check(f"generator '{gen.name}'", FAIL, "not installed",
+                                    f"spreadex generators install {gid}"))
+            elif gid not in ADAPTERS or _adapter_is_stub(gid):
+                checks.append(Check(f"generator '{gen.name}'", WARN,
+                                    "installed, but generation is not wired up in v0.1",
+                                    "use fuzzingbook, fandango or isla"))
+            else:
+                checks.append(Check(f"generator '{gen.name}'", OK,
+                                    f"{st.version or 'installed'} ({st.where})"))
+
+            grammar = grammar_for(config, gid)
+            if grammar is None:
+                checks.append(Check(f"  grammar for '{gid}'", FAIL, "none configured",
+                                    f"add `grammar: {{{gid}: <path>}}` "
+                                    f"(dialect: {gen.grammar_dialect})"))
+            elif not grammar.exists():
+                checks.append(Check(f"  grammar for '{gid}'", FAIL, f"missing: {grammar}",
+                                    "correct the path under `grammar:`"))
+            else:
+                checks.append(Check(f"  grammar for '{gid}'", OK,
+                                    f"{grammar.name} ({gen.grammar_dialect})"))
 
     # Embedding backend.
     model = config.embedding.get("model", "tfidf")
@@ -123,6 +145,11 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
         checks.append(Check("corpus writable", FAIL, str(exc),
                             f"check permissions on {config.state_dir}"))
     return checks
+
+
+def _adapter_is_stub(generator_id: str) -> bool:
+    """True when the catalog knows a generator but generation is not implemented."""
+    return generator_id in {"grammarinator"}
 
 
 def _java_check() -> Check:
