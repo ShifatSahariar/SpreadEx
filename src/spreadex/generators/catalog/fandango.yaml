@@ -1,0 +1,14 @@
+id: fandango
+name: Fandango
+summary: Grammar plus Python constraints, solved with a genetic algorithm.
+homepage: https://github.com/fandango-fuzzer/fandango
+license: EUPL-1.2
+install:
+  type: python
+  package: fandango-fuzzer
+check:
+  type: command
+  command: [fandango, --version]
+capabilities:
+  grammar: fandango-fan
+  constraints: true

@@ -1,0 +1,20 @@
+id: isla
+name: ISLa
+summary: Context-free grammar plus a quantified constraint language, solved with SMT.
+homepage: https://github.com/rindPHI/isla
+license: GPL-3.0
+notes: >-
+  Upstream has been dormant since 2024-07. isla.solver still imports
+  pkg_resources, which setuptools removed in 81.0. An older setuptools is
+  pinned in alongside it; without this pin ISLa cannot be imported at all.
+install:
+  type: python
+  package: isla-solver
+  # Not a dependency of the package, but required for it to import at all.
+  extra_packages: ["setuptools<81"]
+check:
+  type: python_import
+  module: isla.solver
+capabilities:
+  grammar: bnf
+  constraints: true

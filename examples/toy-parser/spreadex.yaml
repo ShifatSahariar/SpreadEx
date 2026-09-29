@@ -1,0 +1,20 @@
+# Single target, crash oracle, corpus-only (no grammar needed).
+sut:
+  command: ["python3", "./parser.py", "{input}"]
+  timeout: 5s
+
+oracle:
+  type: crash
+
+generators: []
+corpus:
+  path: ./seeds
+
+budget:
+  generation: 5s
+  execution: 30s
+
+selection_signal: cc
+embedding:
+  model: tfidf
+seed: 42

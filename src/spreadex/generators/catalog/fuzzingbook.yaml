@@ -1,0 +1,15 @@
+id: fuzzingbook
+name: FuzzingBook
+summary: Probabilistic grammar fuzzer from the Fuzzing Book.
+homepage: https://www.fuzzingbook.org/
+license: MIT
+install:
+  type: python
+  package: fuzzingbook
+  version: ">=1.2"
+check:
+  type: python_import
+  module: fuzzingbook.GrammarFuzzer
+capabilities:
+  grammar: fuzzingbook-dict
+  constraints: false

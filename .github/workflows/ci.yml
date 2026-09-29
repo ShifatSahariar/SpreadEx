@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push: {branches: [main, master]}
+  pull_request:
+
+jobs:
+  # The product must install and work with no research repository present.
+  tool:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "${{ matrix.python }}"}
+      - run: pip install -e ".[dev]"
+      - name: The default install must stay small
+        shell: bash
+        run: |
+          for heavy in torch pandas; do
+            if pip show "$heavy" >/dev/null 2>&1; then
+              echo "::error::$heavy was pulled in by the default dependency set"; exit 1
+            fi
+          done
+      - run: pytest tests/ -q -m "not network" --ignore=tests/golden
+      - name: End-to-end, as a new user would run it
+        shell: bash
+        run: |
+          cd examples/toy-parser
+          spreadex doctor
+          spreadex run -j 4
+          spreadex export -o campaign.zip && test -f campaign.zip
+      - name: Differential example
+        shell: bash
+        run: |
+          cd examples/differential
+          spreadex run -j 4 | tee out.txt
+          grep -q "Divergences ........... 5" out.txt
+      - run: spreadex generators list
+
+  # The gate: the tool must still compute the published algorithms.
+  golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the research repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.RESEARCH_REPO || 'shifat/SpreadEx-2026' }}
+          path: research-repo
+          token: ${{ secrets.RESEARCH_REPO_TOKEN || github.token }}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -e ".[golden]"
+      - name: Equivalence with the published implementation
+        env:
+          # Authoritative: if this path is wrong the gate FAILS rather than
+          # silently falling back and reporting a pass.
+          SPREADEX_RESEARCH_REPO: ${{ github.workspace }}/research-repo/research
+          SPREADEX_REQUIRE_GOLDEN: "1"
+        run: pytest tests/golden -q

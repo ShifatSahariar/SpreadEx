@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+title: SpreadEx
+message: >-
+  If you use SpreadEx in academic work, please cite the ICST 2026 paper below.
+type: software
+license: MIT
+repository-code: "https://github.com/spreadex/spreadex"
+abstract: >-
+  A local-first harness that runs multiple grammar-based generators against a
+  system under test and uses a finite budget to decide which generators and
+  which generated inputs deserve execution.
+keywords:
+  - fuzzing
+  - grammar-based testing
+  - test prioritization
+  - compiler testing
+preferred-citation:
+  type: conference-paper
+  title: >-
+    Embedding-based Diversity Mapping for Test Generator Selection and Input
+    Prioritization in Grammar-based Testing
+  year: 2026
+  collection-title: >-
+    Proceedings of the IEEE International Conference on Software Testing,
+    Verification and Validation (ICST)

@@ -1,0 +1,25 @@
+# Two independent implementations; the oracle reports where they disagree.
+# This is the interesting configuration for compilers, interpreters and parsers:
+# no expected-output file is needed, only a second implementation.
+sut:
+  targets:
+    - {name: engineA, command: ["python3", "./engineA.py", "{input}"]}
+    - {name: engineB, command: ["python3", "./engineB.py", "{input}"]}
+  timeout: 5s
+
+oracle:
+  type: differential
+  banners: ["EngineA 1.0", "EngineB 2.0 build 9"]   # start-up noise to ignore
+
+generators: []
+corpus:
+  path: ./seeds
+
+budget:
+  generation: 5s
+  execution: 60s
+
+selection_signal: cc
+embedding:
+  model: tfidf
+seed: 42

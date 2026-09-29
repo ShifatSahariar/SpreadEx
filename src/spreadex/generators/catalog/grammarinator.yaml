@@ -1,0 +1,14 @@
+id: grammarinator
+name: Grammarinator
+summary: ANTLRv4-driven generator; unlocks the ANTLR grammar ecosystem.
+homepage: https://github.com/renatahodovan/grammarinator
+license: BSD-3-Clause
+install:
+  type: python
+  package: grammarinator
+check:
+  type: command
+  command: [grammarinator-process, --version]
+capabilities:
+  grammar: antlr4
+  constraints: false
