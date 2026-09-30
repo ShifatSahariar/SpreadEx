@@ -169,6 +169,62 @@ def _print_result(r, config) -> None:
     print(f"  Replay:  spreadex replay {r.run_id}")
 
 
+# ------------------------------------------------------------------ grammar
+
+def cmd_grammar(args) -> int:
+    from ..grammar import GrammarError, Severity, adapt, diagnose, expressibility, load
+
+    source = Path(args.source)
+    try:
+        grammar = load(source, start=args.start)
+    except (GrammarError, OSError) as exc:
+        _die(str(exc), code=1)
+
+    if args.grammar_action == "check":
+        report = diagnose(grammar)
+        feats = sorted(f.value for f in grammar.features())
+        print(f"{source}\n")
+        print(f"  {len(grammar.rules)} rules, start <{grammar.start}>")
+        print(f"  uses: {', '.join(feats) if feats else 'plain BNF'}\n")
+        for finding in report.findings:
+            print(finding.render())
+        if not report.findings:
+            print("  no problems found")
+        print("\n  Generator support")
+        for gen in sorted(args.generators or ["fuzzingbook", "isla", "fandango", "grammarinator"]):
+            exp = expressibility(grammar, gen)
+            if gen not in ("fuzzingbook", "isla", "fandango"):
+                print(f"    - {gen:<14} SpreadEx cannot emit this dialect yet")
+                continue
+            if not exp.usable:
+                print(f"    \u2717 {gen:<14} {'; '.join(exp.blockers)[:90]}")
+            elif exp.directly:
+                print(f"    \u2713 {gen:<14} directly")
+            else:
+                need = ", ".join(sorted(f.value for f in exp.missing))
+                print(f"    \u2713 {gen:<14} after rewriting ({need})")
+            for risk in exp.risks:
+                print(f"      ! {risk}")
+        return 1 if report.errors else 0
+
+    # adapt
+    generators = args.generators or ["fuzzingbook", "isla", "fandango"]
+    result = adapt(source, generators, args.out or ".", start=args.start)
+    if not result.ok and result.report.errors:
+        print(f"{source} has errors; nothing was written.\n")
+        for finding in result.report.errors:
+            print(finding.render())
+        return 1
+    for gen, path in result.written.items():
+        print(f"  wrote {path}  ({gen})")
+    for gen, risks in result.risks.items():
+        for risk in risks:
+            print(f"  ! {gen}: {risk}")
+    for gen, why in result.skipped.items():
+        print(f"  skipped {gen}: {why}")
+    return 0
+
+
 # --------------------------------------------------------------- generators
 
 def cmd_generators(args) -> int:
@@ -350,6 +406,20 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fail-on", choices=["never", "new-failure", "any-failure"], default="never",
                    help="exit non-zero on failures (for CI)")
     s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("grammar", help="check a grammar, or derive each generator's dialect")
+    s.add_argument("--start", help="start symbol (default: <start>, else the first rule)")
+    s.add_argument("-g", "--generators", nargs="+",
+                   help="generators to consider (default: all)")
+    gsub2 = s.add_subparsers(dest="grammar_action", required=True)
+    gc = gsub2.add_parser("check", help="diagnose a grammar and report generator support")
+    gc.add_argument("source")
+    gc.set_defaults(func=cmd_grammar)
+    ga = gsub2.add_parser("adapt", help="write one grammar per generator dialect")
+    ga.add_argument("source")
+    ga.add_argument("-o", "--out", help="output directory (default: .)")
+    ga.set_defaults(func=cmd_grammar)
+    s.set_defaults(func=cmd_grammar)
 
     s = sub.add_parser("generators", help="list or install input generators")
     gsub = s.add_subparsers(dest="generators_action", required=True)

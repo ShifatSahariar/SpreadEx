@@ -102,3 +102,24 @@ that no synthetic example would have:
 3. **`isla solve -n 150` returns 10 inputs.** Free instantiations default to 10
    and cap the expansion independently of `-n`. Both are now raised together,
    and the reason is recorded in the catalog entry.
+
+
+## What the grammar adapter taught us
+
+1. **A line-based grammar parser is not enough.** `"(" <e> ")"` uses parentheses
+   as terminal text while `(", " <i>)*` uses them as grouping. The research
+   prototype had to disable its own reachability check for Fandango grammars
+   because of exactly this; a tokenizer that understands quoting does not need
+   to.
+2. **Inlining character classes balloons the grammar and breaks ISLa.**
+   Expanding `r'[A-Za-z]{1,2}'` in place produced
+   `"A" | ... | "z" | (A..z)(A..z)` and an 870-line grammar whose shape ISLa's
+   parser rejected. Lifting each class into a shared rule gives 355 lines and a
+   grammar ISLa accepts.
+3. **Fandango rejects pipe-continuation lines.** Alternatives must be on one
+   line or wrapped in parentheses; both leading-`|` and trailing-`|`
+   continuations are syntax errors. This is not documented anywhere we found.
+4. **Ambiguity cannot be treated as a hard blocker.** `rhino.fan` defines
+   `IDENT_NUM` and `IDENT_STR` identically and ISLa fails on it;
+   `rhino.bnf` has a duplicate pair too and ISLa handles it fine. So it is
+   reported as a risk, not a refusal.

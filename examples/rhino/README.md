@@ -37,8 +37,33 @@ way, so the `rejection_patterns` in `spreadex.yaml` are what separate "the
 engine refused this script" from "the engine broke" — without them every
 invalid program would be reported as a crash.
 
-## Grammars
+## One grammar, three dialects
 
-`grammars/` holds one grammar per dialect, taken from the ICST 2026 replication
-package. They describe the same language; a grammar adapter that derives them
-from a single source is a later phase.
+`grammars/rhino.bnf` is the only grammar here. SpreadEx derives what each
+generator needs from it:
+
+```
+$ spreadex grammar check grammars/rhino.bnf
+  57 rules, start <start>
+  uses: plain BNF
+
+  Generator support
+    ✓ fandango       directly
+    ✓ fuzzingbook    directly
+    ✓ isla           directly
+    - grammarinator  SpreadEx cannot emit this dialect yet
+```
+
+Derived grammars are cached in `.spreadex/cache/grammars/`, keyed by the
+source's content, so editing the grammar re-derives them and nothing else does.
+
+To see the conversion without running a campaign:
+
+```bash
+spreadex grammar adapt grammars/rhino.bnf -o /tmp/derived
+```
+
+A source using EBNF is more interesting, because FuzzingBook and ISLa have no
+operators at all. `tests/fixtures/grammars/rhino.fan` uses `{1,4}`, `(...)*`,
+`?` and regex terminals; adapting it desugars every one of them and expands the
+regex terminals into rules.

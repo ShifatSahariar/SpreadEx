@@ -28,24 +28,78 @@ class GeneratedInput:
     cost_ms: float
 
 
-def grammar_for(config, generator_id: str) -> Path | None:
+def grammar_for(config, generator_id: str, derived: dict[str, Path] | None = None) -> Path | None:
     """Resolve this generator's grammar.
 
-    Generators speak different dialects, so `grammar:` may name one file per
-    generator. A single `source:` is used for all of them, which is only correct
-    when they share a dialect -- the grammar adapter that converts one grammar
-    into many is a later phase, and until it exists the mapping is explicit.
+    An explicit per-generator entry always wins:
 
         grammar:
-          fuzzingbook: grammars/rhino_grammar.py
+          fuzzingbook: grammars/rhino.py
           fandango:    grammars/rhino.fan
-          isla:        grammars/rhino.bnf
+
+    Otherwise a single `source:` is adapted into each generator's dialect:
+
+        grammar:
+          source: grammars/rhino.bnf
     """
     g = config.grammar or {}
-    path = g.get(generator_id) or g.get("source")
-    if not path:
+    explicit = g.get(generator_id)
+    if explicit:
+        return (config.project_root / explicit).resolve()
+    if derived and generator_id in derived:
+        return derived[generator_id]
+    source = g.get("source")
+    if not source:
         return None
-    return (config.project_root / path).resolve()
+    return (config.project_root / source).resolve()
+
+
+def derive_grammars(config, generators: list[str], log=print) -> dict[str, Path]:
+    """Adapt `grammar.source` into each generator's dialect, cached by content.
+
+    Generators that already have an explicit grammar are left alone, and one
+    that cannot express the source is skipped with its reason rather than being
+    handed a grammar it will choke on.
+    """
+    import hashlib
+
+    from ..grammar import GrammarError, RenderError, adapt
+
+    g = config.grammar or {}
+    source = g.get("source")
+    needed = [gid for gid in generators if not g.get(gid)]
+    if not source or not needed:
+        return {}
+
+    source_path = (config.project_root / source).resolve()
+    if not source_path.exists():
+        raise RuntimeError(
+            f"Grammar source not found: {source_path}\n"
+            f"  Fix: correct `grammar.source` in spreadex.yaml."
+        )
+
+    digest = hashlib.sha256(source_path.read_bytes()).hexdigest()[:12]
+    out_dir = config.state_dir / "cache" / "grammars" / digest
+    try:
+        result = adapt(source_path, needed, out_dir, start=g.get("start"))
+    except (GrammarError, RenderError) as exc:
+        raise RuntimeError(f"Could not adapt {source_path.name}:\n  {exc}") from exc
+
+    if result.report.errors:
+        detail = "\n".join(f.render() for f in result.report.errors)
+        raise RuntimeError(
+            f"{source_path.name} has grammar errors, so no dialects were derived:\n{detail}\n"
+            f"  Check it with: spreadex grammar check {source}"
+        )
+
+    if result.written:
+        log(f"  grammar: derived {len(result.written)} dialect(s) from {source_path.name}")
+    for gid, risks in result.risks.items():
+        for risk in risks:
+            log(f"  ! {gid}: {risk}")
+    for gid, why in result.skipped.items():
+        log(f"  ! {gid}: {why}")
+    return result.written
 
 
 def collect(config, budget_s: float, log=print, manager: GeneratorManager | None = None):
@@ -69,12 +123,13 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
         # Never install implicitly: report and stop, naming the fix.
         mgr.ensure(generators, log=log, auto_install=False)
 
+        derived = derive_grammars(config, generators, log=log)
         count = int((config.raw.get("generation") or {}).get("count", 200))
         # Uniform allocation. The honest default, and the baseline any adaptive
         # policy has to beat.
         per_generator = budget_s / len(generators)
         for gid in generators:
-            grammar = grammar_for(config, gid)
+            grammar = grammar_for(config, gid, derived)
             if grammar is None:
                 log(f"  ! {gid}: no grammar configured -- skipping")
                 continue

@@ -97,6 +97,43 @@ separate them. `oracle.rejection_patterns` and `crash_patterns` do. Getting this
 wrong is not a theoretical risk: an earlier, narrower pattern list reported 15
 programs that merely did `throw new TypeError(...)` as engine crashes.
 
+## One grammar, every dialect
+
+Generators speak different notations: FuzzingBook wants a Python dict, ISLa
+plain BNF, Fandango BNF with EBNF operators and regex terminals. Testing one
+system with several of them has meant maintaining several grammars by hand and
+keeping them in step. SpreadEx derives them from one source.
+
+```yaml
+grammar:
+  source: grammars/rhino.bnf     # one file; every dialect comes from it
+```
+
+```bash
+spreadex grammar check grammars/rhino.bnf   # diagnose, and see what each generator supports
+spreadex grammar adapt grammars/rhino.bnf -o out/
+```
+
+Deriving is a real conversion, not a copy. For dialects with no operators,
+`(", " <item>)*` becomes right-recursive helper rules and `r'[A-Za-z]{1,2}'`
+becomes a shared character-class rule. Anything a generator genuinely cannot
+express is reported and that generator is skipped, rather than being handed a
+grammar it will choke on.
+
+`spreadex grammar check` reports what a generator will not tell you until the
+campaign has already run: undefined and unreachable rules, rules that can never
+terminate, left recursion (with the cycle), ambiguity, and per-generator
+expressibility.
+
+```
+  Generator support
+    ✓ fandango       directly
+    ✓ fuzzingbook    after rewriting (bounded repetition ({m,n}), grouping, regex terminal, ...)
+    ✓ isla           after rewriting (...)
+      ! <IDENT_NUM> and <IDENT_STR> derive the same language; ISLa may reject this at solve time
+    - grammarinator  SpreadEx cannot emit this dialect yet
+```
+
 ## Selection signals
 
 ```
@@ -151,9 +188,12 @@ crash/timeout/differential oracles, per-SUT rejection and crash patterns, manife
 deterministic generator installation, generator adapters for FuzzingBook, Fandango and ISLa, and
 the golden Rhino pipeline end to end.
 
-Not yet: Grammarinator generation (needs an ANTLRv4 grammar and the two-step
-process/generate flow), the grammar adapter that derives per-dialect grammars from one source,
-coverage collection, the browser UI, regression mode, adaptive allocation.
+Also working: the grammar adapter — one source grammar, every generator's dialect derived, with
+diagnostics and per-generator expressibility.
+
+Not yet: Grammarinator generation (needs ANTLRv4 output and the two-step process/generate flow),
+ANTLRv4 as a grammar *input*, coverage collection, the browser UI, regression mode, adaptive
+allocation.
 
 ## Development
 
