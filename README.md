@@ -194,7 +194,27 @@ checks. So:
 
 It is stdlib-only, so it needs no extra install, and it runs in the foreground,
 so it cannot be orphaned and there is never a question of which instance you are
-looking at.
+looking at. Light and dark both ship; the toggle in the header overrides your
+system preference and is remembered per browser.
+
+### Optional assistance
+
+If you have no grammar, a model can propose one — and SpreadEx then checks it
+with the same parser and diagnostics a hand-written grammar goes through. A
+rejected proposal is handed back the validator's own error and retried, at most
+three times; if it still does not pass, you are told that rather than given
+something that merely looks right. **Nothing a model writes reaches a campaign
+without passing that gate.**
+
+The same panel writes Fandango `where` clauses and ISLa constraints from a
+plain-language description. Constraints get a weaker check — every symbol they
+mention must exist — and the UI says so, because whether a constraint *means*
+what you intended only a campaign will show.
+
+Providers are OpenAI, Anthropic, or **Ollama running locally**, reached over
+plain HTTP with no vendor SDK, so assistance costs no install. A pasted key is
+held for one request: never written to disk, never logged. It is opt-in, off by
+default, and `--read-only` refuses it entirely.
 
 ## Selection signals
 

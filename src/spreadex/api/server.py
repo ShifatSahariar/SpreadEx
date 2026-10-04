@@ -163,6 +163,12 @@ class _Handler(BaseHTTPRequestHandler):
         if route == "/api/run":
             self._json(setup.start_run(self.server, body))
             return
+        if route == "/api/assist":
+            self._json(setup.assist(self.config, body))
+            return
+        if route == "/api/grammar/save":
+            self._json(setup.save_grammar(self.config, body))
+            return
         self._error(HTTPStatus.NOT_FOUND, f"no route {route!r}")
 
     def do_GET(self):
@@ -250,6 +256,10 @@ class _Handler(BaseHTTPRequestHandler):
         if route == "/api/files":
             from . import setup
             self._json(setup.list_candidate_grammars(self.config))
+            return
+        if route == "/api/providers":
+            from . import setup
+            self._json(setup.llm_providers())
             return
 
         if route.startswith("/api/"):

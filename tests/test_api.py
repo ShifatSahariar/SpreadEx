@@ -318,3 +318,56 @@ def test_activity_is_idle_before_anything_runs(served):
     base, token, _ = served
     _, body = get(f"{base}/api/activity", token)
     assert body.get("idle") or body.get("done")
+
+
+# --------------------------------------------------------- assistance routes
+
+def test_providers_are_listed(served):
+    base, token, _ = served
+    _, body = get(f"{base}/api/providers", token)
+    assert {p["id"] for p in body["providers"]} == {"openai", "anthropic", "ollama"}
+
+
+def test_assist_without_a_key_fails_clearly(served, monkeypatch):
+    base, token, _ = served
+    status, body = post(f"{base}/api/assist",
+                        {"task": "infer", "provider": "openai", "description": "a tiny language"},
+                        token=token)
+    assert status == 200 and body["ok"] is False
+    assert "API key" in body["error"]
+
+
+def test_assist_rejects_an_unknown_task(served):
+    base, token, _ = served
+    _, body = post(f"{base}/api/assist", {"task": "take-over-the-world"}, token=token)
+    assert body["ok"] is False and "unknown task" in body["error"]
+
+
+def test_saving_a_grammar_cannot_escape_the_project(served):
+    base, token, config = served
+    _, body = post(f"{base}/api/grammar/save",
+                   {"path": "../../escaped.bnf", "text": '<start> ::= "x"'}, token=token)
+    assert body["ok"] is False and "inside this project" in body["error"]
+    assert not (config.project_root.parent.parent / "escaped.bnf").exists()
+
+
+def test_saving_refuses_a_grammar_the_validator_rejects(served):
+    """Accepting a proposal has to mean it passed."""
+    base, token, _ = served
+    _, body = post(f"{base}/api/grammar/save",
+                   {"path": "bad.bnf", "text": "<start> ::= <nope>"}, token=token)
+    assert body["ok"] is False and "refusing to save" in body["error"]
+
+
+def test_saving_a_valid_grammar_works(served):
+    base, token, config = served
+    _, body = post(f"{base}/api/grammar/save",
+                   {"path": "generated.bnf", "text": '<start> ::= "hello"'}, token=token)
+    assert body["ok"] is True
+    assert (config.project_root / "generated.bnf").read_text() == '<start> ::= "hello"'
+
+
+def test_assistance_routes_are_refused_in_read_only_mode(read_only_server):
+    base, token = read_only_server
+    assert post(f"{base}/api/assist", {"task": "infer"}, token=token)[0] == 403
+    assert post(f"{base}/api/grammar/save", {"path": "x.bnf", "text": "y"}, token=token)[0] == 403

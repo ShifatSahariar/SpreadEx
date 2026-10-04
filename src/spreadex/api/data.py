@@ -234,6 +234,9 @@ def _report_for(config, path: Path) -> dict[str, Any]:
     return {
         "configured": True,
         "source": str(path),
+        # The assistant writes constraints against these symbols, so it needs
+        # the grammar itself, not only a summary of it.
+        "text": path.read_text(errors="replace")[:40000],
         "rules": len(grammar.rules),
         "start": grammar.start,
         "features": sorted(f.value for f in grammar.features()),

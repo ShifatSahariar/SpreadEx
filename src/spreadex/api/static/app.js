@@ -29,6 +29,16 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const num = n => (n ?? 0).toLocaleString();
 const el = id => document.getElementById(id);
 
+function toggleTheme() {
+  const root = document.documentElement;
+  const explicit = root.getAttribute("data-theme");
+  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  // With no explicit choice yet, the first click flips away from the system.
+  const next = explicit ? (explicit === "dark" ? "light" : "dark") : (systemDark ? "light" : "dark");
+  root.setAttribute("data-theme", next);
+  try { localStorage.setItem("spreadex-theme", next); } catch (e) { /* blocked storage */ }
+}
+
 const STEPS = [
   { id: "sut",        n: 1, t: "System under test", d: "The command to run." },
   { id: "grammar",    n: 2, t: "Grammar",           d: "Where inputs come from." },
@@ -214,10 +224,158 @@ async function stepGrammar() {
     <div id="ginfo"></div>
     <div class="actions">
       <button class="ghost" onclick="gotoStep('sut')">Back</button>
+      <button class="ghost" onclick="toggleAssistant()">No grammar? Get help writing one</button>
       <button class="primary" onclick="commitGrammar()">Continue</button>
     </div>
-  </div>`;
+  </div>
+  <div id="assistant"></div>`;
   if (chosen) inspectGrammar();
+}
+
+// ------------------------------------------------------- assistant (opt-in)
+
+let ASSIST = { open: false, providers: [], proposal: null, busy: false };
+
+async function toggleAssistant() {
+  ASSIST.open = !ASSIST.open;
+  const holder = el("assistant");
+  if (!holder) return;
+  if (!ASSIST.open) { holder.innerHTML = ""; return; }
+  if (!ASSIST.providers.length) {
+    try { ASSIST.providers = (await api("/api/providers")).providers; }
+    catch (e) { holder.innerHTML = `<div class="card"><div class="note bad">${esc(e.message)}</div></div>`; return; }
+  }
+  paintAssistant();
+}
+
+function providerPicker(id) {
+  return `<select id="${id}" onchange="paintKeyField()">
+    ${ASSIST.providers.map(p => `<option value="${esc(p.id)}">${esc(p.label)}${p.local ? " — on this machine" : ""}${p.key_in_env ? " — key found" : ""}</option>`).join("")}
+  </select>`;
+}
+
+function paintKeyField() {
+  const p = ASSIST.providers.find(x => x.id === el("provider").value);
+  const box = el("keybox");
+  if (!box || !p) return;
+  box.innerHTML = p.local
+    ? `<div class="note" style="border-left-color:var(--color-success);background:var(--color-success-lt)">
+         ${esc(p.note || "Runs locally.")} Nothing leaves this machine.</div>`
+    : (p.key_in_env
+      ? `<div class="muted" style="font-size:12.5px;margin-top:8px">Using
+           <span class="mono">${esc(p.env_var)}</span> from your environment.</div>`
+      : `<label for="apikey">${esc(p.label)} API key</label>
+         <input id="apikey" type="password" autocomplete="off" placeholder="sk-…">
+         <div class="muted" style="font-size:12px;margin-top:4px">Held for this request only.
+           Never written to disk, never logged.</div>`);
+}
+
+function paintAssistant() {
+  const holder = el("assistant");
+  if (!holder) return;
+  const corpusPath = (el("corpus")?.value || "").trim();
+  holder.innerHTML = `
+  <div class="card">
+    <h3>Grammar assistant</h3>
+    <p class="why">A model proposes a grammar; SpreadEx then checks it with the same parser and
+      diagnostics a hand-written grammar goes through. If it does not pass, the error is handed
+      back and it tries again &mdash; and if it still does not pass, you are told that rather than
+      given something that merely looks right.</p>
+    <div class="note">This sends your examples and description to the provider you pick. Choose a
+      local model if that matters.</div>
+    <div class="row" style="margin-top:4px">
+      <div><label for="provider">Provider</label>${providerPicker("provider")}</div>
+      <div><label for="model">Model</label><input id="model-name" type="text" placeholder="(default)"></div>
+    </div>
+    <div id="keybox"></div>
+    <label for="corpus-hint">Learn from example inputs in</label>
+    <input id="corpus-hint" type="text" value="${esc(corpusPath)}" placeholder="./seeds">
+    <label for="description">Describe the input language (optional)</label>
+    <textarea id="description" style="min-height:80px"
+      placeholder="A program is a sequence of statements. A statement is a print or an assignment…"></textarea>
+    <div class="actions">
+      <button class="primary" id="go-assist" onclick="runAssist('infer')">Propose a grammar</button>
+      <span id="assist-status" class="muted" style="font-size:12.5px"></span>
+    </div>
+    <div id="proposal"></div>
+  </div>`;
+  paintKeyField();
+}
+
+function llmSettings() {
+  return {
+    provider: el("provider").value,
+    model: el("model-name").value,
+    api_key: el("apikey")?.value || "",
+  };
+}
+
+async function runAssist(task, extra) {
+  if (ASSIST.busy) return;
+  ASSIST.busy = true;
+  const btn = el("go-assist"); if (btn) btn.disabled = true;
+  el("assist-status").innerHTML = `<span class="spinner"></span> asking the model…`;
+  let res;
+  try {
+    res = await api("/api/assist", {
+      task,
+      corpus: el("corpus-hint")?.value || "",
+      description: el("description")?.value || "",
+      ...llmSettings(), ...(extra || {}),
+    });
+  } catch (e) {
+    el("assist-status").textContent = "";
+    el("proposal").innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
+    ASSIST.busy = false; if (btn) btn.disabled = false;
+    return;
+  }
+  ASSIST.busy = false; if (btn) btn.disabled = false;
+  el("assist-status").textContent = "";
+  if (!res.ok) {
+    el("proposal").innerHTML = `<div class="note bad">${esc(res.error)}</div>`;
+    return;
+  }
+  ASSIST.proposal = res.proposal;
+  paintProposal();
+}
+
+function paintProposal() {
+  const p = ASSIST.proposal;
+  const tries = p.attempts.length;
+  el("proposal").innerHTML = `
+    <div style="margin-top:18px;border-top:1px solid var(--color-border);padding-top:16px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        ${p.ok ? `<span class="tag ok">validated</span>` : `<span class="tag bad">did not validate</span>`}
+        <span class="muted" style="font-size:12.5px">
+          ${tries} attempt${tries === 1 ? "" : "s"}${p.ok ? ` · ${num(p.rules)} rules · start &lt;${esc(p.start)}&gt;` : ""}</span>
+      </div>
+      ${p.errors.length ? `<div class="note bad">${p.errors.map(esc).join("<br>")}</div>` : ""}
+      ${p.warnings.length ? `<div class="note">${p.warnings.map(esc).join("<br>")}</div>` : ""}
+      ${p.support?.length ? `<table style="margin-top:12px"><tbody>${p.support.map(s => `
+        <tr><td style="width:32%">${esc(s.generator)}</td>
+            <td><span class="${s.usable ? "ok" : "bad"}">${s.usable ? "&#10003;" : "&#10007;"}
+              ${s.directly ? "directly" : (s.usable ? "after rewriting" : "cannot express")}</span>
+            ${(s.risks || []).map(r => `<div class="warn" style="font-size:12px">! ${esc(r)}</div>`).join("")}</td></tr>`).join("")}</tbody></table>` : ""}
+      <textarea id="proposed" style="margin-top:12px;min-height:220px">${esc(p.text)}</textarea>
+      <div class="actions">
+        <button class="ghost" onclick="runAssist('repair', {grammar: el('proposed').value})">Revalidate &amp; fix</button>
+        <input id="savepath" type="text" style="flex:0 0 220px" value="grammar.bnf">
+        <button class="primary" onclick="acceptProposal()" ${p.ok ? "" : "disabled"}>Save &amp; use</button>
+        ${p.ok ? "" : `<span class="muted" style="font-size:12.5px">Fix the errors before saving.</span>`}
+      </div>
+      <div id="saveerr"></div>
+    </div>`;
+}
+
+async function acceptProposal() {
+  const path = el("savepath").value.trim();
+  try {
+    const res = await api("/api/grammar/save", { path, text: el("proposed").value });
+    if (!res.ok) { el("saveerr").innerHTML = `<div class="note bad">${esc(res.error)}</div>`; return; }
+    S.config.grammar = { source: res.written };
+    ASSIST.open = false;
+    await stepGrammar();
+  } catch (e) { el("saveerr").innerHTML = `<div class="note bad">${esc(e.message)}</div>`; }
 }
 
 async function inspectGrammar() {
@@ -303,10 +461,116 @@ function paintGenerators() {
     <div id="joblog"></div>
     <div class="actions">
       <button class="ghost" onclick="gotoStep('grammar')">Back</button>
+      ${constraintCapable().length ? `<button class="ghost" onclick="toggleConstraints()">Add constraints</button>` : ""}
       <button class="primary" onclick="commitGenerators()">Continue</button>
     </div>
     <div id="err"></div>
+  </div>
+  <div id="constraints"></div>`;
+  if (CONSTRAINTS.open) paintConstraints();
+}
+
+// ------------------------------------------------ constraints (opt-in)
+
+let CONSTRAINTS = { open: false, proposal: null, busy: false };
+
+function constraintCapable() {
+  const chosen = new Set(cfg().generators || []);
+  return S.generators.filter(g => g.constraints && chosen.has(g.id));
+}
+
+async function toggleConstraints() {
+  CONSTRAINTS.open = !CONSTRAINTS.open;
+  if (!CONSTRAINTS.open) { el("constraints").innerHTML = ""; return; }
+  if (!ASSIST.providers.length) {
+    try { ASSIST.providers = (await api("/api/providers")).providers; } catch (e) { /* shown below */ }
+  }
+  paintConstraints();
+}
+
+function paintConstraints() {
+  // The step may still be loading when this is called; there is nothing to
+  // paint into yet, and it will be painted on arrival instead.
+  const holder = el("constraints");
+  if (!holder) return;
+  const capable = constraintCapable();
+  holder.innerHTML = `
+  <div class="card">
+    <h3>Constraints</h3>
+    <p class="why">Only Fandango and ISLa accept constraints &mdash; rules a generated input must
+      satisfy, like "every variable is declared before it is used". Describe them in plain language
+      and a model writes them in that generator's syntax.</p>
+    <div class="note">Unlike a grammar, a constraint cannot be fully machine-checked: SpreadEx
+      verifies that every symbol it mentions exists, but whether it <em>means</em> what you intended
+      only a short campaign will show.</div>
+    <div class="row" style="margin-top:4px">
+      <div><label for="c-generator">Generator</label>
+        <select id="c-generator">${capable.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join("")}</select></div>
+      <div><label for="c-provider">Provider</label>
+        <select id="c-provider">${ASSIST.providers.map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("")}</select></div>
+    </div>
+    <div id="c-key"></div>
+    <label for="c-text">What must be true of every generated input?</label>
+    <textarea id="c-text" style="min-height:90px"
+      placeholder="Every variable is declared before it is used.&#10;Loop bounds are between 1 and 10."></textarea>
+    <div class="actions">
+      <button class="primary" id="c-go" onclick="runConstraints()">Write the constraints</button>
+      <span id="c-status" class="muted" style="font-size:12.5px"></span>
+    </div>
+    <div id="c-out"></div>
   </div>`;
+  const p = ASSIST.providers.find(x => x.id === el("c-provider")?.value);
+  if (p && !p.local && !p.key_in_env) {
+    el("c-key").innerHTML = `<label for="c-apikey">${esc(p.label)} API key</label>
+      <input id="c-apikey" type="password" autocomplete="off" placeholder="sk-…">
+      <div class="muted" style="font-size:12px;margin-top:4px">Held for this request only.</div>`;
+  }
+}
+
+async function runConstraints() {
+  if (CONSTRAINTS.busy) return;
+  const source = cfg().grammar?.source;
+  if (!source) {
+    el("c-out").innerHTML = `<div class="note bad">Pick a grammar first &mdash; constraints are
+      written against its symbols.</div>`;
+    return;
+  }
+  CONSTRAINTS.busy = true;
+  el("c-go").disabled = true;
+  el("c-status").innerHTML = `<span class="spinner"></span> asking the model…`;
+  let res;
+  try {
+    const g = await api(`/api/grammar?source=${encodeURIComponent(source)}`);
+    res = await api("/api/assist", {
+      task: "constraints",
+      generator: el("c-generator").value,
+      constraints: el("c-text").value,
+      grammar: g.text || "",
+      grammar_source: source,
+      provider: el("c-provider").value,
+      api_key: el("c-apikey")?.value || "",
+    });
+  } catch (e) {
+    el("c-status").textContent = "";
+    el("c-out").innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
+    CONSTRAINTS.busy = false; el("c-go").disabled = false;
+    return;
+  }
+  CONSTRAINTS.busy = false; el("c-go").disabled = false;
+  el("c-status").textContent = "";
+  if (!res.ok) { el("c-out").innerHTML = `<div class="note bad">${esc(res.error)}</div>`; return; }
+
+  const p = res.proposal;
+  el("c-out").innerHTML = `
+    <div style="margin-top:16px;border-top:1px solid var(--color-border);padding-top:14px">
+      ${p.ok ? `<span class="tag ok">symbols check out</span>` : `<span class="tag bad">rejected</span>`}
+      ${p.errors.length ? `<div class="note bad">${p.errors.map(esc).join("<br>")}</div>` : ""}
+      ${p.warnings.length ? `<div class="note">${p.warnings.map(esc).join("<br>")}</div>` : ""}
+      <pre>${esc(p.text)}</pre>
+      <div class="muted" style="font-size:12.5px;margin-top:8px">Copy these into your
+        ${esc(el("c-generator").value === "fandango" ? ".fan grammar" : ".isla constraint file")}
+        beside the grammar, then re-run.</div>
+    </div>`;
 }
 
 function toggleGen(id) {

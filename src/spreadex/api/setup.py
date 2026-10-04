@@ -194,3 +194,89 @@ def start_run(server, body: dict) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
     # Echo the command back so the UI can show what it just set going.
     return {"ok": True, "command": command}
+
+
+# -------------------------------------------------------- assistance (opt-in)
+
+def llm_providers() -> dict[str, Any]:
+    from ..llm import available
+
+    return {"providers": available()}
+
+
+def _llm_kwargs(body: dict) -> dict[str, Any]:
+    """Pull the model settings out of a request.
+
+    A key supplied here lives for the duration of this call only. It is never
+    written to disk, never logged, and never echoed back.
+    """
+    return {
+        "provider": body.get("provider") or "openai",
+        "model": (body.get("model") or "").strip() or None,
+        "api_key": (body.get("api_key") or "").strip() or None,
+        "base_url": (body.get("base_url") or "").strip() or None,
+    }
+
+
+def assist(config, body: dict) -> dict[str, Any]:
+    """Ask a model to propose a grammar or constraints, then validate it."""
+    from ..llm import LLMError, constraints_for, infer_grammar, read_examples, repair_grammar
+
+    task = body.get("task")
+    generators = config.generators or ["fuzzingbook", "isla", "fandango", "grammarinator"]
+    try:
+        if task == "infer":
+            examples = []
+            corpus = (body.get("corpus") or "").strip()
+            if corpus:
+                path = (config.project_root / corpus).resolve()
+                if not path.is_dir() or config.project_root.resolve() not in path.parents:
+                    return {"ok": False, "error": "that corpus is not inside this project"}
+                examples = read_examples(path)
+            examples += [e for e in (body.get("examples") or []) if e.strip()]
+            proposal = infer_grammar(examples, body.get("description", ""),
+                                     generators=generators, **_llm_kwargs(body))
+        elif task == "repair":
+            proposal = repair_grammar(body.get("grammar", ""), generators=generators,
+                                      **_llm_kwargs(body))
+        elif task == "constraints":
+            proposal = constraints_for(body.get("generator", "fandango"),
+                                       body.get("constraints", ""),
+                                       body.get("grammar", ""), **_llm_kwargs(body))
+        else:
+            return {"ok": False, "error": f"unknown task {task!r}"}
+    except LLMError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "proposal": proposal.as_dict()}
+
+
+def save_grammar(config, body: dict) -> dict[str, Any]:
+    """Write an accepted proposal into the project.
+
+    Refuses to leave the project directory, and refuses to write a grammar the
+    validator rejects -- accepting a proposal has to mean it passed.
+    """
+    from ..grammar import GrammarError, diagnose, parse_bnf
+
+    rel = (body.get("path") or "").strip()
+    text = body.get("text") or ""
+    if not rel or not text.strip():
+        return {"ok": False, "error": "need a path and some grammar text"}
+
+    target = (config.project_root / rel).resolve()
+    root = config.project_root.resolve()
+    if root != target.parent and root not in target.parents:
+        return {"ok": False, "error": "the grammar must be written inside this project"}
+
+    if not body.get("allow_invalid"):
+        try:
+            report = diagnose(parse_bnf(text))
+        except GrammarError as exc:
+            return {"ok": False, "error": f"refusing to save: {exc}"}
+        if report.errors:
+            return {"ok": False,
+                    "error": "refusing to save: " + "; ".join(f.message for f in report.errors)}
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    return {"ok": True, "written": str(target.relative_to(root))}
