@@ -1109,6 +1109,8 @@ function tabGenerators(d) {
         <td class="num mono">${num(g.inputs)}</td><td class="num mono">${g.cost_s.toFixed(1)}s</td></tr>`).join("")}</tbody></table>
     ${spread > 5 ? `<div class="note">Generation costs differ by more than 5&times;, so these CC values
       compare equal <strong>input counts</strong>, not equal budgets.</div>` : ""}
+    ${(d.corpus.signal_caveats || []).map(c =>
+      `<div class="note warn">${esc(c)}</div>`).join("")}
     <div class="note">Cluster coverage is measured against <em>this</em> pool. Add or remove a
       generator and every score moves, so compare these numbers within a campaign, never across
       campaigns.</div>

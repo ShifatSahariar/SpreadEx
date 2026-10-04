@@ -61,3 +61,67 @@ def test_kpath_is_declared_not_silently_ignored():
 def test_unknown_signal_is_rejected():
     with pytest.raises(ValueError):
         make_signal("vibes")
+
+
+# ------------------------------------------- honesty about the clustering
+
+def test_a_non_converging_clustering_is_reported_not_swallowed():
+    """Affinity Propagation can fail to converge, and sklearn says so in a
+    warning that reaches the user as a stack trace from a file they have never
+    heard of -- or, worse, gets suppressed and leaves confident-looking CC
+    values with nothing to qualify them."""
+    import warnings
+
+    import numpy as np
+    from sklearn.exceptions import ConvergenceWarning
+
+    from spreadex.signals.base import ClusterCoverageSignal, Item
+
+    # Many near-identical inputs: the case AP struggles with in practice, and
+    # the one a user hits when a generator keeps emitting the same shape.
+    rng = np.random.default_rng(7)
+    items = [Item(blob_hash=f"h{i:04d}", text=f"x = {rng.integers(0, 2)}",
+                  generator="g" + str(i % 2))
+             for i in range(120)]
+
+    signal = ClusterCoverageSignal(embedding_model="tfidf", random_state=1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConvergenceWarning)
+        # Must not escape: the signal catches it and speaks for itself.
+        ordering = signal.rank(items)
+
+    assert ordering.order, "a shaky clustering still yields a usable ordering"
+    assert len(ordering.order) == len(items), "every input still gets a position"
+    # Unconditional: this corpus does not converge, and a test that shrugged
+    # when the caveat was missing would pass just as happily if the reporting
+    # were deleted.
+    assert ordering.caveats, "non-convergence must produce a caveat"
+    text = " ".join(ordering.caveats)
+    assert "converge" in text
+    assert "still a valid ordering" in text, "say what is and is not affected"
+
+
+def test_a_healthy_corpus_reports_no_caveat():
+    """A caveat on every run would be noise, and noise is ignored."""
+    import numpy as np
+
+    from spreadex.signals.base import ClusterCoverageSignal, Item
+
+    rng = np.random.default_rng(11)
+    words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"]
+    items = [Item(blob_hash=f"h{i:04d}", text=" ".join(rng.choice(words, size=6)),
+                  generator="g" + str(i % 3))
+             for i in range(60)]
+    ordering = ClusterCoverageSignal(embedding_model="tfidf", random_state=3).rank(items)
+    assert ordering.caveats == []
+
+
+def test_the_caveat_reaches_the_manifest(tmp_path):
+    """A warning the campaign prints once and forgets is not evidence; a
+    replay has to see it too."""
+    from spreadex.core.campaign import CampaignResult
+
+    result = CampaignResult(run_id="r", run_dir=tmp_path)
+    assert result.signal_caveats == []
+    result.signal_caveats = ["something to know"]
+    assert result.signal_caveats == ["something to know"]

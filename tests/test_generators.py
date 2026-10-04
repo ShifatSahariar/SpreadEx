@@ -79,3 +79,26 @@ def test_real_isolated_installation(tmp_path):
     assert mgr.environment_hash("fuzzingbook")
     receipt = tmp_path / "generators" / "fuzzingbook" / "receipt.json"
     assert receipt.exists()
+
+
+def test_doctor_does_not_keep_a_second_opinion_about_what_can_generate():
+    """A hardcoded "this one is a stub" list said Grammarinator could not
+    generate for months after it could. Membership in ADAPTERS is the only
+    claim, so there is nothing to go stale beside it."""
+    from spreadex.cli import doctor
+    from spreadex.generators.adapters import ADAPTERS
+
+    from pathlib import Path
+
+    source = Path(doctor.__file__).read_text()
+    assert "_adapter_is_stub" not in source
+    assert "grammarinator" not in source.lower(), "no generator is named in doctor's logic"
+    assert "grammarinator" in ADAPTERS
+
+
+def test_every_catalogued_generator_we_claim_to_drive_has_an_adapter():
+    from spreadex.generators.adapters import ADAPTERS
+
+    catalog = load_catalog()
+    for gid in ADAPTERS:
+        assert gid in catalog, f"{gid} has an adapter but is not in the catalog"

@@ -174,10 +174,10 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
             if not st.installed:
                 checks.append(Check(f"generator '{gen.name}'", FAIL, "not installed",
                                     f"spreadex generators install {gid}"))
-            elif gid not in ADAPTERS or _adapter_is_stub(gid):
+            elif gid not in ADAPTERS:
                 checks.append(Check(f"generator '{gen.name}'", WARN,
-                                    "installed, but generation is not wired up in v0.1",
-                                    "use fuzzingbook, fandango or isla"))
+                                    "installed, but SpreadEx has no adapter for it",
+                                    f"use one of: {', '.join(sorted(ADAPTERS))}"))
             else:
                 checks.append(Check(f"generator '{gen.name}'", OK,
                                     f"{st.version or 'installed'} ({st.where})"))
@@ -226,11 +226,6 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
         checks.append(Check("corpus writable", FAIL, str(exc),
                             f"check permissions on {config.state_dir}"))
     return checks
-
-
-def _adapter_is_stub(generator_id: str) -> bool:
-    """True when the catalog knows a generator but generation is not implemented."""
-    return generator_id in {"grammarinator"}
 
 
 def _java_check() -> Check:

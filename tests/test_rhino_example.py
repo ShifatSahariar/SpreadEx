@@ -39,8 +39,11 @@ def test_golden_pipeline(rhino_project):
     cfg = rhino_project
     result = Campaign(cfg, log=lambda *_: None).run(jobs=4)
 
-    # Every configured generator contributed and was scored.
-    assert set(result.generator_scores) == {"fuzzingbook", "fandango", "isla"}
+    # Every generator the config asks for contributed and was scored. Taken
+    # from the config rather than written out here: a hardcoded list said
+    # Grammarinator could not generate for months after it could.
+    assert set(result.generator_scores) == set(cfg.generators)
+    assert len(cfg.generators) == 4, "one grammar, four dialects -- that is the claim"
     assert all(0.0 <= v <= 1.0 for v in result.generator_scores.values())
     assert result.k_eff and result.k_eff > 1
 

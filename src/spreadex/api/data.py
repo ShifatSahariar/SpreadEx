@@ -88,6 +88,7 @@ def run_detail(state_dir: Path, run_id: str) -> dict[str, Any] | None:
                 "valid": corpus.get("valid"),
                 "prioritized": corpus.get("prioritized"),
                 "k_eff": corpus.get("k_eff"),
+                "signal_caveats": corpus.get("signal_caveats", []),
             },
             "generators": generators,
             "verdicts": summary,

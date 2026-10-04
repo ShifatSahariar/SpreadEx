@@ -47,6 +47,9 @@ class CampaignResult:
     budget_curve: list[tuple[int, int]] = field(default_factory=list)  # (executed, distinct signatures)
     exec_budget_s: float = 0.0
     exec_elapsed_s: float = 0.0
+    #: Anything the selection signal wants the reader to know before trusting
+    #: the CC numbers. Carried into the manifest so a replay sees it too.
+    signal_caveats: list[str] = field(default_factory=list)
 
     @property
     def failures(self) -> int:
@@ -157,6 +160,11 @@ class Campaign:
             if ordering.generator_scores:
                 pretty = ", ".join(f"{g} {v:.2f}" for g, v in sorted(ordering.generator_scores.items()))
                 self.log(f"  cluster coverage: {pretty}  (k_eff={ordering.k_eff})")
+            for caveat in getattr(ordering, "caveats", []):
+                # Wrapped by hand: this is the one place the tool admits its own
+                # measurement is shaky, and it should not scroll past as one line.
+                self.log("  ! " + caveat.replace(". ", ".\n    "))
+            result.signal_caveats = list(getattr(ordering, "caveats", []))
 
             # 5-8. Execute / Observe / Oracle / Persist -----------------------
             oracle = make_oracle(cfg.oracle)
@@ -252,6 +260,7 @@ class Campaign:
                 "generator_counts": result.generator_counts,
                 "generator_cost_ms": result.generator_cost_ms,
                 "k_eff": result.k_eff,
+                "signal_caveats": result.signal_caveats,
                 "allocation_s": allocation,
             }
             manifest.results = {

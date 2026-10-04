@@ -13,10 +13,13 @@ algorithm.
 
 from __future__ import annotations
 
+import warnings
+
 from dataclasses import dataclass, field
 from typing import Protocol, Sequence
 
 import numpy as np
+from sklearn.exceptions import ConvergenceWarning
 
 from ..prioritization import reference as ref
 
@@ -38,6 +41,10 @@ class Ordering:
     generator_scores: dict[str, float] = field(default_factory=dict)
     k_eff: int | None = None
     detail: str = ""
+    #: Things the user should know about how much this ordering can be trusted.
+    #: Reported, never swallowed: a caveat the tool keeps to itself is worse
+    #: than no caveat, because the numbers look just as confident either way.
+    caveats: list[str] = field(default_factory=list)
 
 
 class SelectionSignal(Protocol):
@@ -121,7 +128,23 @@ class ClusterCoverageSignal:
         X = embed([i.text for i in items], self.embedding_model)
         embeddings = {i: X[i] for i in range(n)}
 
-        clusters, exemplar_map = ref.cluster_once(embeddings, random_state=self.random_state)
+        # Affinity Propagation can fail to converge, and when it does sklearn
+        # says so in a warning that reaches the user as a stack trace from a
+        # file they have never heard of. It matters -- degenerate centers mean
+        # the clusters CC is measured over are not trustworthy -- so it is
+        # caught and reported in the tool's own words instead.
+        caveats: list[str] = []
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConvergenceWarning)
+            clusters, exemplar_map = ref.cluster_once(
+                embeddings, random_state=self.random_state)
+        if any(issubclass(w.category, ConvergenceWarning) for w in caught):
+            caveats.append(
+                "Affinity Propagation did not converge on this corpus, so the clusters "
+                "may be degenerate and the CC values below are weaker evidence than "
+                "usual. The prioritized ordering is still a valid ordering. More inputs, "
+                "or fewer near-identical ones, usually fixes it."
+            )
         labels = np.empty(n, dtype=int)
         for label, members in clusters.items():
             for m in members:
@@ -142,7 +165,7 @@ class ClusterCoverageSignal:
         order.extend(i for i in range(n) if i not in seen)
 
         return Ordering(order=order, generator_scores=scores, k_eff=k_eff,
-                        detail=f"{k_eff} clusters over {n} inputs")
+                        detail=f"{k_eff} clusters over {n} inputs", caveats=caveats)
 
     @staticmethod
     def select_generator(per_run_coverage, candidate_generators):
