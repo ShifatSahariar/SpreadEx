@@ -427,5 +427,8 @@ def load(path: str | Path, start: str | None = None) -> Grammar:
     suffix = path.suffix.lower()
     if suffix == ".py":
         return parse_fuzzingbook(text, source_path=str(path))
+    if suffix == ".g4":
+        from .antlr import parse_antlr
+        return parse_antlr(text, source_path=str(path), start=start)[0]
     fmt = {".fan": "fandango", ".bnf": "bnf", ".isla": "isla", ".ebnf": "ebnf"}.get(suffix, "bnf")
     return parse_bnf(text, source_format=fmt, start=start, source_path=str(path))

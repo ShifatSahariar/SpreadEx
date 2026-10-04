@@ -220,26 +220,35 @@ def duplicate_rules(g: Grammar) -> list[tuple[str, str]]:
     Full ambiguity is undecidable; this catches the decidable, and by far the
     most common, case.
     """
-    by_body: dict[str, list[str]] = {}
-    for name, body in g.rules.items():
-        by_body.setdefault(str(body), []).append(name)
     pairs: list[tuple[str, str]] = []
-    for names in by_body.values():
-        if len(names) > 1:
-            first = names[0]
-            for other in names[1:]:
-                pairs.append((first, other))
+    for names in duplicate_rule_groups(g):
+        for other in names[1:]:
+            pairs.append((names[0], other))
     return pairs
 
 
+def duplicate_rule_groups(g: Grammar) -> list[list[str]]:
+    """Groups of rules that are structurally identical to one another."""
+    by_body: dict[str, list[str]] = {}
+    for name, body in g.rules.items():
+        by_body.setdefault(str(body), []).append(name)
+    return [names for names in by_body.values() if len(names) > 1]
+
+
 def ambiguous_rules(g: Grammar, report: Report) -> None:
-    for a, b in duplicate_rules(g):
+    # Report one finding per group of identical rules, not one per pair: a
+    # grammar with six interchangeable identifier rules has fifteen pairs and
+    # exactly one problem.
+    for group in duplicate_rule_groups(g):
+        names = ", ".join(f"<{n}>" for n in group)
         report.add(Severity.WARNING, "ambiguous",
-                   f"<{a}> and <{b}> derive the same language, so the grammar is ambiguous",
-                   rule=a,
+                   f"{names} all derive the same language, so the grammar is ambiguous",
+                   rule=group[0],
                    fix="give them disjoint definitions, or merge them into one rule. "
-                       "ISLa parses what it generates and may reject this; FuzzingBook "
-                       "and Fandango only produce strings and are unaffected.")
+                       "ISLa parses what it generates and may reject this; FuzzingBook, "
+                       "Fandango and Grammarinator only produce strings and are unaffected. "
+                       "If these rules are distinguished by semantic predicates, note that "
+                       "predicates cannot run during generation.")
     for name in g.rules:
         alts = g.alternatives(name)
         seen: set[str] = set()
@@ -253,6 +262,39 @@ def ambiguous_rules(g: Grammar, report: Report) -> None:
             seen.add(key)
 
 
+def operator_literals_after_references(g: Grammar) -> list[tuple[str, str]]:
+    """Places where a terminal starting '+', '*' or '?' follows a nonterminal.
+
+    FuzzingBook's convert_ebnf_grammar reads those as EBNF operators, so a
+    JavaScript rule written `<identifier>++;` silently generates "one or more
+    identifiers, then +;". The language changes and becomes unbounded.
+
+    Found in the wild: the KarateJS grammar of the ICST 2026 package has three
+    such rules (post-increment, optional chaining, and a for-loop increment).
+    """
+    found: list[tuple[str, str]] = []
+    for name, body in g.rules.items():
+        for node in g.walk(body):
+            if not isinstance(node, Seq):
+                continue
+            for previous, item in zip(node.items, node.items[1:]):
+                if (isinstance(previous, Ref) and isinstance(item, Lit)
+                        and item.text[:1] in ("+", "*", "?")):
+                    found.append((name, f"<{previous.name}>{item.text[:2]}"))
+    return found
+
+
+def fuzzingbook_operator_hazard(g: Grammar, report: Report) -> None:
+    for rule, snippet in operator_literals_after_references(g):
+        report.add(Severity.WARNING, "ebnf-operator-literal",
+                   f"{snippet!r} -- a literal operator character directly after a "
+                   f"nonterminal", rule=rule,
+                   fix="FuzzingBook's convert_ebnf_grammar reads this as an EBNF "
+                       "operator and silently changes the language. SpreadEx-derived "
+                       "grammars skip that conversion; a hand-written grammar passed "
+                       "straight to FuzzingBook does not.")
+
+
 # ------------------------------------------------------------ expressibility
 
 #: What each generator's grammar dialect can express directly.
@@ -264,10 +306,10 @@ DIALECT_SUPPORT: dict[str, set[Feature]] = {
     "fuzzingbook": {Feature.EMPTY_STRING},
     # ISLa: plain BNF.
     "isla": {Feature.EMPTY_STRING},
-    # Grammarinator consumes ANTLRv4, which has all of these -- but SpreadEx
-    # cannot emit .g4 yet, so it is reported as unsupported by the adapter.
+    # Grammarinator consumes ANTLRv4: grouping and ?/*/+ are native, {m,n} is
+    # written out by the renderer, and there are no regex terminals.
     "grammarinator": {Feature.GROUPING, Feature.OPTIONAL, Feature.REPEAT_UNBOUNDED,
-                      Feature.REPEAT_BOUNDED, Feature.REGEX_TERMINAL, Feature.EMPTY_STRING},
+                      Feature.REPEAT_BOUNDED, Feature.EMPTY_STRING},
 }
 
 
@@ -308,9 +350,16 @@ def expressibility(g: Grammar, generator: str) -> Expressibility:
     # pair and ISLa handles it, while rhino.fan contains one and ISLa does not.
     # We cannot predict which, so we warn rather than refuse.
     if generator == "isla":
-        for a, b in duplicate_rules(g):
+        for group in duplicate_rule_groups(g):
+            names = ", ".join(f"<{n}>" for n in group)
+            risks.append(f"{names} all derive the same language; "
+                         f"ISLa may reject this at solve time")
+
+    if generator == "fuzzingbook":
+        for rule, snippet in operator_literals_after_references(g):
             risks.append(
-                f"<{a}> and <{b}> derive the same language; ISLa may reject this at solve time"
+                f"<{rule}> contains {snippet!r}; FuzzingBook reads a literal operator "
+                f"after a nonterminal as EBNF unless the conversion is skipped"
             )
 
     if Feature.REGEX_TERMINAL in missing:
@@ -345,4 +394,5 @@ def diagnose(g: Grammar) -> Report:
     left_recursion(g, report)
     empty_alternatives(g, report)
     ambiguous_rules(g, report)
+    fuzzingbook_operator_hazard(g, report)
     return report

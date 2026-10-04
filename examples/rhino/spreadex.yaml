@@ -31,12 +31,12 @@ oracle:
     # missed, turning 15 correctly-handled programs into reported crashes.
     - "^js: "
 
-generators: [fuzzingbook, fandango, isla]
+generators: [fuzzingbook, fandango, isla, grammarinator]
 
-# ONE grammar. SpreadEx derives each generator's dialect from it -- desugaring
-# EBNF for the two that have no operators, expanding regex terminals, and
-# reporting anything a generator cannot express. The derived files are cached
-# under .spreadex/cache/grammars/, keyed by the source's content.
+# ONE grammar, four notations. SpreadEx derives each generator's dialect from
+# it: a FuzzingBook dict, plain BNF for ISLa, BNF-with-operators for Fandango,
+# and ANTLRv4 for Grammarinator. Derived files are cached under
+# .spreadex/cache/grammars/, keyed by the source's content.
 grammar:
   source: grammars/rhino.bnf
 

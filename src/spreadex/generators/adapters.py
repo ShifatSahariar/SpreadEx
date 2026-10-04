@@ -11,7 +11,9 @@ does not mean touching the campaign, the corpus or the oracle.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +33,8 @@ class GeneratedBatch:
     generator: str
     inputs: list[bytes]
     elapsed_ms: float
+    #: Set when the generator ran out of budget but had already produced work.
+    partial: bool = False
 
     @property
     def cost_per_input_ms(self) -> float:
@@ -93,7 +97,15 @@ if grammar is None:
 from fuzzingbook.Grammars import convert_ebnf_grammar, is_valid_grammar
 from fuzzingbook.ProbabilisticGrammarFuzzer import ProbabilisticGrammarFuzzer
 
-converted = convert_ebnf_grammar(grammar)
+# convert_ebnf_grammar reads a '+', '*' or '?' that merely FOLLOWS a
+# <nonterminal> as an operator, so a JavaScript '<identifier>++;' becomes
+# "one or more identifiers, then +;" -- a different language, and an
+# unbounded one. A grammar SpreadEx emitted is already plain BNF, so the
+# conversion is skipped for it.
+if getattr(mod, "SPREADEX_PURE_BNF", False):
+    converted = grammar
+else:
+    converted = convert_ebnf_grammar(grammar)
 if not is_valid_grammar(converted):
     raise SystemExit("grammar is not valid after EBNF conversion")
 
@@ -177,18 +189,64 @@ def _sibling_constraint(grammar: Path) -> Path | None:
 
 # --------------------------------------------------------------- grammarinator
 
-def generate_grammarinator(mgr, grammar: Path, n: int, out_dir: Path, seed: int, timeout: float):
-    """Grammarinator needs an ANTLRv4 grammar compiled to a fuzzer class first.
+_GRAMMAR_HEADER = re.compile(r"^\s*(?:lexer\s+|parser\s+)?grammar\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", re.M)
 
-    Not wired up yet: the two-step process (grammarinator-process, then
-    grammarinator-generate) needs the grammar adapter, and no .g4 for these
-    subjects exists in the research package.
+
+def generate_grammarinator(mgr, grammar: Path, n: int, out_dir: Path, seed: int, timeout: float):
+    """Grammarinator is two steps: compile the grammar, then generate from it.
+
+    `grammarinator-process` turns a .g4 into a Python generator class, which is
+    slow and depends only on the grammar, so it is cached by grammar content.
     """
+    process = mgr.executable_for("grammarinator", "grammarinator-process")
+    generate_exe = mgr.executable_for("grammarinator", "grammarinator-generate")
+    if not process or not generate_exe:
+        raise GeneratorError(
+            "Grammarinator is not installed.\n"
+            "  Fix: spreadex generators install grammarinator"
+        )
+
+    text = grammar.read_text()
+    m = _GRAMMAR_HEADER.search(text)
+    if not m:
+        raise GeneratorError(
+            f"{grammar.name} has no `grammar <Name>;` header, so Grammarinator "
+            f"cannot name the generator class it builds."
+        )
+    grammar_name = m.group(1)
+
+    digest = hashlib.sha256(text.encode()).hexdigest()[:12]
+    compiled = mgr.cache_dir / "grammarinator" / digest
+    module = compiled / f"{grammar_name}Generator.py"
+    if not module.exists():
+        compiled.mkdir(parents=True, exist_ok=True)
+        _run([process, "-o", str(compiled), str(grammar)], timeout, "grammarinator-process")
+        if not module.exists():
+            produced = ", ".join(p.name for p in compiled.glob("*.py")) or "nothing"
+            raise GeneratorError(
+                f"grammarinator-process did not produce {module.name} (produced: {produced})."
+            )
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    start_rule = _start_rule(text)
+    _run([
+        generate_exe, f"{grammar_name}Generator.{grammar_name}Generator",
+        "-r", start_rule,
+        "-o", str(out_dir / "gi_%d.txt"),
+        "-n", str(n),
+        "-d", "30",
+        "--sys-path", str(compiled),
+    ], timeout, "grammarinator-generate")
+    return _collect(out_dir)
+
+
+def _start_rule(text: str) -> str:
+    """Grammarinator needs a start rule by name; take the first parser rule."""
+    for m in re.finditer(r"^\s*([a-z][A-Za-z0-9_]*)\s*:", text, re.M):
+        return m.group(1)
     raise GeneratorError(
-        "Grammarinator generation is not wired up in v0.1.\n"
-        "  It needs an ANTLRv4 (.g4) grammar and the two-step "
-        "grammarinator-process/-generate flow.\n"
-        "  Fix: use fuzzingbook, fandango or isla for now."
+        "No parser rule found to start generation from "
+        "(Grammarinator needs a lowercase rule name)."
     )
 
 
@@ -226,7 +284,20 @@ def generate(
         )
 
     started = time.perf_counter()
+    partial = False
     with tempfile.TemporaryDirectory(prefix=f"spreadex-{generator_id}-") as tmp:
-        inputs = adapter(mgr, grammar, count, Path(tmp), seed, timeout)
+        out_dir = Path(tmp)
+        try:
+            inputs = adapter(mgr, grammar, count, out_dir, seed, timeout)
+        except GeneratorError:
+            # A generator that ran out of budget has usually written something
+            # already. Keeping it is strictly better than discarding the work
+            # and reporting nothing -- rich grammars routinely exhaust
+            # FuzzingBook's and ISLa's budget while still yielding inputs.
+            inputs = _collect(out_dir)
+            if not inputs:
+                raise
+            partial = True
     elapsed_ms = (time.perf_counter() - started) * 1000
-    return GeneratedBatch(generator=generator_id, inputs=inputs, elapsed_ms=elapsed_ms)
+    return GeneratedBatch(generator=generator_id, inputs=inputs,
+                          elapsed_ms=elapsed_ms, partial=partial)

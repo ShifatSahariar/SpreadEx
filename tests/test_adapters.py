@@ -34,11 +34,19 @@ def test_missing_grammar_names_the_path(tmp_path):
         generate("fuzzingbook", tmp_path / "absent.py", 1)
 
 
-def test_grammarinator_says_why_it_is_not_wired_up(tmp_path):
-    """An honest, actionable stub beats a silent empty batch."""
+def test_grammarinator_needs_a_grammar_header(tmp_path):
+    """Grammarinator names the class it builds after the grammar, so a .g4
+    without a `grammar <Name>;` header cannot be compiled."""
     g = tmp_path / "g.g4"
-    g.write_text("grammar X;")
-    with pytest.raises(GeneratorError, match="not wired up in v0.1"):
+    g.write_text("start : 'x' ;")
+    with pytest.raises(GeneratorError, match="no `grammar <Name>;` header"):
+        generate("grammarinator", g, 1)
+
+
+def test_grammarinator_needs_a_parser_rule_to_start_from(tmp_path):
+    g = tmp_path / "g.g4"
+    g.write_text("grammar X;\nSTART : 'x' ;")
+    with pytest.raises(GeneratorError, match="No parser rule found"):
         generate("grammarinator", g, 1)
 
 
@@ -102,3 +110,45 @@ def test_isla_passes_grammar_positionally():
 
     src = inspect.getsource(adapters.generate_isla)
     assert '"-g"' not in src, "-g would make ISLa parse the path as a grammar"
+
+
+def test_partial_results_are_kept_when_the_budget_runs_out(tmp_path, monkeypatch):
+    """A generator that ran out of budget has usually written something, and
+    keeping it beats discarding the work. Rich real-world grammars routinely
+    exhaust FuzzingBook's budget while still yielding inputs."""
+    from spreadex.generators import adapters
+
+    def slow_adapter(mgr, grammar, n, out_dir, seed, timeout):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "a.txt").write_bytes(b"produced before the deadline")
+        raise GeneratorError("exceeded its generation budget")
+
+    monkeypatch.setitem(adapters.ADAPTERS, "fuzzingbook", slow_adapter)
+    g = tmp_path / "g.bnf"
+    g.write_text('<start> ::= "x"')
+    batch = adapters.generate("fuzzingbook", g, count=10, timeout=1)
+    assert batch.partial and len(batch.inputs) == 1
+
+
+def test_a_generator_that_produced_nothing_still_fails(tmp_path, monkeypatch):
+    """Partial results must not turn a hard failure into a silent success."""
+    from spreadex.generators import adapters
+
+    def failing_adapter(mgr, grammar, n, out_dir, seed, timeout):
+        raise GeneratorError("could not start")
+
+    monkeypatch.setitem(adapters.ADAPTERS, "fuzzingbook", failing_adapter)
+    g = tmp_path / "g.bnf"
+    g.write_text('<start> ::= "x"')
+    with pytest.raises(GeneratorError, match="could not start"):
+        adapters.generate("fuzzingbook", g, count=10, timeout=1)
+
+
+def test_emitted_fuzzingbook_grammars_disable_ebnf_conversion(tmp_path):
+    """convert_ebnf_grammar would read a literal '+' after a nonterminal as an
+    operator, so SpreadEx-emitted grammars carry a marker that skips it."""
+    from spreadex.grammar import parse_bnf, render
+
+    g = parse_bnf('<start> ::= <id> "++;"\n<id> ::= "x"')
+    text = render(g, "fuzzingbook", "t")
+    assert "SPREADEX_PURE_BNF = True" in text

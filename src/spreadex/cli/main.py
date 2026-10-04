@@ -172,7 +172,9 @@ def _print_result(r, config) -> None:
 # ------------------------------------------------------------------ grammar
 
 def cmd_grammar(args) -> int:
-    from ..grammar import GrammarError, Severity, adapt, diagnose, expressibility, load
+    from ..grammar import (
+        RENDERERS, GrammarError, Severity, adapt, diagnose, expressibility, load,
+    )
 
     source = Path(args.source)
     try:
@@ -186,16 +188,21 @@ def cmd_grammar(args) -> int:
         print(f"{source}\n")
         print(f"  {len(grammar.rules)} rules, start <{grammar.start}>")
         print(f"  uses: {', '.join(feats) if feats else 'plain BNF'}\n")
+        seen_fix: set[str] = set()
         for finding in report.findings:
-            print(finding.render())
+            text = finding.render()
+            if finding.code in seen_fix and finding.fix:
+                text = text.split("\n      fix:")[0]
+            seen_fix.add(finding.code)
+            print(text)
         if not report.findings:
             print("  no problems found")
         print("\n  Generator support")
-        for gen in sorted(args.generators or ["fuzzingbook", "isla", "fandango", "grammarinator"]):
-            exp = expressibility(grammar, gen)
-            if gen not in ("fuzzingbook", "isla", "fandango"):
+        for gen in sorted(args.generators or RENDERERS):
+            if gen not in RENDERERS:
                 print(f"    - {gen:<14} SpreadEx cannot emit this dialect yet")
                 continue
+            exp = expressibility(grammar, gen)
             if not exp.usable:
                 print(f"    \u2717 {gen:<14} {'; '.join(exp.blockers)[:90]}")
             elif exp.directly:
@@ -208,7 +215,7 @@ def cmd_grammar(args) -> int:
         return 1 if report.errors else 0
 
     # adapt
-    generators = args.generators or ["fuzzingbook", "isla", "fandango"]
+    generators = args.generators or sorted(RENDERERS)
     result = adapt(source, generators, args.out or ".", start=args.start)
     if not result.ok and result.report.errors:
         print(f"{source} has errors; nothing was written.\n")

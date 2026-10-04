@@ -120,6 +120,22 @@ becomes a shared character-class rule. Anything a generator genuinely cannot
 express is reported and that generator is skipped, rather than being handed a
 grammar it will choke on.
 
+**ANTLRv4 works in both directions.** A `.g4` can be the source — so a grammar
+from the ANTLR zoo drives every generator — and SpreadEx emits `.g4`, which is
+what Grammarinator consumes.
+
+| | BNF/EBNF | FuzzingBook | ANTLRv4 |
+|---|---|---|---|
+| **read** | yes | yes | yes |
+| **write** | yes (ISLa, Fandango) | yes | yes (Grammarinator) |
+
+Reading ANTLR for *generation* ignores what only matters for parsing: actions,
+semantic predicates, labels and lexer commands. Each is counted and reported,
+because a dropped predicate means generated inputs may violate a condition the
+grammar's author was enforcing. `.` and `~[...]` describe sets by exclusion,
+which is unbounded when generating, so they expand against a documented
+printable alphabet and say so.
+
 `spreadex grammar check` reports what a generator will not tell you until the
 campaign has already run: undefined and unreachable rules, rules that can never
 terminate, left recursion (with the cycle), ambiguity, and per-generator
@@ -191,9 +207,9 @@ the golden Rhino pipeline end to end.
 Also working: the grammar adapter — one source grammar, every generator's dialect derived, with
 diagnostics and per-generator expressibility.
 
-Not yet: Grammarinator generation (needs ANTLRv4 output and the two-step process/generate flow),
-ANTLRv4 as a grammar *input*, coverage collection, the browser UI, regression mode, adaptive
-allocation.
+All four Tier-1 generators now run: FuzzingBook, Fandango, ISLa and Grammarinator.
+
+Not yet: coverage collection, the browser UI, regression mode, adaptive allocation.
 
 ## Development
 

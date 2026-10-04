@@ -166,7 +166,15 @@ def test_fandango_never_emits_pipe_continuation_lines():
 def test_unknown_generator_names_what_can_be_emitted():
     g = parse_bnf('<start> ::= "x"')
     with pytest.raises(RenderError, match="can emit"):
-        render(g, "grammarinator", "test")
+        render(g, "some-future-generator", "test")
+
+
+def test_every_supported_generator_can_be_rendered():
+    g = parse_bnf('<start> ::= "a" <b>*\n<b> ::= "x"')
+    from spreadex.grammar import RENDERERS
+
+    for generator in RENDERERS:
+        assert render(g, generator, "test").strip()
 
 
 def test_unenumerable_regex_is_refused_for_a_dialect_without_regex():

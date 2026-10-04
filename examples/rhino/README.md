@@ -1,6 +1,6 @@
 # Example: Rhino (the golden pipeline)
 
-The full architecture end to end: **JavaScript grammar → three generators →
+The full architecture end to end: **one JavaScript grammar → four generators →
 Cluster Coverage → SpreadEx prioritization → Rhino → verdicts.**
 
 ## Setup
@@ -15,7 +15,7 @@ export RHINO_JAR=$PWD/rhino-all/build/libs/rhino-all-*.jar
 Then install the generators (each into its own isolated environment):
 
 ```bash
-spreadex generators install fuzzingbook fandango isla
+spreadex generators install fuzzingbook fandango isla grammarinator
 ```
 
 ## Run
@@ -50,9 +50,13 @@ $ spreadex grammar check grammars/rhino.bnf
   Generator support
     ✓ fandango       directly
     ✓ fuzzingbook    directly
+    ✓ grammarinator  directly
     ✓ isla           directly
-    - grammarinator  SpreadEx cannot emit this dialect yet
 ```
+
+Four generators, four notations — a FuzzingBook dict, plain BNF for ISLa,
+BNF-with-operators for Fandango, and ANTLRv4 for Grammarinator — all from the
+one file.
 
 Derived grammars are cached in `.spreadex/cache/grammars/`, keyed by the
 source's content, so editing the grammar re-derives them and nothing else does.
@@ -63,7 +67,9 @@ To see the conversion without running a campaign:
 spreadex grammar adapt grammars/rhino.bnf -o /tmp/derived
 ```
 
-A source using EBNF is more interesting, because FuzzingBook and ISLa have no
-operators at all. `tests/fixtures/grammars/rhino.fan` uses `{1,4}`, `(...)*`,
-`?` and regex terminals; adapting it desugars every one of them and expands the
-regex terminals into rules.
+Other notations work as sources too. `tests/fixtures/grammars/rhino.fan` uses
+`{1,4}`, `(...)*`, `?` and regex terminals, all of which are desugared for the
+generators that have no operators. `tests/fixtures/grammars/rhino.g4` is a far
+richer ANTLR grammar of near-complete JavaScript — from it Fandango and
+Grammarinator generate in seconds, while FuzzingBook and ISLa struggle, which
+the budget reports rather than hides.

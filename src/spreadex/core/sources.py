@@ -140,7 +140,9 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
                 # One broken generator must not abort a campaign that has others.
                 log(f"  ! {gid}: {exc}")
                 continue
-            log(f"  {gid}: {len(batch.inputs)} inputs in {batch.elapsed_ms / 1000:.1f}s")
+            note = (f" (budget exhausted; asked for {count})" if batch.partial else "")
+            log(f"  {gid}: {len(batch.inputs)} inputs in "
+                f"{batch.elapsed_ms / 1000:.1f}s{note}")
             out.extend(
                 GeneratedInput(data, gid, batch.cost_per_input_ms) for data in batch.inputs
             )

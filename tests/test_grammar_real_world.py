@@ -58,10 +58,13 @@ def test_character_classes_become_shared_rules_not_inlined(tmp_path):
     assert class_rules, "character classes should be lifted into their own rules"
 
 
-def test_grammarinator_is_skipped_with_a_reason(tmp_path):
-    result = adapt(RHINO_BNF, ["fuzzingbook", "grammarinator"], tmp_path)
-    assert "fuzzingbook" in result.written
-    assert "cannot emit" in result.skipped["grammarinator"]
+def test_every_generator_can_be_reached_from_one_bnf_source(tmp_path):
+    """The point of the adapter: four generators, four notations, one source."""
+    result = adapt(RHINO_BNF, ["fuzzingbook", "isla", "fandango", "grammarinator"], tmp_path)
+    assert result.ok
+    assert set(result.written) == {"fuzzingbook", "isla", "fandango", "grammarinator"}
+    assert not result.skipped
+    assert result.written["grammarinator"].suffix == ".g4"
 
 
 def test_ambiguity_in_the_fandango_grammar_is_reported():
@@ -70,3 +73,64 @@ def test_ambiguity_in_the_fandango_grammar_is_reported():
     g = load(FIXTURES / "rhino.fan")
     risks = expressibility(g, "isla").risks
     assert any("IDENT_NUM" in r and "IDENT_STR" in r for r in risks)
+
+
+# ------------------------------------------------------- real ANTLR grammars
+
+ANTLR_FIXTURES = ["rhino.g4", "basic.g4", "lua_constraints.g4"]
+CLUSGRAM = Path("/Users/usi/Documents/RESEARCH/ClusGram/subjects")
+
+
+@pytest.mark.parametrize("name", ANTLR_FIXTURES)
+def test_real_antlr_grammars_parse_cleanly(name):
+    from spreadex.grammar import diagnose, load
+
+    g = load(FIXTURES / name)
+    assert len(g.rules) > 50
+    assert diagnose(g).ok, f"{name} produced grammar errors"
+
+
+def test_lexer_rules_and_negation_are_handled():
+    """basic.g4 has real lexer rules with character sets and `~[\\r\\n]`."""
+    from spreadex.grammar import parse_antlr
+
+    g, notes = parse_antlr((FIXTURES / "basic.g4").read_text())
+    assert any("bounded alphabet" in a for a in notes.approximated)
+    assert "REM_LINE" in g.rules
+
+
+def test_a_constraints_grammar_reports_what_it_dropped():
+    """The constraint grammars carry semantic predicates, which cannot run
+    during generation -- the user has to be told."""
+    from spreadex.grammar import parse_antlr
+
+    _, notes = parse_antlr((FIXTURES / "lua_constraints.g4").read_text())
+    assert notes.ignored_predicates > 0
+    assert any(f.code == "antlr-predicates" for f in notes.as_findings())
+
+
+@pytest.mark.parametrize("name", ANTLR_FIXTURES)
+def test_antlr_round_trip_preserves_every_rule(name):
+    from spreadex.grammar import load, parse_antlr, render
+
+    g = load(FIXTURES / name)
+    back = parse_antlr(render(g, "grammarinator", name))[0]
+    assert len(back.rules) == len(g.rules), "a rule was lost in the round trip"
+
+
+@pytest.mark.skipif(not CLUSGRAM.is_dir(), reason="ClusGram subjects not present")
+def test_every_clusgram_grammar_parses():
+    """The whole corpus: 6 subjects x plain and constraint variants."""
+    from spreadex.grammar import diagnose, load
+
+    paths = sorted(CLUSGRAM.glob("*/grammars/grammarinator/*.g4"))
+    assert len(paths) >= 12, f"expected the full corpus, found {len(paths)}"
+    failures = []
+    for path in paths:
+        try:
+            g = load(path)
+            if not diagnose(g).ok:
+                failures.append((path.name, "grammar errors"))
+        except Exception as exc:  # noqa: BLE001 - reporting every failure at once
+            failures.append((path.name, f"{type(exc).__name__}: {exc}"))
+    assert not failures, f"{len(failures)} grammar(s) failed: {failures}"

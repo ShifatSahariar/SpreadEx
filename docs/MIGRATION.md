@@ -123,3 +123,69 @@ that no synthetic example would have:
    `IDENT_NUM` and `IDENT_STR` identically and ISLa fails on it;
    `rhino.bnf` has a duplicate pair too and ISLa handles it fine. So it is
    reported as a risk, not a refusal.
+
+
+## What ANTLR support taught us
+
+1. **Action blocks need a scanner that knows the target language.** A Python
+   comment reading `the outer loop's update` has one apostrophe; a scanner that
+   tracks quotes but not comments opens a string there and swallows the closing
+   brace. Rather than teach every pass about Python and Java lexing, the
+   interior of each action block is blanked in one pass up front.
+2. **The lexer/parser split does not exist for generation.** A lexer rule is
+   just a rule that produces text, so both kinds share one namespace and
+   `fragment` is unremarkable. On output everything becomes a *parser* rule,
+   because ANTLR forbids a lexer rule from referencing a parser rule and a
+   grammar written in another notation has no such separation to preserve.
+3. **Sets defined by exclusion do not survive the trip.** `.` and `~[...]` are
+   exact when parsing and unbounded when generating. They expand against a
+   documented printable alphabet, and the approximation is reported rather than
+   hidden.
+4. **Dropping a semantic predicate changes what gets generated.** The
+   `*_constraints.g4` grammars carry 10-29 predicates each, enforcing things
+   like "this identifier was declared". They cannot run during generation, so
+   this is a warning, not an informational note.
+
+
+## A correctness bug this surfaced in the research grammars
+
+Converting ANTLR grammars exposed a problem in the existing FuzzingBook path,
+not in the new code.
+
+FuzzingBook's `convert_ebnf_grammar` treats a `+`, `*` or `?` that merely
+*follows* a `<nonterminal>` as an EBNF operator. In a JavaScript grammar those
+characters are usually literal text, so the conversion silently changes the
+language:
+
+| written by the author | what FuzzingBook generates |
+|---|---|
+| `<identifier>++;` | `<identifier-1>+;` -- *one or more* identifiers, then `+;` |
+| `<identifier>?.<property>` | `<identifier-2>.<property>` -- `?.` gone, object optional |
+| `for (...; <identifier>++)` | loop increment becomes repeated identifiers |
+
+`research/GRAMMARS/EBNF_TOOLS/FUZZINGBOOK/KARATEJS/karatejs_grammar.py` has
+five such occurrences, and the conversion invents five extra rules. KarateJS is
+the subject with full published data. By contrast the `+` and `*` in the BASIC
+and CALC grammars are genuine EBNF and convert correctly.
+
+Two responses here:
+
+- SpreadEx-emitted FuzzingBook grammars carry `SPREADEX_PURE_BNF = True` and
+  the adapter skips the conversion, because a derived grammar has already had
+  every operator desugared into rules.
+- `spreadex grammar check` reports the hazard as `ebnf-operator-literal` for
+  any grammar, including hand-written ones.
+
+## A limitation worth stating plainly
+
+Real ANTLR grammars are richer than hand-written fuzzing grammars, and
+FuzzingBook and ISLa do not always scale to them. From one BNF source all four
+generators run; from `rhino.g4` (106 rules of near-complete JavaScript) only
+Fandango and Grammarinator finish in seconds, while FuzzingBook manages a
+handful of inputs and ISLa none. Some derivations of a deeply recursive
+expression grammar simply explode, and FuzzingBook's `max_nonterminals` does
+not rescue it: too low and it spins retrying, too high and it blows up.
+
+This is reported, not hidden. A generator that exhausts its budget now returns
+whatever it had already written rather than nothing, and the campaign continues
+with the generators that finished.

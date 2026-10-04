@@ -12,3 +12,7 @@ check:
 capabilities:
   grammar: antlr4
   constraints: false
+generation:
+  # Two steps: grammarinator-process compiles the .g4 into a Python generator
+  # class (cached by grammar content), then grammarinator-generate runs it.
+  cli: [process, generate]

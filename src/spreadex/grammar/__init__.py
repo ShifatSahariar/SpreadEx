@@ -15,12 +15,13 @@ from pathlib import Path
 from .desugar import desugar
 from .diagnose import Expressibility, Finding, Report, Severity, diagnose, expressibility
 from .ir import Feature, Grammar
+from .antlr import parse_antlr
 from .parse import GrammarError, load, parse_bnf, parse_fuzzingbook
 from .render import EXTENSIONS, RENDERERS, RenderError, render
 
 __all__ = [
     "Grammar", "Feature", "GrammarError", "RenderError",
-    "load", "parse_bnf", "parse_fuzzingbook", "desugar", "render",
+    "load", "parse_bnf", "parse_fuzzingbook", "parse_antlr", "desugar", "render",
     "diagnose", "expressibility", "Report", "Finding", "Severity", "Expressibility",
     "adapt", "AdaptResult", "EXTENSIONS", "RENDERERS",
 ]
@@ -56,6 +57,10 @@ def adapt(
     source = Path(source)
     grammar = load(source, start=start)
     report = diagnose(grammar)
+    if source.suffix.lower() == ".g4":
+        # Say what reading the ANTLR grammar had to ignore or approximate.
+        notes = parse_antlr(source.read_text(), str(source), start=start)[1]
+        report.findings.extend(notes.as_findings())
     result = AdaptResult(grammar=grammar, report=report)
     if not report.ok:
         return result

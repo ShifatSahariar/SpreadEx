@@ -10,6 +10,7 @@ module exists to prevent.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from .desugar import desugar, flatten_alternatives
 from .diagnose import expressibility
@@ -109,7 +110,18 @@ def _ordered(g: Grammar) -> list[str]:
 def render_fuzzingbook(g: Grammar, source: str = "a SpreadEx grammar") -> str:
     """A Python module defining GRAMMAR, as FuzzingBook expects."""
     prepared = _prepare(g, "fuzzingbook")
-    lines = [HEADER.format(source=source), "", "GRAMMAR = {"]
+    lines = [
+        HEADER.format(source=source),
+        "",
+        "# Already plain BNF: every EBNF operator has been desugared into rules.",
+        "# Do NOT run fuzzingbook's convert_ebnf_grammar() over this -- it would",
+        "# read a literal '+', '*' or '?' following a <nonterminal> as an operator.",
+        "# A JavaScript '<identifier>++;' would silently become 'one or more",
+        "# identifiers, then +;'.",
+        "SPREADEX_PURE_BNF = True",
+        "",
+        "GRAMMAR = {",
+    ]
     for name in _ordered(prepared):
         alts = prepared.alternatives(name)
         rendered = ", ".join(json.dumps(_flat_string(a, name)) for a in alts)
@@ -230,13 +242,99 @@ def _fan_alt(node: Node, parenthesize: bool = False) -> str:
     raise RenderError(f"cannot render {type(node).__name__} for Fandango")
 
 
+# ------------------------------------------------------------------- ANTLRv4
+
+def render_antlr(g: Grammar, source: str = "a SpreadEx grammar",
+                 name: str | None = None) -> str:
+    """ANTLRv4, which is what Grammarinator consumes.
+
+    Everything is emitted as a PARSER rule (lowercase initial) with terminals
+    inline as literals. ANTLR forbids a lexer rule from referencing a parser
+    rule, and a grammar written in another notation has no such separation, so
+    keeping it all on one side is the only mapping that cannot produce an
+    invalid grammar.
+    """
+    from .antlr import antlr_rule_name, escape_antlr_literal
+
+    prepared = _prepare(g, "grammarinator")
+    taken: dict[str, str] = {}
+    # Name the start rule first so it keeps the cleanest spelling.
+    for rule in _ordered(prepared):
+        antlr_rule_name(rule, taken)
+
+    grammar_name = _antlr_grammar_name(name or source)
+    lines = [f"// {HEADER.format(source=source)[2:]}", "",
+             f"grammar {grammar_name};", ""]
+    for rule in _ordered(prepared):
+        alts = prepared.alternatives(rule)
+        rendered = [_antlr_alt(a, taken, escape_antlr_literal) for a in alts]
+        head = f"{taken[rule]} : "
+        one_line = head + " | ".join(rendered) + " ;"
+        if len(one_line) <= 100 or len(rendered) == 1:
+            lines.append(one_line)
+        else:
+            lines.append(head.rstrip())
+            for i, alt in enumerate(rendered):
+                prefix = "      " if i == 0 else "    | "
+                lines.append(f"{prefix}{alt}")
+            lines.append("    ;")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _antlr_grammar_name(source: str) -> str:
+    import re as _re
+
+    stem = Path(source).stem if "/" in source or "." in source else source
+    cleaned = _re.sub(r"[^A-Za-z0-9_]", "_", stem) or "Generated"
+    if not cleaned[0].isalpha():
+        cleaned = "G" + cleaned
+    return cleaned[0].upper() + cleaned[1:]
+
+
+def _antlr_alt(node: Node, taken: dict[str, str], escape, parenthesize: bool = False) -> str:
+    if isinstance(node, Lit):
+        # ANTLR has no empty literal; an empty alternative is just nothing.
+        return "" if node.text == "" else f"'{escape(node.text)}'"
+    if isinstance(node, Regex):
+        raise RenderError(
+            f"ANTLR output cannot carry the regex terminal r'{node.pattern}'. "
+            f"This is a preparation bug -- please report it."
+        )
+    if isinstance(node, Ref):
+        return taken.get(node.name, node.name)
+    if isinstance(node, Seq):
+        body = " ".join(x for x in
+                        (_antlr_alt(i, taken, escape, True) for i in node.items) if x)
+        return f"({body})" if parenthesize and len(node.items) > 1 else body
+    if isinstance(node, Alt):
+        return "(" + " | ".join(_antlr_alt(o, taken, escape) for o in node.options) + ")"
+    if isinstance(node, Repeat):
+        inner = _antlr_alt(node.node, taken, escape, True) or "()"
+        if (node.min, node.max) == (0, 1):
+            return f"{inner}?"
+        if (node.min, node.max) == (0, None):
+            return f"{inner}*"
+        if (node.min, node.max) == (1, None):
+            return f"{inner}+"
+        # ANTLR has no {m,n}: write it out.
+        parts = []
+        hi = node.max
+        for count in range(node.min, hi + 1):
+            parts.append(" ".join([inner] * count) if count else "")
+        return "(" + " | ".join(parts) + ")"
+    raise RenderError(f"cannot render {type(node).__name__} for ANTLR")
+
+
 RENDERERS = {
     "fuzzingbook": render_fuzzingbook,
     "isla": render_isla,
     "fandango": render_fandango,
+    "grammarinator": render_antlr,
 }
 
-EXTENSIONS = {"fuzzingbook": ".py", "isla": ".bnf", "fandango": ".fan"}
+EXTENSIONS = {"fuzzingbook": ".py", "isla": ".bnf", "fandango": ".fan",
+              "grammarinator": ".g4"}
 
 
 def render(g: Grammar, generator: str, source: str = "a SpreadEx grammar") -> str:
