@@ -197,7 +197,8 @@ def cmd_ui(args) -> int:
     try:
         serve(config, host=args.host, port=args.port,
               open_browser=not args.no_open, verbose=args.verbose,
-              read_only=args.read_only, new_token=args.new_token)
+              read_only=args.read_only, new_token=args.new_token,
+              experimental=args.experimental)
     except OSError as exc:
         _die(f"could not start the UI on {args.host}:{args.port}: {exc}\n"
              f"  Fix: pass --port to pick another, or stop whatever is using it.", code=1)
@@ -600,6 +601,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="refuse every change: the UI can then only look at finished runs")
     s.add_argument("--new-token", action="store_true",
                    help="rotate this project's UI token, invalidating saved links")
+    s.add_argument("--experimental", action="store_true",
+                   help="enable the grammar assistant, which sends grammar context to "
+                        "a model provider you configure")
     s.set_defaults(func=cmd_ui)
 
     s = sub.add_parser("grammar", help="check a grammar, or derive each generator's dialect")

@@ -181,6 +181,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(setup.start_run(self.server, body))
             return
         if route == "/api/assist":
+            if not getattr(self.server, "spreadex_experimental", False):
+                self._error(HTTPStatus.FORBIDDEN,
+                            "the grammar assistant is experimental and off by default; "
+                            "restart with `spreadex ui --experimental` to enable it")
+                return
             self._json(setup.assist(self.config, body))
             return
         if route == "/api/grammar/save":
@@ -230,6 +235,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "differential": self.config.is_differential,
                 "signal": self.config.signal,
                 "oracle": self.config.oracle.get("type"),
+                "experimental": getattr(self.server, "spreadex_experimental", False),
             })
             return
         if route == "/api/runs":
@@ -277,7 +283,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if route == "/api/providers":
             from . import setup
-            self._json(setup.llm_providers())
+            if not getattr(self.server, "spreadex_experimental", False):
+                self._json({"providers": [], "experimental": False})
+                return
+            self._json({**setup.llm_providers(), "experimental": True})
             return
 
         if route.startswith("/api/"):
@@ -379,7 +388,7 @@ def reload_project(server) -> None:
 
 def serve(config, host: str = "127.0.0.1", port: int = 8777,
           open_browser: bool = True, verbose: bool = False,
-          read_only: bool = False, new_token: bool = False,
+          read_only: bool = False, new_token: bool = False, experimental: bool = False,
           token: str | None = None, log=_emit) -> None:
     """Run the UI until interrupted. Foreground on purpose.
 
@@ -393,6 +402,10 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
     httpd.spreadex_token = token
     httpd.spreadex_verbose = verbose
     httpd.spreadex_read_only = read_only
+    # The grammar assistant is the one feature that leaves this machine, and
+    # the one with no evaluation behind it. v0.1 is deterministic and offline
+    # unless someone opts in on the command line.
+    httpd.spreadex_experimental = experimental
     httpd.spreadex_jobs = JobRunner()
     actual_port = httpd.server_address[1]
 

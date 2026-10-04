@@ -426,9 +426,16 @@ async function stepGrammar() {
     <div id="ginfo"></div>
     <div class="actions">
       <button class="ghost" onclick="gotoStep('sut')">Back</button>
-      <button class="ghost" onclick="toggleAssistant()">Help me write one</button>
+      ${S.project?.experimental
+        ? `<button class="ghost" onclick="toggleAssistant()">Help me write one</button>`
+        : ""}
       <button class="primary" onclick="commitGrammar()">Continue</button>
     </div>
+    ${S.project?.experimental ? "" : `<div class="note">
+      No grammar yet? SpreadEx can ask a model to draft one from examples and then check its
+      answer against your inputs before offering it. That is the one feature that sends anything
+      off this machine, it has no evaluation behind it, and it is off by default:
+      <span class="mono">spreadex ui --experimental</span>.</div>`}
   </div>
   <div id="assistant"></div>`;
   if (chosen) inspectGrammar();

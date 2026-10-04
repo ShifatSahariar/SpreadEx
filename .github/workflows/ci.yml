@@ -27,11 +27,22 @@ jobs:
             fi
           done
       - run: pytest tests/ -q -m "not network" --ignore=tests/golden
+      # This runs WITHOUT the research repository, against outputs frozen from
+      # it, so every fork and every pull request verifies the published
+      # algorithms rather than only that the code imports.
+      - name: Published algorithms, from frozen reference outputs
+        run: pytest tests/test_golden_fixtures.py -q
       - name: End-to-end, as a new user would run it
         shell: bash
         run: |
           cd examples/toy-parser
           spreadex doctor
+      - name: The journey a stranger takes
+        shell: bash
+        run: |
+          mkdir -p /tmp/journey && cd /tmp/journey
+          spreadex demo --no-run
+          cd spreadex-demo && spreadex doctor
           spreadex run -j 4
           spreadex export -o campaign.zip && test -f campaign.zip
       - name: Differential example
@@ -56,7 +67,9 @@ jobs:
           test "$(code http://127.0.0.1:8799/api/runs)" = 401
           test "$(code -H 'Host: evil.example.com' -H "X-SpreadEx-Token: $TOKEN" http://127.0.0.1:8799/api/runs)" = 403
 
-  # The gate: the tool must still compute the published algorithms.
+  # The authority: the tool checked against the real ICST 2026 code. Needs a
+  # checkout that forks do not have, which is why the frozen-fixture check
+  # above runs everywhere and this one gates releases.
   golden:
     runs-on: ubuntu-latest
     steps:

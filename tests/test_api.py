@@ -42,6 +42,7 @@ def served(tmp_path_factory):
     httpd.spreadex_token = "test-token-value"
     httpd.spreadex_verbose = False
     httpd.spreadex_read_only = False
+    httpd.spreadex_experimental = False   # the default a user gets
     httpd.spreadex_jobs = JobRunner()
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -247,7 +248,14 @@ def post(url, body, token=None, host=None, as_query=False):
         with urlopen(req, timeout=30) as r:
             return r.status, json.loads(r.read())
     except HTTPError as exc:
-        return exc.code, None
+        # Keep the body: for a refusal the message is the actionable part, and
+        # a test that only sees the status cannot tell a helpful 403 from a
+        # blank one.
+        raw = exc.read()
+        try:
+            return exc.code, json.loads(raw)
+        except ValueError:
+            return exc.code, {"error": raw.decode("utf-8", "replace")}
 
 
 def test_writes_reject_a_token_supplied_only_in_the_query(served):
@@ -322,14 +330,14 @@ def test_activity_is_idle_before_anything_runs(served):
 
 # --------------------------------------------------------- assistance routes
 
-def test_providers_are_listed(served):
-    base, token, _ = served
+def test_providers_are_listed(experimental_server):
+    base, token, _ = experimental_server
     _, body = get(f"{base}/api/providers", token)
     assert {p["id"] for p in body["providers"]} == {"openai", "anthropic", "ollama"}
 
 
-def test_assist_without_a_key_fails_clearly(served, monkeypatch):
-    base, token, _ = served
+def test_assist_without_a_key_fails_clearly(experimental_server, monkeypatch):
+    base, token, _ = experimental_server
     status, body = post(f"{base}/api/assist",
                         {"task": "infer", "provider": "openai", "description": "a tiny language"},
                         token=token)
@@ -337,8 +345,8 @@ def test_assist_without_a_key_fails_clearly(served, monkeypatch):
     assert "API key" in body["error"]
 
 
-def test_assist_rejects_an_unknown_task(served):
-    base, token, _ = served
+def test_assist_rejects_an_unknown_task(experimental_server):
+    base, token, _ = experimental_server
     _, body = post(f"{base}/api/assist", {"task": "take-over-the-world"}, token=token)
     assert body["ok"] is False and "unknown task" in body["error"]
 
@@ -435,6 +443,29 @@ def test_each_project_gets_its_own_token(tmp_path):
 
 
 # --------------------------------------------------- unconfigured projects
+
+@pytest.fixture
+def experimental_server(served):
+    """The same project, served with the grammar assistant switched on.
+
+    Its own server rather than a flag flipped on the shared one: the whole
+    point of the other tests is that the assistant is absent unless asked for,
+    and a fixture that mutated the shared server could not promise that.
+    """
+    _, _, config = served
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    httpd.spreadex_config = config
+    httpd.spreadex_token = "test-token-value"
+    httpd.spreadex_verbose = False
+    httpd.spreadex_read_only = False
+    httpd.spreadex_experimental = True
+    httpd.spreadex_jobs = JobRunner()
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", httpd.spreadex_token, config
+    httpd.shutdown()
+    httpd.server_close()
+
 
 @pytest.fixture
 def empty_project(tmp_path):
@@ -672,3 +703,29 @@ def test_probe_is_refused_in_read_only_mode(empty_project):
         assert status == 403
     finally:
         httpd.spreadex_read_only = False
+
+
+# ------------------------------------------- the assistant is off by default
+
+def test_the_assistant_is_refused_unless_asked_for(served):
+    """Hiding the button is not an off switch. The route has to refuse, so a
+    default install cannot be made to contact a model provider at all."""
+    base, token, _ = served
+    status, body = post(f"{base}/api/assist",
+                        {"task": "infer", "description": "anything"}, token=token)
+    assert status == 403
+    assert "--experimental" in json.dumps(body)
+
+
+def test_providers_are_empty_unless_asked_for(served):
+    """The UI asks this to decide whether to offer the feature at all."""
+    base, token, _ = served
+    _, body = get(f"{base}/api/providers", token)
+    assert body["providers"] == [] and body["experimental"] is False
+
+
+def test_the_project_payload_says_whether_it_is_on(served, experimental_server):
+    _, project = get(f"{served[0]}/api/project", served[1])
+    assert project["experimental"] is False
+    _, project = get(f"{experimental_server[0]}/api/project", experimental_server[1])
+    assert project["experimental"] is True
