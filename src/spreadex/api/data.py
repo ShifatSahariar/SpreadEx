@@ -183,10 +183,16 @@ def input_text(state_dir: Path, blob_hash: str) -> dict[str, Any] | None:
         }
 
 
-def grammar_report(config) -> dict[str, Any]:
+def grammar_report(config, source_override: str | None = None) -> dict[str, Any]:
     """Static grammar diagnostics and per-generator expressibility."""
     from ..core.sources import grammar_for
-    from ..grammar import RENDERERS, GrammarError, diagnose, expressibility, load
+
+    if source_override:
+        candidate = (config.project_root / source_override).resolve()
+        if not candidate.is_file() or config.project_root.resolve() not in candidate.parents:
+            return {"configured": True, "source": source_override,
+                    "error": "that grammar is not inside this project"}
+        return _report_for(config, candidate)
 
     sources: dict[str, str] = {}
     for generator in config.generators or []:
@@ -199,7 +205,12 @@ def grammar_report(config) -> dict[str, Any]:
     if not sources:
         return {"configured": False}
 
-    path = Path(next(iter(sources)))
+    return _report_for(config, Path(next(iter(sources))))
+
+
+def _report_for(config, path: Path) -> dict[str, Any]:
+    from ..grammar import RENDERERS, GrammarError, diagnose, expressibility, load
+
     try:
         grammar = load(path)
     except (GrammarError, OSError) as exc:

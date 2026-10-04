@@ -157,8 +157,17 @@ expressibility.
 spreadex ui
 ```
 
-Prints a tokenized `http://127.0.0.1:…` URL and opens it. Four views, each tied
-to a decision rather than to a metric that looked nice:
+Prints a tokenized `http://127.0.0.1:…` URL and opens it. Two halves: a **setup
+wizard** and **results**.
+
+The wizard walks system under test → grammar → generators → budget, and ends on
+the `spreadex.yaml` it is about to write. You review that file, and the campaign
+runs exactly it — the server never synthesises a command. Along the way it shows
+which generators are installed (and installs them), and what each one can
+express about your grammar before a budget is spent finding out.
+
+Results gives four views, each tied to a decision rather than to a metric that
+looked nice:
 
 - **Generator comparison** — cluster coverage beside input count and generation
   cost, so a coverage number is never read without its price.
@@ -170,16 +179,22 @@ to a decision rather than to a metric that looked nice:
 - **Grammar** — diagnostics and what each generator can express, before a
   budget is spent finding out.
 
-It is **read-only**: the UI reads `.spreadex/` and never starts, stops or
-changes a campaign, which keeps the browser out of the trust path for anything
-that executes code. It is also stdlib-only, so it needs no extra install, and
-its Content-Security-Policy forbids loading anything off-machine.
+The UI can write `spreadex.yaml` and launch campaigns, which means the browser
+can cause code to run. A localhost bind is not an authentication boundary —
+any page you visit can POST to 127.0.0.1, and DNS rebinding defeats naive Origin
+checks. So:
 
-A localhost bind is not an authentication boundary — any page you visit can
-POST to 127.0.0.1, and DNS rebinding defeats naive Origin checks. So: a random
-per-session token on every API request, and strict `Host` validation, which is
-what actually stops rebinding. The server runs in the foreground, so it cannot
-be orphaned and there is never a question of which instance you are looking at.
+- a random per-session token is required on every API request, and **mutating
+  routes take it from a header only** — a cross-origin form can POST but cannot
+  set a custom header without a CORS preflight this server never answers;
+- the `Host` header must name a loopback address, which is what actually stops
+  rebinding, and holds even for a request carrying a valid token;
+- a Content-Security-Policy forbids loading anything off-machine;
+- `spreadex ui --read-only` refuses every change, leaving only the result views.
+
+It is stdlib-only, so it needs no extra install, and it runs in the foreground,
+so it cannot be orphaned and there is never a question of which instance you are
+looking at.
 
 ## Selection signals
 

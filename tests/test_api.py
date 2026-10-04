@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from spreadex.api import data
+from spreadex.api.jobs import JobRunner
 from spreadex.api.server import _Handler
 from spreadex.core.campaign import Campaign
 from spreadex.core.config import load_config
@@ -40,10 +41,28 @@ def served(tmp_path_factory):
     httpd.spreadex_config = config
     httpd.spreadex_token = "test-token-value"
     httpd.spreadex_verbose = False
+    httpd.spreadex_read_only = False
+    httpd.spreadex_jobs = JobRunner()
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     port = httpd.server_address[1]
     yield f"http://127.0.0.1:{port}", httpd.spreadex_token, config
+    httpd.shutdown()
+    httpd.server_close()
+
+
+@pytest.fixture(scope="module")
+def read_only_server(served):
+    """The same project, served with --read-only."""
+    _, token, config = served
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    httpd.spreadex_config = config
+    httpd.spreadex_token = token
+    httpd.spreadex_verbose = False
+    httpd.spreadex_read_only = True
+    httpd.spreadex_jobs = JobRunner()
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", token
     httpd.shutdown()
     httpd.server_close()
 
@@ -210,3 +229,92 @@ def test_unknown_api_routes_still_404_rather_than_redirect(served):
     """An API typo must fail loudly; only browser paths are forgiven."""
     base, token, _ = served
     assert status_of(f"{base}/api/nonsense", token=token) == 404
+
+
+# ------------------------------------------------------------ write access
+
+def post(url, body, token=None, host=None, as_query=False):
+    import urllib.parse
+
+    target = f"{url}?token={urllib.parse.quote(token)}" if as_query and token else url
+    req = Request(target, data=json.dumps(body).encode(),
+                  headers={"Content-Type": "application/json"}, method="POST")
+    if token and not as_query:
+        req.add_header("X-SpreadEx-Token", token)
+    if host:
+        req.add_header("Host", host)
+    try:
+        with urlopen(req, timeout=30) as r:
+            return r.status, json.loads(r.read())
+    except HTTPError as exc:
+        return exc.code, None
+
+
+def test_writes_reject_a_token_supplied_only_in_the_query(served):
+    """A mutating route takes its token from a HEADER only. A cross-origin form
+    can POST but cannot set a custom header without a CORS preflight that this
+    server never answers -- that is what keeps a hostile page out."""
+    base, token, _ = served
+    assert post(f"{base}/api/config", {"yaml": "x"}, token=token, as_query=True)[0] == 401
+    assert post(f"{base}/api/config", {"yaml": "x"}, token=token)[0] == 200
+
+
+def test_writes_reject_a_non_local_host(served):
+    base, token, _ = served
+    assert post(f"{base}/api/config", {"yaml": "x"}, token=token,
+                host="evil.example.com")[0] == 403
+
+
+def test_writes_require_a_token_at_all(served):
+    base, _, _ = served
+    assert post(f"{base}/api/config", {"yaml": "x"})[0] == 401
+
+
+def test_config_is_validated_before_it_is_written(served):
+    """A broken configuration must never land on top of a working one."""
+    base, token, config = served
+    original = (config.project_root / "spreadex.yaml").read_text()
+
+    status, body = post(f"{base}/api/config", {"yaml": "sut: {}\n", "write": True}, token=token)
+    assert status == 200 and body["ok"] is False
+    assert body["errors"]
+    assert (config.project_root / "spreadex.yaml").read_text() == original
+
+
+def test_a_dry_run_does_not_write(served):
+    base, token, config = served
+    original = (config.project_root / "spreadex.yaml").read_text()
+    good = 'sut:\n  command: ["echo", "{input}"]\ncorpus: {path: ./seeds}\ngenerators: []\n'
+
+    status, body = post(f"{base}/api/config", {"yaml": good}, token=token)
+    assert status == 200 and body["ok"] is True and "preview" in body
+    assert (config.project_root / "spreadex.yaml").read_text() == original
+
+    status, body = post(f"{base}/api/config", {"yaml": good, "write": True}, token=token)
+    assert body["ok"] is True and "written" in body
+    assert (config.project_root / "spreadex.yaml").read_text() == good
+
+
+def test_read_only_mode_refuses_every_write(read_only_server):
+    base, token = read_only_server
+    assert post(f"{base}/api/config", {"yaml": "x"}, token=token)[0] == 403
+    assert post(f"{base}/api/run", {}, token=token)[0] == 403
+    # Reading still works: --read-only restricts changes, not visibility.
+    assert status_of(f"{base}/api/runs", token=token) == 200
+
+
+def test_generator_and_file_listings(served):
+    base, token, _ = served
+    _, gens = get(f"{base}/api/generators", token)
+    ids = {g["id"] for g in gens["generators"]}
+    assert {"fuzzingbook", "fandango", "isla", "grammarinator"} <= ids
+    assert all("installed" in g and "dialect" in g for g in gens["generators"])
+
+    _, files = get(f"{base}/api/files", token)
+    assert "grammars" in files
+
+
+def test_activity_is_idle_before_anything_runs(served):
+    base, token, _ = served
+    _, body = get(f"{base}/api/activity", token)
+    assert body.get("idle") or body.get("done")

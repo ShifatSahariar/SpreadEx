@@ -14,7 +14,16 @@ Four controls, in order of what actually stops what:
 3. a Content-Security-Policy that forbids loading anything off-machine;
 4. loopback by default, with --host deliberate and loud.
 
-The server reads `.spreadex/` and never starts, stops or alters a campaign.
+WRITE ACCESS. The setup wizard creates `spreadex.yaml` and launches campaigns,
+so the UI is no longer read-only and the browser can now cause code to run.
+Three things keep that honest:
+
+- every mutating route is POST and takes its token from a HEADER, never the
+  query string. A cross-origin form cannot set a custom header, and no CORS
+  headers are ever sent, so a hostile page cannot reach these routes at all;
+- the command a campaign will execute is the one the user just reviewed and
+  wrote to `spreadex.yaml`; the server never synthesises a command;
+- `--read-only` restores the previous posture, with every POST refused.
 """
 
 from __future__ import annotations
@@ -30,6 +39,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import data
+from .jobs import JobRunner
 
 STATIC_DIR = Path(__file__).parent / "static"
 ALLOWED_HOSTNAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
@@ -92,14 +102,71 @@ class _Handler(BaseHTTPRequestHandler):
 
     # --------------------------------------------------------------- routing
 
+    def _reject_non_local(self) -> bool:
+        if self._host_is_local():
+            return False
+        # A request whose Host is not a loopback name reached us through
+        # someone else's DNS: refuse before looking at anything else.
+        self._error(HTTPStatus.FORBIDDEN, "non-local Host header refused")
+        return True
+
     def do_HEAD(self):
         self.do_GET()
 
+    def do_POST(self):
+        # Read the body FIRST, whatever the verdict. On a keep-alive connection
+        # an unread body stays in the socket and desynchronises the next
+        # request, so a rejected POST would break the request after it.
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length else b""
+
+        if self._reject_non_local():
+            return
+        parsed = urlparse(self.path)
+        route = parsed.path.rstrip("/") or "/"
+
+        # A mutating route accepts the token only from a header. A cross-origin
+        # form can POST, but it cannot set a custom header without a CORS
+        # preflight that this server never answers.
+        header_token = self.headers.get("X-SpreadEx-Token") or ""
+        if not secrets.compare_digest(header_token, self.server.spreadex_token):
+            self._error(HTTPStatus.UNAUTHORIZED, "missing or invalid token header")
+            return
+        if self.server.spreadex_read_only:
+            self._error(HTTPStatus.FORBIDDEN,
+                        "this UI was started with --read-only; it cannot change anything")
+            return
+
+        try:
+            body = json.loads(raw or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            self._error(HTTPStatus.BAD_REQUEST, "body must be JSON")
+            return
+
+        try:
+            self._route_post(route, body)
+        except Exception as exc:  # noqa: BLE001 - a view must not kill the server
+            self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"{type(exc).__name__}: {exc}")
+
+    def _route_post(self, route: str, body: dict) -> None:
+        from . import setup
+
+        if route == "/api/config":
+            self._json(setup.save_config(self.config, body))
+            return
+        if route == "/api/generators/install":
+            self._json(setup.start_install(self.server, body))
+            return
+        if route == "/api/run":
+            self._json(setup.start_run(self.server, body))
+            return
+        self._error(HTTPStatus.NOT_FOUND, f"no route {route!r}")
+
     def do_GET(self):
-        if not self._host_is_local():
-            # A request whose Host is not a loopback name reached us through
-            # someone else's DNS: refuse before looking at anything else.
-            self._error(HTTPStatus.FORBIDDEN, "non-local Host header refused")
+        if self._reject_non_local():
             return
 
         parsed = urlparse(self.path)
@@ -164,7 +231,25 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(payload)
             return
         if route == "/api/grammar":
-            self._json(data.grammar_report(self.config))
+            source = (query.get("source") or [None])[0]
+            self._json(data.grammar_report(self.config, source))
+            return
+        if route == "/api/config":
+            from . import setup
+            self._json(setup.read_config(self.config))
+            return
+        if route == "/api/generators":
+            from . import setup
+            self._json(setup.generator_status(self.config))
+            return
+        if route == "/api/activity":
+            since = int((query.get("since") or ["0"])[0] or 0)
+            job = self.server.spreadex_jobs.current
+            self._json(job.snapshot(since) if job else {"idle": True})
+            return
+        if route == "/api/files":
+            from . import setup
+            self._json(setup.list_candidate_grammars(self.config))
             return
 
         if route.startswith("/api/"):
@@ -200,7 +285,8 @@ def _emit(line: str = "") -> None:
 
 
 def serve(config, host: str = "127.0.0.1", port: int = 8777,
-          open_browser: bool = True, verbose: bool = False, log=_emit) -> None:
+          open_browser: bool = True, verbose: bool = False,
+          read_only: bool = False, log=_emit) -> None:
     """Run the UI until interrupted. Foreground on purpose.
 
     A foreground server cannot be orphaned, cannot collide with a forgotten
@@ -212,6 +298,8 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
     httpd.spreadex_config = config
     httpd.spreadex_token = token
     httpd.spreadex_verbose = verbose
+    httpd.spreadex_read_only = read_only
+    httpd.spreadex_jobs = JobRunner()
     actual_port = httpd.server_address[1]
 
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{actual_port}/?token={token}"
@@ -220,7 +308,11 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
     if host not in ("127.0.0.1", "localhost", "::1"):
         log(f"  ! Listening on {host}, not just this machine. Anyone who can reach\n"
             f"    this port and has the token can read this project's corpus.\n")
-    log("  Read-only: the UI never starts or changes a campaign.")
+    if read_only:
+        log("  Read-only: this UI cannot change anything.")
+    else:
+        log("  This UI can edit spreadex.yaml and launch campaigns, which runs")
+        log("  your system under test. Start it with --read-only to forbid that.")
     log("  Press Ctrl-C to stop.\n")
 
     if open_browser:

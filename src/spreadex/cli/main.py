@@ -177,7 +177,8 @@ def cmd_ui(args) -> int:
     config = _load(args)
     try:
         serve(config, host=args.host, port=args.port,
-              open_browser=not args.no_open, verbose=args.verbose)
+              open_browser=not args.no_open, verbose=args.verbose,
+              read_only=args.read_only)
     except OSError as exc:
         _die(f"could not start the UI on {args.host}:{args.port}: {exc}\n"
              f"  Fix: pass --port to pick another, or stop whatever is using it.", code=1)
@@ -435,6 +436,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="interface to bind (default: loopback only)")
     s.add_argument("--no-open", action="store_true", help="do not open a browser")
     s.add_argument("-v", "--verbose", action="store_true", help="log every request")
+    s.add_argument("--read-only", action="store_true",
+                   help="refuse every change: the UI can then only look at finished runs")
     s.set_defaults(func=cmd_ui)
 
     s = sub.add_parser("grammar", help="check a grammar, or derive each generator's dialect")
