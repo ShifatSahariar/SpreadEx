@@ -58,6 +58,13 @@ def cmd_init(args) -> int:
 
 # ------------------------------------------------------------------- doctor
 
+def _print_checks(heading: str, checks) -> None:
+    print(f"{heading}")
+    for c in checks:
+        print(c.render())
+    print()
+
+
 def cmd_doctor(args) -> int:
     try:
         config = load_config(Path(args.config) if args.config else None)
@@ -69,14 +76,15 @@ def cmd_doctor(args) -> int:
             config = None
         else:
             print("SpreadEx doctor\n")
+            _print_checks("Installation", doctor_mod.installation_checks())
             print(f"  \u2717 spreadex.yaml could not be loaded\n")
             for line in str(exc).splitlines():
                 print(f"      {line}")
             return 1
     checks = doctor_mod.run_checks(config)
     print("SpreadEx doctor\n")
-    for c in checks:
-        print(c.render())
+    _print_checks("Installation", doctor_mod.installation_checks())
+    _print_checks("This project", checks)
     ok, warn, fail = doctor_mod.summarize(checks)
     print(f"\n{ok} ok, {warn} warning(s), {fail} problem(s)")
     if fail:
@@ -372,12 +380,19 @@ def cmd_generators(args) -> int:
 
 # ------------------------------------------------------------------- report
 
-def cmd_report(args) -> int:
+def cmd_results(args) -> int:
+    """The latest campaign by default; the history on request.
+
+    Someone who just ran a campaign wants to know how it went, not to be
+    handed a table of every run they have ever done.
+    """
     config = _load(args)
+    if not getattr(args, "all", False):
+        return _show_one_run(config, getattr(args, "run_id", None))
     with CorpusStore(config.state_dir) as store:
         runs = store.list_runs(limit=args.limit)
         if not runs:
-            print("No runs yet. Run `spreadex run`.")
+            print("No runs yet. Run `spreadex run`, or `spreadex demo` to see one.")
             return 0
         print(f"{'RUN':<22} {'SIGNAL':<8} {'EXECUTED':>9} {'FAILURES':>9}  FINISHED")
         for r in runs:
@@ -386,6 +401,38 @@ def cmd_report(args) -> int:
             failures = sum(summ.get(k, 0) for k in ("crash", "timeout", "divergence"))
             print(f"{r['run_id']:<22} {(r['signal_name'] or '-'):<8} "
                   f"{executed:>9} {failures:>9}  {r['finished_at'] or 'incomplete'}")
+    return 0
+
+
+def _show_one_run(config, run_id: str | None) -> int:
+    with CorpusStore(config.state_dir) as store:
+        run_id = run_id or store.latest_run_id()
+        if not run_id:
+            print("No campaigns yet.")
+            print("  Try one:  spreadex demo")
+            print("  Or yours: spreadex run")
+            return 0
+        summ = store.run_summary(run_id)
+        if not summ:
+            _die(f"no run {run_id!r}. `spreadex results --all` lists them.", code=1)
+        executed = sum(summ.values())
+        failures = sum(summ.get(k, 0) for k in ("crash", "timeout", "divergence"))
+        sigs = store.signatures_in_run(run_id)
+
+    print(f"Campaign {run_id}\n")
+    print(f"  Executed .............. {executed}")
+    print(f"  Passed ................ {summ.get('ok', 0)}")
+    print(f"  Rejected (expected) ... {summ.get('expected_rejection', 0)}")
+    print(f"  Failing ............... {failures}")
+    if sigs:
+        print(f"  Signatures ............ {len(sigs)}")
+        print("    (a signature is not a bug -- distinct bugs can share one,")
+        print("     and one bug can span several)")
+        for row in sigs[:10]:
+            print(f"      {row['signature']}  {row['verdict']:<11} x{row['n']}")
+    print(f"\n  Everything else:  spreadex ui")
+    print(f"  Reproduce:        spreadex replay {run_id}")
+    print(f"  Every campaign:   spreadex results --all")
     return 0
 
 
@@ -496,7 +543,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--version", action="version", version=f"spreadex {__version__}")
     p.add_argument("-c", "--config", help="path to spreadex.yaml")
-    sub = p.add_subparsers(dest="command_name", required=True)
+    # The metavar is set explicitly so hidden aliases stay out of the choices
+    # line: argparse lists every registered name there, help text or not.
+    sub = p.add_subparsers(
+        dest="command_name", required=True,
+        metavar="{init,doctor,run,demo,ui,grammar,generators,results,replay,export}")
 
     s = sub.add_parser("init", help="create spreadex.yaml in this project")
     s.add_argument("directory", nargs="?", help="project root (default: .)")
@@ -561,15 +612,26 @@ def build_parser() -> argparse.ArgumentParser:
     gsub = s.add_subparsers(dest="generators_action", required=True)
     gl = gsub.add_parser("list", help="show which generators are available")
     gl.set_defaults(func=cmd_generators)
+    # "status" is what people type when they want to know what is installed.
+    gs = gsub.add_parser("status", help="alias for `list`")
+    gs.set_defaults(func=cmd_generators, generators_action="list")
     gi = gsub.add_parser("install", help="install generators into isolated environments")
     gi.add_argument("ids", nargs="+")
     gi.add_argument("--upgrade", action="store_true")
     gi.set_defaults(func=cmd_generators)
     s.set_defaults(func=cmd_generators)
 
-    s = sub.add_parser("report", help="list past runs")
+    s = sub.add_parser("results", help="how the last campaign went")
+    s.add_argument("run_id", nargs="?", help="a specific campaign (default: the latest)")
+    s.add_argument("--all", action="store_true", help="list every campaign instead")
     s.add_argument("--limit", type=int, default=20)
-    s.set_defaults(func=cmd_report)
+    s.set_defaults(func=cmd_results)
+
+    # `report` was the name before v0.1. Kept working, kept out of the help, so
+    # nobody's notes and nobody's scripts break over a rename.
+    s = sub.add_parser("report")  # no help=: registered, but not advertised
+    s.add_argument("--limit", type=int, default=20)
+    s.set_defaults(func=cmd_results, all=True, run_id=None)
 
     s = sub.add_parser("replay", help="inspect or re-run a past campaign")
     s.add_argument("run_id", nargs="?")

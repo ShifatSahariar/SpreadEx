@@ -233,3 +233,14 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .rtabs button[aria-selected="true"] { color: var(--color-primary);
   border-bottom-color: var(--color-primary); }
 .rtabs .tag { margin-left: 4px; }
+
+/* Says where the work happens. Worded to claim exactly what the code does:
+   the UI and the engine are local; the opt-in assistant is not, and the
+   tooltip says so rather than promising blanket privacy. */
+.local-badge { display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 3px 9px; border: 1px solid var(--color-success-bd);
+  background: var(--color-success-lt); color: var(--color-success);
+  border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  cursor: help; }
+.local-badge .dot { width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-success); }

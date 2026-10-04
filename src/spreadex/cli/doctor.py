@@ -30,6 +30,87 @@ class Check:
         return line
 
 
+def installation_checks() -> list[Check]:
+    """Where this spreadex came from.
+
+    Printed before anything project-specific because the confusing failures
+    are the ones where `spreadex` is not the spreadex you think it is: an
+    older copy earlier on PATH, or a stale package directory shadowing the
+    installed one. Both look like "my fix did not work" and neither is
+    visible without being told.
+    """
+    import platform
+    import sys
+
+    import spreadex
+
+    checks: list[Check] = []
+    version = getattr(spreadex, "__version__", "unknown")
+    checks.append(Check("spreadex", OK, f"{version}"))
+
+    exe = shutil.which("spreadex")
+    if exe:
+        # The confusing case: `spreadex` on PATH belongs to a different
+        # install than the one this process is running from, so a fix applied
+        # to one is invisible to the other.
+        # Deliberately not resolved: a venv's python is a symlink to the base
+        # interpreter, and resolving it would report the base installation as
+        # "this process" and invent a mismatch that is not there.
+        own_bin = Path(sys.executable).parent
+        if Path(exe).resolve().parent != own_bin:
+            checks.append(Check(
+                "executable", WARN,
+                f"{exe}\n      but this process is {own_bin}/spreadex",
+                "two installs are visible; `pip uninstall spreadex` in the one "
+                "you do not want, or call the full path you mean",
+            ))
+        else:
+            checks.append(Check("executable", OK, exe))
+    else:
+        checks.append(Check(
+            "executable", WARN, "`spreadex` is not on PATH",
+            "the module works (you are running it), but add the install's bin "
+            "directory to PATH to type `spreadex`",
+        ))
+
+    pkg = Path(spreadex.__file__).resolve().parent
+    checks.append(Check("package", OK, str(pkg)))
+    # A package imported from a working tree is normal for development and
+    # deeply confusing in an install, so say which this is rather than judging.
+    if (pkg.parent.parent / "pyproject.toml").is_file():
+        checks.append(Check("source", OK, "editable install / working tree",
+                            "changes to the source take effect immediately"))
+
+    checks.append(Check("python", OK,
+                        f"{platform.python_version()} at {sys.executable}"))
+    checks.append(Check("platform", OK,
+                        f"{platform.system()} {platform.release()} ({platform.machine()})"))
+
+    # The UI is the primary interface now, so "can it start" belongs here
+    # rather than being discovered when someone types `spreadex`.
+    static = Path(__import__("spreadex.api", fromlist=["x"]).__file__).parent / "static"
+    if (static / "index.html").is_file():
+        checks.append(Check("workbench UI", OK, "ready -- `spreadex` opens it"))
+    else:
+        checks.append(Check(
+            "workbench UI", FAIL, f"static files missing from {static}",
+            "reinstall spreadex; the package data did not ship",
+        ))
+
+    cache = Path.home() / ".cache" / "spreadex"
+    if cache.is_dir():
+        size = sum(f.stat().st_size for f in cache.rglob("*") if f.is_file())
+        gens = cache / "generators"
+        envs = len([d for d in gens.iterdir() if d.is_dir()]) if gens.is_dir() else 0
+        checks.append(Check("generator storage", OK,
+                            f"{size / 1e6:.0f} MB in {cache} "
+                            f"({envs} isolated environment(s))"))
+    else:
+        checks.append(Check("generator storage", OK,
+                            f"nothing installed yet ({cache})"))
+    return checks
+
+
 def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
     checks: list[Check] = []
 

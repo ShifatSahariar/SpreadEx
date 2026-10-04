@@ -396,9 +396,17 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
     httpd.spreadex_jobs = JobRunner()
     actual_port = httpd.server_address[1]
 
-    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{actual_port}/?token={token}"
+    shown_host = "127.0.0.1" if host in ("0.0.0.0", "") else host
+    plain = f"http://{shown_host}:{actual_port}"
+    url = f"{plain}/?token={token}"
     log(f"\nSpreadEx UI for {config.project_root}\n")
-    log(f"  {url}\n")
+    # Lead with the address someone can bookmark and retype. The token is an
+    # implementation detail of this session, and printing it as if it were part
+    # of the address teaches people to paste a credential around.
+    log(f"  Workbench:  {plain}\n")
+    if not open_browser:
+        # Nothing is going to hand the browser the token, so the user has to.
+        log(f"  Open this once to authorise the tab:\n  {url}\n")
     if config.configured:
         log("  Same address every time, so it is worth bookmarking.")
         log("  Rotate the token with --new-token if you ever need to.")
