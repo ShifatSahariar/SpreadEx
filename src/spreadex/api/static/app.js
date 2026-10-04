@@ -348,6 +348,12 @@ function stepSut() {
       <span class="mono">{input}</span> is replaced with the path to each one; leave it out and
       the path is appended as the last argument.</p>
 
+    ${chosen || S.project?.configured ? "" : `<div class="note">
+      <strong>Never used SpreadEx?</strong> There is a small demo project &mdash; a hundred-line
+      system under test with one real, documented bug &mdash; that runs the genuine pipeline in
+      about twenty seconds. In a terminal:
+      <pre>spreadex demo</pre>
+      Then come back here and set up your own.</div>`}
     ${chosen ? "" : `<div class="kinds">${TARGET_KINDS.map(k => `
       <button class="kind" onclick="pickKind('${k.id}')">
         <span class="t">${k.t}</span><span class="d">${k.d}</span>

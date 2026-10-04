@@ -30,6 +30,7 @@ where = ["src"]
 "spreadex.corpus" = ["*.sql"]
 "spreadex.generators" = ["catalog/*.yaml"]
 "spreadex.api" = ["static/*"]
+"spreadex.demo" = ["project/*", "project/seeds/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

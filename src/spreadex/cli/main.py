@@ -196,6 +196,86 @@ def cmd_ui(args) -> int:
     return 0
 
 
+
+# --------------------------------------------------------------------- demo
+
+def cmd_demo(args) -> int:
+    """Materialise the bundled demo project and run a real campaign in it.
+
+    Everything here is genuine: the generators run, the inputs are clustered
+    and prioritized, calc.py is executed, the oracle judges the results. The
+    only thing we supply is the system under test, so that someone can see the
+    pipeline work before they have configured anything of their own.
+    """
+    from ..demo import materialize
+
+    target = Path(args.directory).resolve()
+    try:
+        project = materialize(target, force=args.force)
+    except FileExistsError as exc:
+        _die(str(exc), code=1)
+    except OSError as exc:
+        _die(f"could not write the demo to {target}: {exc}", code=1)
+
+    print(f"Demo project written to {project}")
+    print("  calc.py       the system under test -- about a hundred lines, worth reading")
+    print("  calc.bnf      one grammar; SpreadEx derives each generator's dialect from it")
+    print("  spreadex.yaml the campaign, exactly as it will run")
+    if args.no_run:
+        print(f"\nNext: cd {project} && spreadex run")
+        return 0
+
+    try:
+        config = load_config(project / "spreadex.yaml")
+    except ConfigError as exc:
+        _die(str(exc), code=1)
+
+    # The demo is the one place installation is implicit, because the whole
+    # promise is "type this and watch it work". It is still the deterministic
+    # catalog doing the installing, into an isolated environment, and it says
+    # so while it happens.
+    from ..generators import GeneratorError, GeneratorManager
+
+    wanted = list(config.generators)
+    if wanted:
+        mgr = GeneratorManager()
+        try:
+            mgr.ensure(wanted, log=lambda m: print(f"  {m}"), auto_install=True)
+        except (GeneratorError, OSError) as exc:
+            # No network, or a generator that will not build here. The campaign
+            # still runs on the seed corpus, and says why it is smaller.
+            print(f"\n  Could not install a generator: {exc}")
+            print("  Running on the bundled seed inputs instead. The pipeline is the same;")
+            print("  there is simply less to prioritize.\n")
+            config.generators = []
+
+    print("\nRunning a real campaign. Nothing about this is canned.\n")
+    campaign = Campaign(config)
+    try:
+        result = campaign.run(jobs=args.jobs)
+    except RuntimeError as exc:
+        _die(str(exc), code=1)
+    _print_result(result, config)
+
+    print("\nWhat to make of that:")
+    rejected = result.verdicts.get("expected_rejection", 0)
+    if rejected:
+        print(f"  {rejected} input(s) were refused by calc.py and counted as expected")
+        print("  rejections, not failures. That distinction is configured in spreadex.yaml")
+        print("  and it is the difference between a usable tool and a noise generator.")
+    if result.failures:
+        print(f"  {result.failures} input(s) failed, across "
+              f"{len(result.signatures)} signature(s). That is a real, documented defect:")
+        print("  calc.py guards division by zero and never extended the guard to the")
+        print("  remainder operator beside it. See its README.")
+    else:
+        print("  Nothing failed this time. calc.py does have a real defect -- an incomplete")
+        print("  zero guard -- but whether a campaign reaches it depends on what the")
+        print("  generators produced under this budget. A longer budget makes it likelier.")
+    print(f"\n  Look closer:  cd {project} && spreadex ui")
+    return 0
+
+
 # ------------------------------------------------------------------ grammar
 
 def cmd_grammar(args) -> int:
@@ -440,6 +520,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fail-on", choices=["never", "new-failure", "any-failure"], default="never",
                    help="exit non-zero on failures (for CI)")
     s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("demo", help="write a small demo project and run a real campaign in it")
+    s.add_argument("directory", nargs="?", default="spreadex-demo",
+                   help="where to write it (default: ./spreadex-demo)")
+    s.add_argument("--force", action="store_true",
+                   help="overwrite an existing demo directory")
+    s.add_argument("--no-run", action="store_true",
+                   help="write the project but do not run the campaign")
+    s.add_argument("--jobs", type=int, default=4, help="parallel executions")
+    s.set_defaults(func=cmd_demo)
 
     s = sub.add_parser("ui", help="browse this project's campaigns in a local browser UI")
     s.add_argument("--port", type=int, default=8777)

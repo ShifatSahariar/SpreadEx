@@ -1,0 +1,33 @@
+# The SpreadEx demo, written by `spreadex demo`. A real campaign against a
+# real system under test -- nothing here is canned.
+sut:
+  command: ["python3", "./calc.py", "{input}"]
+  timeout: 5s
+
+oracle:
+  type: crash
+  # calc.py reports input it cannot read, and exits non-zero to say so. That
+  # is the system working. Without this line every invalid expression -- most
+  # of what a fuzzer produces -- would be reported as a crash.
+  rejection_patterns:
+    - "^calc: SyntaxError"
+
+grammar:
+  source: ./calc.bnf
+
+generators: [fuzzingbook]
+
+corpus:
+  path: ./seeds
+
+generation:
+  count: 150
+
+budget:
+  generation: 30s
+  execution: 60s
+
+selection_signal: cc
+embedding:
+  model: tfidf
+seed: 42

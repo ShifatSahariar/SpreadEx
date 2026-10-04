@@ -1,0 +1,34 @@
+# ============================================================
+#  Arithmetic expressions -- the grammar for the SpreadEx demo
+# ============================================================
+#
+# One grammar. SpreadEx derives each generator's dialect from it: a
+# FuzzingBook dict, plain BNF for ISLa, BNF-with-operators for Fandango,
+# ANTLRv4 for Grammarinator. You write this; you do not write four of these.
+#
+# It describes VALID expressions. Generators still produce plenty that calc.py
+# refuses -- nesting it cannot take, division by zero -- which is the point:
+# the interesting inputs live at the edge of what the grammar allows.
+
+<start> ::= <expr>
+
+<expr> ::= <term>
+         | <term> " + " <expr>
+         | <term> " - " <expr>
+
+<term> ::= <atom>
+         | <atom> " * " <term>
+         | <atom> " / " <term>
+         | <atom> " % " <term>
+
+<atom> ::= <number>
+         | "-" <atom>
+         | "(" <expr> ")"
+
+<number> ::= <digits>
+           | <digits> "." <digits>
+
+<digits> ::= <digit>
+           | <digit> <digits>
+
+<digit> ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
