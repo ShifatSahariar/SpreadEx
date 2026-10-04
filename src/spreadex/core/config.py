@@ -40,6 +40,23 @@ class Config:
     embedding: dict = field(default_factory=lambda: {"model": "tfidf"})
     seed: int = 42
     raw: dict = field(default_factory=dict)
+    #: False for a directory that has no spreadex.yaml yet. The UI serves such a
+    #: project so the setup wizard -- whose whole job is to write that file --
+    #: is reachable at all. Deliberately excluded from hash(): it describes the
+    #: project's state, not the campaign's configuration.
+    configured: bool = True
+
+    @classmethod
+    def unconfigured(cls, root: Path) -> "Config":
+        """A project the wizard has not been through yet.
+
+        A placeholder rather than None, so the ~15 places that read a Config
+        stay correct by construction: `project_root` is real, `state_dir` is a
+        real (not yet existing) path, and empty targets make `is_differential`
+        False on its own.
+        """
+        return cls(project_root=Path(root).resolve(), targets=[], oracle={},
+                   budget=BudgetConfig(), generators=[], configured=False)
 
     @property
     def state_dir(self) -> Path:

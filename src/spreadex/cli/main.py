@@ -175,8 +175,17 @@ def _print_result(r, config) -> None:
 
 def cmd_ui(args) -> int:
     from ..api import serve
+    from ..core.config import Config
 
-    config = _load(args)
+    try:
+        config = load_config(Path(args.config) if args.config else None)
+    except ConfigError as exc:
+        if args.config:
+            # An explicit -c pointing at something broken is still fatal: the
+            # user named a file, so silently ignoring it would be worse.
+            _die(str(exc))
+        config = Config.unconfigured(Path.cwd())
+
     try:
         serve(config, host=args.host, port=args.port,
               open_browser=not args.no_open, verbose=args.verbose,
@@ -486,7 +495,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if not argv:
+        # `spreadex` on its own opens this project's Workbench -- the whole
+        # point is that a developer need remember one word. In a pipe or a CI
+        # job, though, a server and a browser would hang the run, so a
+        # non-interactive caller gets the command list instead.
+        if sys.stdout.isatty():
+            argv = ["ui"]
+        else:
+            parser.print_help()
+            return 0
+
+    args = parser.parse_args(argv)
     try:
         return args.func(args)
     except KeyboardInterrupt:

@@ -432,3 +432,124 @@ def test_each_project_gets_its_own_token(tmp_path):
         shutil.copytree(example, project, ignore=shutil.ignore_patterns(".spreadex", "__pycache__"))
         tokens.append(project_token(load_config(project / "spreadex.yaml")))
     assert tokens[0] != tokens[1]
+
+
+# --------------------------------------------------- unconfigured projects
+
+@pytest.fixture
+def empty_project(tmp_path):
+    """A directory with no spreadex.yaml, served as the wizard would be."""
+    from spreadex.api.server import project_token
+    from spreadex.core.config import Config
+
+    root = tmp_path / "fresh"
+    root.mkdir()
+    config = Config.unconfigured(root)
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    httpd.spreadex_config = config
+    httpd.spreadex_token = project_token(config)
+    httpd.spreadex_verbose = False
+    httpd.spreadex_read_only = False
+    httpd.spreadex_jobs = JobRunner()
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", httpd.spreadex_token, root, httpd
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_the_ui_serves_a_directory_with_no_config(empty_project):
+    """The wizard's whole job is to write spreadex.yaml, so it has to be
+    reachable before one exists."""
+    base, token, _, _ = empty_project
+    assert status_of(f"{base}/", token=token) == 200
+
+    _, project = get(f"{base}/api/project", token)
+    assert project["configured"] is False
+    assert project["targets"] == [] and project["generators"] == []
+
+    _, runs = get(f"{base}/api/runs", token)
+    assert runs["runs"] == []
+
+    _, conf = get(f"{base}/api/config", token)
+    assert conf["exists"] is False
+
+
+def test_an_unconfigured_project_is_left_untouched(empty_project):
+    """Open the UI in the wrong directory, close it, leave no trace."""
+    base, token, root, _ = empty_project
+    get(f"{base}/api/project", token)
+    get(f"{base}/api/runs", token)
+    get(f"{base}/api/config", token)
+    assert list(root.iterdir()) == [], f"the UI littered: {list(root.iterdir())}"
+
+
+def test_corpus_routes_404_before_there_is_a_corpus(empty_project):
+    base, token, _, _ = empty_project
+    assert status_of(f"{base}/api/runs/anything", token=token) == 404
+    assert status_of(f"{base}/api/input?hash=deadbeef", token=token) == 404
+
+
+def test_saving_a_config_is_adopted_without_a_restart(empty_project):
+    base, token, root, httpd = empty_project
+    (root / "seeds").mkdir()
+    (root / "seeds" / "a.txt").write_text("hello")
+    yaml_text = (
+        'sut:\n  command: ["echo", "{input}"]\n  timeout: 5s\n'
+        "oracle: {type: crash}\ngenerators: []\ncorpus: {path: ./seeds}\n"
+    )
+    status, body = post(f"{base}/api/config", {"yaml": yaml_text, "write": True}, token=token)
+    assert status == 200 and body["ok"] is True
+
+    _, project = get(f"{base}/api/project", token)
+    assert project["configured"] is True
+    assert [t["name"] for t in project["targets"]] == ["sut"]
+    assert httpd.spreadex_config.configured is True
+
+
+def test_the_token_is_persisted_once_a_project_exists(empty_project):
+    """Held in memory while there is nowhere to put it; written the moment
+    there is."""
+    from spreadex.api.server import TOKEN_FILE
+
+    base, token, root, _ = empty_project
+    assert not (root / ".spreadex" / TOKEN_FILE).exists()
+
+    post(f"{base}/api/config",
+         {"yaml": 'sut:\n  command: ["echo"]\ngenerators: []\ncorpus: {path: .}\n',
+          "write": True}, token=token)
+    saved = (root / ".spreadex" / TOKEN_FILE).read_text().strip()
+    assert saved == token, "the link the user already has must keep working"
+
+
+def test_opening_the_ui_does_not_create_state_for_a_configured_project(served):
+    """A configured project that has never run should not get a .spreadex just
+    from someone looking at it."""
+    import shutil
+    from pathlib import Path
+
+    from spreadex.core.config import load_config
+
+    example = Path(__file__).resolve().parents[1] / "examples" / "toy-parser"
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp) / "toy"
+        shutil.copytree(example, project, ignore=shutil.ignore_patterns(".spreadex", "__pycache__"))
+        config = load_config(project / "spreadex.yaml")
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        httpd.spreadex_config = config
+        httpd.spreadex_token = "t"
+        httpd.spreadex_verbose = False
+        httpd.spreadex_read_only = False
+        httpd.spreadex_jobs = JobRunner()
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{httpd.server_address[1]}"
+        try:
+            _, runs = get(f"{url}/api/runs", "t")
+            assert runs["runs"] == []
+            assert not config.state_dir.exists(), "merely looking should not create a corpus"
+        finally:
+            httpd.shutdown()
+            httpd.server_close()

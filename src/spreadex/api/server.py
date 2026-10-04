@@ -95,6 +95,15 @@ class _Handler(BaseHTTPRequestHandler):
         hostname = host.rsplit(":", 1)[0] if ":" in host and not host.endswith("]") else host
         return hostname.strip("[]") in {h.strip("[]") for h in ALLOWED_HOSTNAMES}
 
+    def _has_corpus(self) -> bool:
+        """True once there is something to read.
+
+        The real invariant is "a corpus exists", not "a config exists" -- which
+        also stops a configured-but-never-run project from having `.spreadex/`
+        materialised just by opening the UI.
+        """
+        return self.config.state_dir.is_dir()
+
     def _token_ok(self, query) -> bool:
         supplied = (self.headers.get("X-SpreadEx-Token")
                     or (query.get("token", [""])[0] if query else ""))
@@ -155,7 +164,10 @@ class _Handler(BaseHTTPRequestHandler):
         from . import setup
 
         if route == "/api/config":
-            self._json(setup.save_config(self.config, body))
+            result = setup.save_config(self.config, body)
+            if result.get("written"):
+                reload_project(self.server)
+            self._json(result)
             return
         if route == "/api/generators/install":
             self._json(setup.start_install(self.server, body))
@@ -206,6 +218,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if route == "/api/project":
             self._json({
+                "configured": self.config.configured,
                 "root": str(self.config.project_root),
                 "targets": [{"name": t.name, "command": t.command} for t in self.config.targets],
                 "generators": list(self.config.generators or []),
@@ -215,11 +228,11 @@ class _Handler(BaseHTTPRequestHandler):
             })
             return
         if route == "/api/runs":
-            self._json({"runs": data.list_runs(state_dir)})
+            self._json({"runs": data.list_runs(state_dir) if self._has_corpus() else []})
             return
         if route.startswith("/api/runs/"):
             run_id = route[len("/api/runs/"):]
-            detail = data.run_detail(state_dir, run_id)
+            detail = data.run_detail(state_dir, run_id) if self._has_corpus() else None
             if detail is None:
                 self._error(HTTPStatus.NOT_FOUND, f"no run {run_id!r}")
                 return
@@ -230,7 +243,7 @@ class _Handler(BaseHTTPRequestHandler):
             if not blob.isalnum():
                 self._error(HTTPStatus.BAD_REQUEST, "bad hash")
                 return
-            payload = data.input_text(state_dir, blob)
+            payload = data.input_text(state_dir, blob) if self._has_corpus() else None
             if payload is None:
                 self._error(HTTPStatus.NOT_FOUND, "no such input")
                 return
@@ -309,21 +322,54 @@ def project_token(config, rotate: bool = False) -> str:
     -- no token at all, or a URL nobody can keep. `--new-token` rotates it, and
     the file can simply be deleted.
     """
+    if not config.configured:
+        # Nothing on disk yet, and nothing should be: someone who opens the UI
+        # in the wrong directory and closes it must leave no trace. The token
+        # is persisted by reload_project() the moment a project exists.
+        return secrets.token_urlsafe(32)
+
     path = config.state_dir / TOKEN_FILE
     if not rotate and path.is_file():
         existing = path.read_text().strip()
         if existing:
             return existing
-    token = secrets.token_urlsafe(32)
+    return persist_token(config, secrets.token_urlsafe(32))
+
+
+def persist_token(config, token: str) -> str:
+    """Write a token to `.spreadex/ui-token`, owner-readable only."""
     from ..corpus import ensure_state_dir
 
     ensure_state_dir(config.state_dir)
+    path = config.state_dir / TOKEN_FILE
     path.write_text(token)
     try:
         path.chmod(0o600)
     except OSError:
         pass   # a filesystem without POSIX modes; the directory still guards it
     return token
+
+
+def reload_project(server) -> None:
+    """Adopt a spreadex.yaml the wizard just wrote, without a restart.
+
+    The rebind is a single attribute assignment, so no lock is needed under
+    ThreadingHTTPServer: a request already in flight simply finishes against
+    the Config it started with.
+    """
+    from ..core.config import ConfigError, find_config, load_config
+
+    previous = server.spreadex_config
+    path = find_config(previous.project_root)
+    if path is None:
+        return
+    try:
+        config = load_config(path)
+    except ConfigError:
+        return          # keep serving the old view; the POST already reported why
+    server.spreadex_config = config
+    if not previous.configured:
+        persist_token(config, server.spreadex_token)
 
 
 def serve(config, host: str = "127.0.0.1", port: int = 8777,
@@ -348,8 +394,12 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{actual_port}/?token={token}"
     log(f"\nSpreadEx UI for {config.project_root}\n")
     log(f"  {url}\n")
-    log("  Same address every time, so it is worth bookmarking.")
-    log("  Rotate the token with --new-token if you ever need to.")
+    if config.configured:
+        log("  Same address every time, so it is worth bookmarking.")
+        log("  Rotate the token with --new-token if you ever need to.")
+    else:
+        log("  No spreadex.yaml here yet -- the UI will walk you through making one.")
+        log("  Nothing is written to this directory until you save.")
     if host not in ("127.0.0.1", "localhost", "::1"):
         log(f"  ! Listening on {host}, not just this machine. Anyone who can reach\n"
             f"    this port and has the token can read this project's corpus.\n")

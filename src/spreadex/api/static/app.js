@@ -667,6 +667,9 @@ async function launch() {
       return;
     }
     await saveConfig(true);
+    // The server adopts the file we just wrote; re-read so the header and the
+    // steps reflect the project that now exists.
+    try { S.project = await api("/api/project"); } catch (e) { /* non-fatal */ }
     const started = await api("/api/run", { jobs: Number(el("jobs").value) || 1 });
     if (started.ok === false) throw new Error(started.error);
     el("joblog").innerHTML = `<div class="note" style="border-left-color:var(--color-primary);
@@ -841,8 +844,9 @@ async function showInput(hash, btn) {
     S.config = conf.parsed || {};
     await loadRuns();
     renderSteps();
-    // Land on results when there is something to show; otherwise set up.
-    go(S.runs.length ? "results" : "setup");
+    // An unconfigured directory always starts at the wizard, whatever happens
+    // to be in .spreadex -- there is no campaign to show until it is set up.
+    go(S.project.configured && S.runs.length ? "results" : "setup");
   } catch (e) {
     const noToken = !TOKEN || /token/i.test(e.message);
     el("view").innerHTML = noToken
