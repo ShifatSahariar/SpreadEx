@@ -41,7 +41,7 @@ function toggleTheme() {
 
 const STEPS = [
   { id: "sut",        n: 1, t: "System under test", d: "The command to run." },
-  { id: "grammar",    n: 2, t: "Grammar",           d: "Where inputs come from." },
+  { id: "grammar",    n: 2, t: "Inputs",            d: "Where they come from." },
   { id: "generators", n: 3, t: "Generators",        d: "Who writes the inputs." },
   { id: "strategy",   n: 4, t: "Testing strategy",  d: "What counts as a failure." },
   { id: "run",        n: 5, t: "Budget & run",      d: "Review, then launch." },
@@ -49,6 +49,7 @@ const STEPS = [
 
 const S = {
   tab: "setup", step: "sut", project: null, config: {}, rejects: undefined,
+  kind: null, sample: undefined, probe: null,
   generators: [], grammars: [], runs: [], current: null, polling: null,
 };
 
@@ -241,30 +242,6 @@ function renderStep() {
      strategy: stepStrategy, run: stepRun }[S.step])();
 }
 
-function stepSut() {
-  const t = targets();
-  const rows = t.length ? t : [{ name: "sut", command: ["./your-parser", "{input}"] }];
-  el("view").innerHTML = `
-  <div class="card">
-    <h3>What are you testing?</h3>
-    <p class="why">The command SpreadEx runs for every generated input.
-      <span class="mono">{input}</span> is replaced with the path to each one; if you leave it
-      out, the path is appended as the last argument.</p>
-    <div id="targets">${rows.map((x, i) => targetRow(x, i, rows.length)).join("")}</div>
-    <div class="actions">
-      <button class="ghost small" onclick="addTarget()">Add a second implementation</button>
-      <span class="muted" style="font-size:12.5px">Two or more enables differential testing &mdash;
-        no expected output needed, just a second implementation.</span>
-    </div>
-    <div class="row" style="margin-top:4px">
-      <div><label for="timeout">Timeout per input</label>
-        <input id="timeout" type="text" value="${esc(sut().timeout || "5s")}"></div>
-    </div>
-    <div class="actions"><button class="primary" onclick="commitSut()">Continue</button></div>
-    <div id="err"></div>
-  </div>`;
-}
-
 function targetRow(x, i, total) {
   return `<div class="row" data-target="${i}" style="align-items:flex-end">
     ${total > 1 ? `<div style="flex:0 0 130px"><label>Name</label>
@@ -294,6 +271,114 @@ function dropTarget(i) {
   stepSut();
 }
 
+// Categories are a starting point, not a taxonomy: each one fills in a command
+// shape and a sample input that suits it. The user edits both.
+const TARGET_KINDS = [
+  { id: "cli",     t: "A command-line program",
+    d: "Reads a file given as an argument.",
+    cmd: "./your-parser {input}", sample: "1 + 1\n" },
+  { id: "jar",     t: "A Java program",
+    d: "A jar, run with the JDK on your PATH.",
+    cmd: "java -jar your-tool.jar {input}", sample: "1 + 1\n" },
+  { id: "script",  t: "A script",
+    d: "Python, Node, Ruby -- anything with an interpreter.",
+    cmd: "python3 parse.py {input}", sample: "1 + 1\n" },
+  { id: "other",   t: "Something else",
+    d: "Write the command yourself.", cmd: "", sample: "" },
+];
+
+function pickKind(id) {
+  const k = TARGET_KINDS.find(x => x.id === id);
+  S.kind = id;
+  if (id === null) { S.config.sut = { timeout: sut().timeout }; S.probe = null; stepSut(); return; }
+  if (k && k.cmd && !readTargets().length) {
+    S.config.sut = { ...sut(), command: k.cmd.split(" ") };
+  }
+  if (k && k.sample) S.sample = k.sample;
+  S.probe = null;
+  stepSut();
+}
+
+async function verifyCommand() {
+  const t = readTargets();
+  if (!t.length) { el("err").innerHTML = `<div class="note bad">Enter a command first.</div>`; return; }
+  S.config.sut = { ...sut(), ...(t.length > 1 ? { targets: t } : { command: t[0].command }) };
+  S.sample = el("sample").value;
+  el("probe").innerHTML = `<div class="note">Running it once&hellip;</div>`;
+  try {
+    S.probe = await api("/api/probe", { command: t[0].command, sample: S.sample });
+  } catch (e) {
+    S.probe = { ok: false, error: String(e.message || e) };
+  }
+  stepSut();
+}
+
+function probeReport() {
+  const r = S.probe;
+  if (!r) return "";
+  if (!r.ok) return `<div class="note bad"><strong>It did not run.</strong><br>${esc(r.error)}</div>`;
+  const dead = r.timed_out;
+  // Deliberately not a verdict. A non-zero exit here is usually the system
+  // doing its job -- step 4 is where that gets configured.
+  const head = dead
+    ? `<strong>No answer in ${Math.round(r.duration_ms / 1000)}s.</strong> If that is normal for
+       your system, raise the timeout; if not, the command may be waiting for input on stdin,
+       which SpreadEx does not provide.`
+    : `<strong>It ran.</strong> Exit code <span class="mono">${r.exit_code}</span>,
+       ${Math.round(r.duration_ms)}&thinsp;ms. A non-zero exit here is often correct &mdash;
+       you will say what counts as a failure on step 4.`;
+  const block = (title, text) => text && text.trim()
+    ? `<div style="margin-top:8px"><label>${title}</label><pre>${esc(text)}</pre></div>` : "";
+  return `<div class="note ${dead ? "warn" : "good"}">${head}
+    <div style="margin-top:8px"><label>Command run</label>
+      <pre>${esc((r.command || []).join(" "))}</pre></div>
+    ${block("Standard output", r.stdout)}${block("Standard error", r.stderr)}</div>`;
+}
+
+function stepSut() {
+  const t = targets();
+  const rows = t.length ? t : [{ name: "sut", command: [] }];
+  const chosen = S.kind || (t.length ? "other" : null);
+  if (S.sample === undefined) S.sample = "1 + 1\n";
+  el("view").innerHTML = `
+  <div class="card">
+    <h3>What are you testing?</h3>
+    <p class="why">SpreadEx runs one command for every generated input.
+      <span class="mono">{input}</span> is replaced with the path to each one; leave it out and
+      the path is appended as the last argument.</p>
+
+    ${chosen ? "" : `<div class="kinds">${TARGET_KINDS.map(k => `
+      <button class="kind" onclick="pickKind('${k.id}')">
+        <span class="t">${k.t}</span><span class="d">${k.d}</span>
+      </button>`).join("")}</div>`}
+
+    ${chosen ? `
+    <div id="targets">${rows.map((x, i) => targetRow(x, i, rows.length)).join("")}</div>
+    <div class="actions">
+      <button class="ghost small" onclick="addTarget()">Compare another implementation</button>
+      <span class="muted" style="font-size:12.5px">Two or more lets SpreadEx test them against
+        each other &mdash; no expected output needed.</span>
+    </div>
+    <div class="row" style="margin-top:4px">
+      <div><label for="timeout">Timeout per input</label>
+        <input id="timeout" type="text" value="${esc(sut().timeout || "5s")}"></div>
+      <div><label for="sample">Sample input to try it with</label>
+        <input id="sample" type="text" value="${esc(S.sample.replace(/\n$/, ""))}"></div>
+    </div>
+    <div class="actions">
+      <button class="ghost" onclick="verifyCommand()">Try it once</button>
+      <span class="muted" style="font-size:12.5px">Runs your command on that sample, now, so a
+        typo does not surface as 500 crashes later.</span>
+    </div>
+    <div id="probe">${probeReport()}</div>
+    <div class="actions">
+      <button class="ghost small" onclick="pickKind(null)">Start over</button>
+      <button class="primary" onclick="commitSut()">Continue</button>
+    </div>` : ""}
+    <div id="err"></div>
+  </div>`;
+}
+
 function commitSut() {
   const t = readTargets();
   if (!t.length) { el("err").innerHTML = `<div class="note bad">Enter a command to run.</div>`; return; }
@@ -315,23 +400,26 @@ async function stepGrammar() {
   const chosen = cfg().grammar?.source || "";
   el("view").innerHTML = `
   <div class="card">
-    <h3>Where do inputs come from?</h3>
-    <p class="why">One grammar is enough: SpreadEx derives each generator's dialect from it &mdash;
-      a FuzzingBook dict, plain BNF for ISLa, BNF-with-operators for Fandango, ANTLRv4 for
-      Grammarinator.</p>
-    <label for="grammar">Grammar file</label>
+    <h3>Where do the inputs come from?</h3>
+    <p class="why">A grammar describes what a valid input looks like, and generators write new
+      ones from it. One grammar is enough: SpreadEx derives each generator's dialect &mdash; a
+      FuzzingBook dict, plain BNF for ISLa, BNF-with-operators for Fandango, ANTLRv4 for
+      Grammarinator &mdash; so you write it once.</p>
+    <p class="why">No grammar? Point SpreadEx at a directory of inputs you already have. That
+      rules out the generators, but prioritization and execution work the same.</p>
+    <label for="grammar">A grammar in this project</label>
     <select id="grammar" onchange="inspectGrammar()">
-      <option value="">— none (use an existing corpus instead) —</option>
+      <option value="">— none; I will use existing inputs instead —</option>
       ${grammars.map(g => `<option value="${esc(g.path)}" ${g.path === chosen ? "selected" : ""}>${esc(g.path)}</option>`).join("")}
     </select>
     ${grammars.length ? "" : `<div class="note">No grammar-shaped files found under this project
       (.bnf, .g4, .fan, .ebnf, or a .py holding a grammar dict).</div>`}
-    <label for="corpus">Or a directory of existing inputs</label>
+    <label for="corpus">Or a directory of inputs you already have</label>
     <input id="corpus" type="text" placeholder="./seeds" value="${esc(cfg().corpus?.path || "")}">
     <div id="ginfo"></div>
     <div class="actions">
       <button class="ghost" onclick="gotoStep('sut')">Back</button>
-      <button class="ghost" onclick="toggleAssistant()">No grammar? Get help writing one</button>
+      <button class="ghost" onclick="toggleAssistant()">Help me write one</button>
       <button class="primary" onclick="commitGrammar()">Continue</button>
     </div>
   </div>
@@ -739,9 +827,14 @@ async function stepRun() {
 
   <div class="card">
     <h3>Review</h3>
-    <p class="why">This is written to <span class="mono">spreadex.yaml</span>, and the campaign runs
-      exactly this. Nothing else.</p>
-    <pre id="preview">${esc(buildYaml())}</pre>
+    <p class="why">This is what will happen. It is written to
+      <span class="mono">spreadex.yaml</span>, and the campaign runs exactly this &mdash;
+      nothing else.</p>
+    <div id="summary">${reviewSummary()}</div>
+    <details>
+      <summary>The file that will be written</summary>
+      <pre id="preview">${esc(buildYaml())}</pre>
+    </details>
     <div class="actions">
       <button class="ghost" onclick="gotoStep('strategy')">Back</button>
       <button class="ghost" onclick="refreshPreview()">Refresh preview</button>
@@ -754,13 +847,46 @@ async function stepRun() {
     el(id).addEventListener("change", refreshPreview));
 }
 
+function reviewSummary() {
+  // The same facts as the YAML, in the order someone would ask about them.
+  const c = cfg(), t = targets();
+  const gens = c.generators || [];
+  const src = c.grammar?.source ? `the grammar <span class="mono">${esc(c.grammar.source)}</span>`
+            : c.corpus?.path ? `the inputs already in <span class="mono">${esc(c.corpus.path)}</span>`
+            : "<span class=\"bad\">nothing yet &mdash; go back to step 2</span>";
+  const checks = ["crashes and hangs"];
+  if (c.oracle?.type === "differential") checks.push("disagreement between implementations");
+  const nrej = (c.oracle?.rejection_patterns || []).length;
+  if (nrej) checks.push(nrej === 1 ? "one message that means a deliberate rejection"
+                                   : `${nrej} messages that mean a deliberate rejection`);
+  const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
+  return `<table class="summary">
+    ${row(t.length > 1 ? "Testing" : "Testing under",
+          t.map(x => `<span class="mono">${esc((x.command || []).join(" "))}</span>`).join("<br>"))}
+    ${row("Inputs from", src)}
+    ${row("Written by", gens.length
+        ? gens.map(esc).join(", ")
+        : (c.corpus?.path ? "nobody &mdash; existing inputs only"
+                          : "<span class=\"bad\">no generator selected</span>"))}
+    ${row("Reported as failures", checks.join("; "))}
+    ${row("Budget", `${esc(c.budget?.generation || "1m")} generating,
+           ${esc(c.budget?.execution || "1m")} executing &mdash; and no more`)}
+    ${row("Ordered by", (c.selection_signal === "random")
+        ? "random (the baseline)" : "cluster coverage, most different first")}
+  </table>`;
+}
+
 function collectRunConfig() {
   S.config.budget = { generation: el("bgen").value, execution: el("bexec").value };
   S.config.generation = { count: Number(el("count").value) || 200 };
   S.config.selection_signal = el("signal").value;
   S.config.embedding = { model: el("model").value };
 }
-function refreshPreview() { collectRunConfig(); el("preview").textContent = buildYaml(); }
+function refreshPreview() {
+  collectRunConfig();
+  el("preview").textContent = buildYaml();
+  el("summary").innerHTML = reviewSummary();
+}
 
 async function launch() {
   collectRunConfig();

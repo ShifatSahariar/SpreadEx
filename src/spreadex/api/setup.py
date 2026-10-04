@@ -280,3 +280,82 @@ def save_grammar(config, body: dict) -> dict[str, Any]:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text)
     return {"ok": True, "written": str(target.relative_to(root))}
+
+
+# ------------------------------------------------------- command verification
+
+#: Long enough for a JVM to start, short enough that a hung command does not
+#: hold the wizard. A real campaign uses the project's own timeout.
+PROBE_TIMEOUT_S = 20.0
+
+#: Capped so a chatty command cannot fill the browser. The user is checking
+#: "did this run at all", not reading a log.
+PROBE_PREVIEW = 4000
+
+
+def probe_target(config, body: dict) -> dict[str, Any]:
+    """Run a proposed command once on a sample input and report what happened.
+
+    The user has just typed a command. Finding out at the end of a campaign
+    that every one of 500 inputs "crashed" because of a typo is the worst way
+    to learn it, so the wizard runs it once, here, and shows the result.
+
+    This is deliberately NOT a verdict. It reports exit code and output and
+    leaves the judgement to the person reading it -- a parser rejecting the
+    sample with a non-zero exit is working correctly, and saying otherwise
+    would teach exactly the wrong lesson before step 4 asks about it.
+    """
+    import tempfile
+
+    from ..exec.runner import Limits, Target, run_one
+
+    command = body.get("command")
+    if isinstance(command, str):
+        command = command.split()
+    if not isinstance(command, list) or not [c for c in command if str(c).strip()]:
+        return {"ok": False, "error": "enter a command first"}
+    command = [str(c) for c in command if str(c).strip()]
+
+    sample = body.get("sample")
+    if not isinstance(sample, str) or not sample:
+        sample = "1 + 1\n"
+
+    target = Target(
+        name="probe",
+        command=command,
+        base_dir=config.project_root,
+        limits=Limits(timeout_s=PROBE_TIMEOUT_S),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "sample.txt"
+        path.write_text(sample)
+        try:
+            obs = run_one(target, path)
+        except RuntimeError as exc:
+            # run_one turns a missing command into a configuration error with
+            # its own CLI-shaped advice; in the wizard the fix is on screen.
+            if "not found" in str(exc):
+                return {"ok": False,
+                        "error": f"{command[0]!r} was not found. Check the path, "
+                                 f"or install it and try again."}
+            return {"ok": False, "error": str(exc)}
+        except PermissionError:
+            return {"ok": False, "error": f"{command[0]!r} is not executable. "
+                                          f"`chmod +x` it and try again."}
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        rendered = target.render(path)
+
+    return {
+        "ok": True,
+        "ran": True,
+        "command": rendered,
+        "exit_code": obs.exit_code,
+        "signal": obs.signal,
+        "timed_out": obs.timed_out,
+        "duration_ms": round(obs.duration_ms, 1),
+        "stdout": (obs.stdout_preview or "")[:PROBE_PREVIEW],
+        "stderr": (obs.stderr_preview or "")[:PROBE_PREVIEW],
+        "sample": sample,
+        "substituted": any("{input}" in part for part in command),
+    }

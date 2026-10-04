@@ -613,3 +613,62 @@ def test_differential_needs_two_targets(empty_project):
     assert status == 200 and body["ok"] is False
     assert "two entries" in " ".join(body["errors"])
     assert httpd.spreadex_config.configured is False, "a rejected config is not adopted"
+
+
+# ------------------------------------------------ verifying a test command
+
+def test_probe_runs_the_command_and_reports_what_happened(empty_project):
+    base, token, _, _ = empty_project
+    status, body = post(f"{base}/api/probe",
+                        {"command": ["cat", "{input}"], "sample": "hello\n"}, token=token)
+    assert status == 200 and body["ok"] is True
+    assert body["exit_code"] == 0 and body["timed_out"] is False
+    assert body["stdout"].strip() == "hello"
+    assert body["substituted"] is True
+
+
+def test_probe_appends_the_path_when_input_is_not_mentioned(empty_project):
+    """Same rule the campaign uses, so what the user verifies is what runs."""
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe", {"command": ["cat"], "sample": "x\n"}, token=token)
+    assert body["ok"] is True and body["substituted"] is False
+    assert body["command"][-1].endswith("sample.txt")
+
+
+def test_probe_explains_a_command_that_does_not_exist(empty_project):
+    """The typo the user is here to catch."""
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe",
+                   {"command": ["./definitely-not-here", "{input}"]}, token=token)
+    assert body["ok"] is False
+    assert "not found" in body["error"]
+
+
+def test_probe_reports_a_rejection_without_calling_it_a_failure(empty_project):
+    """A parser refusing bad input is working. The probe must not say 'crash'."""
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe",
+                   {"command": ["sh", "-c", "echo 'SyntaxError' >&2; exit 1"]}, token=token)
+    assert body["ok"] is True, "the probe ran; the SUT's verdict is not the probe's"
+    assert body["exit_code"] == 1
+    assert "SyntaxError" in body["stderr"]
+    assert "crash" not in json.dumps(body).lower()
+
+
+def test_probe_needs_a_command(empty_project):
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe", {"command": "   "}, token=token)
+    assert body["ok"] is False and "command" in body["error"]
+
+
+def test_probe_is_refused_in_read_only_mode(empty_project):
+    """It executes what the browser typed, so --read-only must stop it."""
+    _, _, _, httpd = empty_project
+    httpd.spreadex_read_only = True
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        status, _ = post(f"{base}/api/probe", {"command": ["echo"]},
+                         token=httpd.spreadex_token)
+        assert status == 403
+    finally:
+        httpd.spreadex_read_only = False

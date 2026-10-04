@@ -202,3 +202,23 @@ details summary:hover { color: var(--color-text); }
 details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; padding: 6px 0; }
 .pat-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .pat-row button { flex: none; }
+
+/* Step 1: pick the shape of the thing under test before writing a command. */
+.kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px; margin: 14px 0 4px; }
+.kind { display: block; text-align: left; padding: 14px; background: var(--color-surface);
+  border: 1px solid var(--color-border); border-radius: var(--radius); cursor: pointer;
+  color: var(--color-text); font: inherit; }
+.kind:hover { border-color: var(--color-primary); box-shadow: var(--shadow); }
+.kind .t { display: block; font-weight: 600; margin-bottom: 3px; }
+.kind .d { display: block; color: var(--color-muted); font-size: 13px; line-height: 1.4; }
+.note.good { border-color: var(--color-success-bd); background: var(--color-success-lt); }
+.note.warn { border-color: var(--color-warn-bd); background: var(--color-warn-lt); }
+.note pre { margin: 4px 0 0; max-height: 180px; overflow: auto; }
+table.summary { margin: 10px 0 4px; }
+/* A review row is a sentence fragment, not a data-table column heading. */
+table.summary th { width: 190px; text-align: left; vertical-align: top; color: var(--color-muted);
+  font-weight: 600; padding: 7px 14px 7px 0; font-size: 13px;
+  text-transform: none; letter-spacing: 0; }
+table.summary td { padding: 7px 0; vertical-align: top; line-height: 1.5; }
+table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(--color-border); }

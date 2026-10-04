@@ -169,6 +169,11 @@ class _Handler(BaseHTTPRequestHandler):
                 reload_project(self.server)
             self._json(result)
             return
+        if route == "/api/probe":
+            # A POST, and so already behind the header-only token and refused
+            # under --read-only: this runs the command the user just typed.
+            self._json(setup.probe_target(self.config, body))
+            return
         if route == "/api/generators/install":
             self._json(setup.start_install(self.server, body))
             return
