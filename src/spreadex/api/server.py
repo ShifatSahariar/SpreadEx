@@ -294,16 +294,49 @@ def _emit(line: str = "") -> None:
     print(line, flush=True, file=sys.stdout)
 
 
+TOKEN_FILE = "ui-token"
+
+
+def project_token(config, rotate: bool = False) -> str:
+    """A token that survives restarts, so the UI has a URL worth bookmarking.
+
+    A fresh token per launch meant the address changed every time and nothing
+    could be saved. The token is kept per project in `.spreadex/ui-token`, owner
+    readable only, inside a directory `spreadex init` already git-ignores.
+
+    The trade is deliberate: a token on disk is readable by anything already
+    running as this user, which is a much smaller problem than the alternatives
+    -- no token at all, or a URL nobody can keep. `--new-token` rotates it, and
+    the file can simply be deleted.
+    """
+    path = config.state_dir / TOKEN_FILE
+    if not rotate and path.is_file():
+        existing = path.read_text().strip()
+        if existing:
+            return existing
+    token = secrets.token_urlsafe(32)
+    from ..corpus import ensure_state_dir
+
+    ensure_state_dir(config.state_dir)
+    path.write_text(token)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass   # a filesystem without POSIX modes; the directory still guards it
+    return token
+
+
 def serve(config, host: str = "127.0.0.1", port: int = 8777,
           open_browser: bool = True, verbose: bool = False,
-          read_only: bool = False, log=_emit) -> None:
+          read_only: bool = False, new_token: bool = False,
+          token: str | None = None, log=_emit) -> None:
     """Run the UI until interrupted. Foreground on purpose.
 
     A foreground server cannot be orphaned, cannot collide with a forgotten
     instance, and leaves no "which server am I looking at?" question -- the
     problems `jupyter server list` exists to solve.
     """
-    token = secrets.token_urlsafe(32)
+    token = token or project_token(config, rotate=new_token)
     httpd = ThreadingHTTPServer((host, port), _Handler)
     httpd.spreadex_config = config
     httpd.spreadex_token = token
@@ -315,6 +348,8 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{actual_port}/?token={token}"
     log(f"\nSpreadEx UI for {config.project_root}\n")
     log(f"  {url}\n")
+    log("  Same address every time, so it is worth bookmarking.")
+    log("  Rotate the token with --new-token if you ever need to.")
     if host not in ("127.0.0.1", "localhost", "::1"):
         log(f"  ! Listening on {host}, not just this machine. Anyone who can reach\n"
             f"    this port and has the token can read this project's corpus.\n")

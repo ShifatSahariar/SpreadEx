@@ -371,3 +371,64 @@ def test_assistance_routes_are_refused_in_read_only_mode(read_only_server):
     base, token = read_only_server
     assert post(f"{base}/api/assist", {"task": "infer"}, token=token)[0] == 403
     assert post(f"{base}/api/grammar/save", {"path": "x.bnf", "text": "y"}, token=token)[0] == 403
+
+
+# ------------------------------------------------------------ stable URL
+
+def test_the_token_survives_restarts(tmp_path):
+    """A fresh token per launch meant the URL changed every time and nothing
+    could be bookmarked. It is now per project and persistent."""
+    import shutil
+    from pathlib import Path
+
+    from spreadex.api.server import project_token
+    from spreadex.core.config import load_config
+
+    example = Path(__file__).resolve().parents[1] / "examples" / "toy-parser"
+    project = tmp_path / "toy"
+    shutil.copytree(example, project, ignore=shutil.ignore_patterns(".spreadex", "__pycache__"))
+    config = load_config(project / "spreadex.yaml")
+
+    first = project_token(config)
+    assert first and project_token(config) == first, "the URL must not move between launches"
+
+    rotated = project_token(config, rotate=True)
+    assert rotated != first
+    assert project_token(config) == rotated
+
+
+def test_the_token_file_is_owner_only_and_git_ignored(tmp_path):
+    import shutil
+    import stat
+    from pathlib import Path
+
+    from spreadex.api.server import TOKEN_FILE, project_token
+    from spreadex.core.config import load_config
+
+    example = Path(__file__).resolve().parents[1] / "examples" / "toy-parser"
+    project = tmp_path / "toy"
+    shutil.copytree(example, project, ignore=shutil.ignore_patterns(".spreadex", "__pycache__"))
+    config = load_config(project / "spreadex.yaml")
+    project_token(config)
+
+    path = config.state_dir / TOKEN_FILE
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # Whichever code creates .spreadex/ first must leave the .gitignore behind.
+    assert (config.state_dir / ".gitignore").read_text().strip().endswith("*")
+
+
+def test_each_project_gets_its_own_token(tmp_path):
+    """One project's saved link must not open another's corpus."""
+    import shutil
+    from pathlib import Path
+
+    from spreadex.api.server import project_token
+    from spreadex.core.config import load_config
+
+    example = Path(__file__).resolve().parents[1] / "examples" / "toy-parser"
+    tokens = []
+    for name in ("a", "b"):
+        project = tmp_path / name
+        shutil.copytree(example, project, ignore=shutil.ignore_patterns(".spreadex", "__pycache__"))
+        tokens.append(project_token(load_config(project / "spreadex.yaml")))
+    assert tokens[0] != tokens[1]

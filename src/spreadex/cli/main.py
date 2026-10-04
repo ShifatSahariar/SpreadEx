@@ -39,11 +39,13 @@ def cmd_init(args) -> int:
     text = render_template(command, grammar=args.grammar, oracle="crash")
     cfg_path.write_text(text)
 
+    # The corpus store writes the directory and its .gitignore, so a project
+    # that never ran `init` is protected too.
+    from ..corpus import CorpusStore
+
     state = root / ".spreadex"
-    state.mkdir(exist_ok=True)
-    gitignore = state / ".gitignore"
-    if not gitignore.exists():
-        gitignore.write_text("# SpreadEx local state: corpora and runs stay out of git.\n*\n")
+    with CorpusStore(state):
+        pass
 
     print(f"Created {cfg_path}")
     print(f"Created {state}/ (git-ignored)")
@@ -178,7 +180,7 @@ def cmd_ui(args) -> int:
     try:
         serve(config, host=args.host, port=args.port,
               open_browser=not args.no_open, verbose=args.verbose,
-              read_only=args.read_only)
+              read_only=args.read_only, new_token=args.new_token)
     except OSError as exc:
         _die(f"could not start the UI on {args.host}:{args.port}: {exc}\n"
              f"  Fix: pass --port to pick another, or stop whatever is using it.", code=1)
@@ -438,6 +440,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-v", "--verbose", action="store_true", help="log every request")
     s.add_argument("--read-only", action="store_true",
                    help="refuse every change: the UI can then only look at finished runs")
+    s.add_argument("--new-token", action="store_true",
+                   help="rotate this project's UI token, invalidating saved links")
     s.set_defaults(func=cmd_ui)
 
     s = sub.add_parser("grammar", help="check a grammar, or derive each generator's dialect")

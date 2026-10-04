@@ -154,10 +154,21 @@ expressibility.
 ## The UI
 
 ```bash
-spreadex ui
+cd my-project
+spreadex ui          # http://127.0.0.1:8777 — same address every time
 ```
 
-Prints a tokenized `http://127.0.0.1:…` URL and opens it. Two halves: a **setup
+It opens the browser for you, so the usual day looks like `spreadex run` then
+`spreadex ui`, and you never type a URL at all.
+
+The address is fixed and the token is per project and persistent, so the link is
+worth bookmarking — it still works after a restart, a reboot, or a week away.
+`--port` moves it if 8777 is taken; `--new-token` rotates the token and
+invalidates saved links. The token lives in `.spreadex/ui-token`, owner-readable
+only, in a directory SpreadEx keeps out of version control.
+
+Each project has its own token, so a link saved for one project cannot open
+another's corpus. Two halves: a **setup
 wizard** and **results**.
 
 The wizard walks system under test → grammar → generators → budget, and ends on

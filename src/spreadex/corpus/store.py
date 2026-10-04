@@ -30,6 +30,25 @@ def hash_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def ensure_state_dir(path: Path) -> Path:
+    """Create `.spreadex/` and keep it out of version control.
+
+    Called from everywhere that might create the directory first -- the corpus
+    store, and the UI writing its token -- because whichever gets there first
+    must leave the .gitignore behind. It holds corpora, crash inputs and the UI
+    token, none of which belong in anyone's history.
+    """
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    ignore = path / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text(
+            "# SpreadEx local state: corpora, runs and the UI token.\n"
+            "# None of this belongs in version control.\n*\n"
+        )
+    return path
+
+
 class CorpusStore:
     """Everything SpreadEx remembers about one project, in `.spreadex/`."""
 
@@ -43,7 +62,7 @@ class CorpusStore:
     # ---------------------------------------------------------------- lifecycle
 
     def open(self) -> "CorpusStore":
-        self.root.mkdir(parents=True, exist_ok=True)
+        ensure_state_dir(self.root)
         self.blobs.mkdir(exist_ok=True)
         self.runs_dir.mkdir(exist_ok=True)
         (self.root / "cache").mkdir(exist_ok=True)
