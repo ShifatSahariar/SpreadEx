@@ -84,3 +84,35 @@ def test_nothing_in_the_package_points_at_a_development_machine():
             if needle in text:
                 offenders.append(f"{path.relative_to(ROOT)}: {needle}")
     assert not offenders, offenders
+
+
+# ------------------------------------------------------------ documentation
+
+def test_the_subject_matrix_only_ticks_what_was_verified():
+    """A tick that means 'code exists' is how a tool gets a reputation for not
+    working. Every one must carry evidence."""
+    text = (ROOT / "docs" / "SUBJECTS.md").read_text()
+    assert "Last verified:" in text
+    for row in [ln for ln in text.splitlines() if ln.startswith("| **") and "✓" in ln]:
+        cells = [c.strip() for c in row.split("|")]
+        assert cells[-2], f"a ✓ row with no evidence column: {row}"
+
+
+def test_the_readme_does_not_point_at_a_directory_a_wheel_lacks():
+    """`cd examples/toy-parser` only works in a git checkout, and the quick
+    start is read mostly by people who installed."""
+    quick = (ROOT / "README.md").read_text().split("## Commands")[0]
+    assert "cd examples/" not in quick
+    assert "spreadex demo" in quick
+
+
+def test_async_wizard_steps_cannot_paint_over_a_later_step():
+    """Clicking through faster than a fetch returns used to leave the screen a
+    step behind while the state had already moved on. Guarded by a render
+    token, which both fetching steps must honour."""
+    app = (ROOT / "src" / "spreadex" / "api" / "static" / "app.js").read_text()
+    assert "let RENDER = 0" in app
+    assert "const mine = ++RENDER" in app
+    for step in ("stepGrammar", "stepGenerators"):
+        assert f"async function {step}(current = () => true)" in app, step
+    assert app.count("if (!current()) return;") >= 2, "each must bail after its await"

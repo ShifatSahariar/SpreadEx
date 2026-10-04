@@ -7,3 +7,8 @@ dist/
 .pytest_cache/
 .venv/
 venv/
+
+# Build outputs
+/dist/
+/build/
+*.egg-info/

@@ -238,9 +238,20 @@ function commitStrategy() { stashStrategy(); gotoStep("run"); }
 
 // ------------------------------------------------------------ step views
 
+// Two of the steps fetch before they paint. Without a token, a slow step 3
+// can finish after you have already moved to step 5 and overwrite it -- the
+// state is right, the screen is a step behind, and nothing looks broken.
+let RENDER = 0;
+
 function renderStep() {
-  ({ sut: stepSut, grammar: stepGrammar, generators: stepGenerators,
-     strategy: stepStrategy, run: stepRun }[S.step])();
+  const mine = ++RENDER;
+  const step = S.step;
+  const fn = { sut: stepSut, grammar: stepGrammar, generators: stepGenerators,
+               strategy: stepStrategy, run: stepRun }[step];
+  Promise.resolve(fn(() => mine === RENDER)).catch(e => {
+    if (mine !== RENDER) return;   // we were superseded; its error is moot
+    el("view").innerHTML = `<div class="card"><div class="note bad">${esc(e.message || e)}</div></div>`;
+  });
 }
 
 function targetRow(x, i, total) {
@@ -400,9 +411,10 @@ function commitSut() {
   gotoStep("grammar");
 }
 
-async function stepGrammar() {
+async function stepGrammar(current = () => true) {
   el("view").innerHTML = `<div class="card"><div class="empty">Looking for grammars…</div></div>`;
   const { grammars } = await api("/api/files");
+  if (!current()) return;   // the user moved on while this was loading
   S.grammars = grammars;
   const chosen = cfg().grammar?.source || "";
   el("view").innerHTML = `
@@ -635,9 +647,10 @@ function commitGrammar() {
   gotoStep("generators");
 }
 
-async function stepGenerators() {
+async function stepGenerators(current = () => true) {
   el("view").innerHTML = `<div class="card"><div class="empty">Checking generators…</div></div>`;
   const { generators } = await api("/api/generators");
+  if (!current()) return;
   S.generators = generators;
   if (!cfg().generators) S.config.generators = generators.filter(g => g.selected).map(g => g.id);
   if (!S.config.generators.length && !cfg().corpus) {
