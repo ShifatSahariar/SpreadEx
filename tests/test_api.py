@@ -553,3 +553,63 @@ def test_opening_the_ui_does_not_create_state_for_a_configured_project(served):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+
+# ------------------------------------------------- testing-strategy config
+
+@pytest.mark.parametrize(
+    "oracle_yaml, expected",
+    [
+        # Crashes and hangs only -- the floor, always on.
+        ("oracle: {type: crash}\n", ("crash", [], [])),
+        # "This system reports invalid input itself".
+        ('oracle:\n  type: crash\n  rejection_patterns: ["SyntaxError", "^js: "]\n',
+         ("crash", ["SyntaxError", "^js: "], [])),
+        # Advanced: a message that always outranks a rejection rule.
+        ('oracle:\n  type: crash\n  rejection_patterns: ["error"]\n'
+         '  crash_patterns: ["java.lang.NullPointerException"]\n',
+         ("crash", ["error"], ["java.lang.NullPointerException"])),
+    ],
+)
+def test_the_strategy_step_writes_a_config_the_engine_accepts(empty_project, oracle_yaml, expected):
+    """The checkboxes only compose things the oracle already understands, so
+    what the wizard writes has to survive the real loader."""
+    base, token, root, httpd = empty_project
+    yaml_text = ('sut:\n  command: ["echo", "{input}"]\n  timeout: 5s\n'
+                 + oracle_yaml + "generators: []\ncorpus: {path: .}\n")
+    status, body = post(f"{base}/api/config", {"yaml": yaml_text, "write": True}, token=token)
+    assert status == 200 and body["ok"] is True
+
+    from spreadex.exec.oracle import make_oracle
+
+    raw = httpd.spreadex_config.raw["oracle"]
+    kind, rejection, crash = expected
+    assert raw.get("type") == kind
+    assert raw.get("rejection_patterns", []) == rejection
+    assert raw.get("crash_patterns", []) == crash
+    make_oracle(raw)  # must not raise
+
+
+def test_expected_exit_codes_survive_the_wizard(empty_project):
+    """Emitted by buildYaml now; the engine has always read it."""
+    base, token, _, httpd = empty_project
+    yaml_text = ('sut:\n  command: ["echo"]\noracle:\n  type: crash\n'
+                 "  expected_exit_codes: [0, 1, 2]\ngenerators: []\ncorpus: {path: .}\n")
+    status, _ = post(f"{base}/api/config", {"yaml": yaml_text, "write": True}, token=token)
+    assert status == 200
+    assert httpd.spreadex_config.raw["oracle"]["expected_exit_codes"] == [0, 1, 2]
+
+
+def test_differential_needs_two_targets(empty_project):
+    """The UI disables the checkbox with one target; the loader is what actually
+    enforces it, so a hand-edited file is caught too."""
+    base, token, _, httpd = empty_project
+    status, body = post(
+        f"{base}/api/config",
+        {"yaml": 'sut:\n  command: ["echo"]\noracle: {type: differential}\n'
+                 "generators: []\ncorpus: {path: .}\n", "write": True}, token=token)
+    # Validation failures are a result, not a transport error: the wizard
+    # renders them beside the field.
+    assert status == 200 and body["ok"] is False
+    assert "two entries" in " ".join(body["errors"])
+    assert httpd.spreadex_config.configured is False, "a rejected config is not adopted"

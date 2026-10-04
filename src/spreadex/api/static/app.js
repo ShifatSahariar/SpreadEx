@@ -43,11 +43,12 @@ const STEPS = [
   { id: "sut",        n: 1, t: "System under test", d: "The command to run." },
   { id: "grammar",    n: 2, t: "Grammar",           d: "Where inputs come from." },
   { id: "generators", n: 3, t: "Generators",        d: "Who writes the inputs." },
-  { id: "run",        n: 4, t: "Budget & run",      d: "Review, then launch." },
+  { id: "strategy",   n: 4, t: "Testing strategy",  d: "What counts as a failure." },
+  { id: "run",        n: 5, t: "Budget & run",      d: "Review, then launch." },
 ];
 
 const S = {
-  tab: "setup", step: "sut", project: null, config: {},
+  tab: "setup", step: "sut", project: null, config: {}, rejects: undefined,
   generators: [], grammars: [], runs: [], current: null, polling: null,
 };
 
@@ -95,6 +96,9 @@ function buildYaml() {
   }
   lines.push(`  timeout: ${c.sut?.timeout || "5s"}`, "", "oracle:");
   lines.push(`  type: ${t.length > 1 ? "differential" : (c.oracle?.type || "crash")}`);
+  if (c.oracle?.expected_exit_codes?.length) {
+    lines.push(`  expected_exit_codes: [${c.oracle.expected_exit_codes.join(", ")}]`);
+  }
   for (const key of ["rejection_patterns", "crash_patterns", "banners"]) {
     const v = c.oracle?.[key];
     if (v && v.length) {
@@ -120,10 +124,121 @@ async function saveConfig(write) {
   return res;
 }
 
+// ------------------------------------------------- step 4: testing strategy
+
+// Checks, not a single "oracle" dropdown. The engine already distinguishes
+// ok / expected_rejection / crash / timeout / divergence; this step only
+// decides which of those the user wants reported, in their words.
+
+function patternRows(key, placeholder) {
+  const list = cfg().oracle?.[key] || [];
+  const rows = list.length ? list : [""];
+  return rows.map((v, i) => `
+    <div class="pat-row">
+      <input type="text" class="pat-${key}" value="${esc(v)}" placeholder="${esc(placeholder)}">
+      <button class="ghost small" onclick="dropPattern('${key}', ${i})"
+        title="Remove this message" aria-label="Remove">&times;</button>
+    </div>`).join("");
+}
+
+function readPatterns(key) {
+  return Array.from(document.querySelectorAll(`.pat-${key}`))
+    .map(i => i.value.trim()).filter(Boolean);
+}
+
+function stashStrategy() {
+  // Keep what is on screen before re-rendering, so adding a row never eats what
+  // the user already typed -- and keep the answer to "does this system reject
+  // input?" separately, because it stays true while the list is still empty.
+  const o = { ...(cfg().oracle || {}) };
+  if (el("chk-reject")) {
+    S.rejects = el("chk-reject").checked;
+    o.rejection_patterns = S.rejects ? readPatterns("rejection_patterns") : [];
+    o.crash_patterns = readPatterns("crash_patterns");
+    o.type = (el("chk-diff") && el("chk-diff").checked) ? "differential" : "crash";
+    const codes = (el("exit-codes").value || "").split(/[,\s]+/)
+      .map(x => parseInt(x, 10)).filter(n => !Number.isNaN(n));
+    if (codes.length) o.expected_exit_codes = codes; else delete o.expected_exit_codes;
+  }
+  S.config.oracle = o;
+}
+
+function addPattern(key) { stashStrategy();
+  S.config.oracle[key] = [...(cfg().oracle[key] || []), ""]; stepStrategy(); }
+function dropPattern(key, i) { stashStrategy();
+  const v = [...(cfg().oracle[key] || [])]; v.splice(i, 1);
+  S.config.oracle[key] = v; stepStrategy(); }
+function redrawStrategy() { stashStrategy(); stepStrategy(); }
+
+function stepStrategy() {
+  const o = cfg().oracle || {}, multi = targets().length > 1;
+  if (S.rejects === undefined) S.rejects = (o.rejection_patterns || []).length > 0;
+  const rejects = S.rejects;
+  el("view").innerHTML = `
+  <div class="card">
+    <h3>What counts as a failure?</h3>
+    <p class="why">SpreadEx distinguishes a measurement from a judgement. Every input is
+      <em>run</em>; these checks decide which results are worth your attention. Most generated
+      input is invalid on purpose, and a parser rejecting it is doing its job &mdash; not a bug.</p>
+
+    <label class="check"><input type="checkbox" checked disabled>
+      <span><strong>Crashes and hangs</strong><br>
+      <span class="muted">A signal, a crash-shaped exit, or no answer before the timeout.
+      Always on &mdash; this is the floor.</span></span></label>
+
+    <label class="check"><input type="checkbox" id="chk-diff" ${o.type === "differential" ? "checked" : ""}
+      ${multi ? "" : "disabled"} onchange="redrawStrategy()">
+      <span><strong>Disagreement between implementations</strong><br>
+      <span class="muted">${multi
+        ? "Both run the same input; a different exit code, exception or output is a divergence. No expected output needed."
+        : "Add a second implementation on step 1 to enable this."}</span></span></label>
+
+    <label class="check"><input type="checkbox" id="chk-reject" ${rejects ? "checked" : ""}
+      onchange="redrawStrategy()">
+      <span><strong>This system reports invalid input itself</strong><br>
+      <span class="muted">If it exits non-zero for input it legitimately refuses, say how it
+      says so &mdash; otherwise every invalid input is reported as a crash.</span></span></label>
+
+    ${rejects ? `
+    <div class="indent">
+      <label>Messages that mean &ldquo;I rejected this&rdquo;</label>
+      <p class="muted" style="font-size:12.5px;margin:2px 0 6px">One per line, matched against
+        the output as a regular expression. Copy a real error message from your system.</p>
+      ${patternRows("rejection_patterns", "SyntaxError")}
+      <button class="ghost small" onclick="addPattern('rejection_patterns')">Add another message</button>
+    </div>` : ""}
+
+    <details ${(o.crash_patterns || []).length || (o.expected_exit_codes || []).length ? "open" : ""}>
+      <summary>Advanced</summary>
+      <div class="indent">
+        <label>Messages that always mean a real failure</label>
+        <p class="muted" style="font-size:12.5px;margin:2px 0 6px">Checked <em>before</em> the
+          rejection messages above, so a broad rejection rule cannot hide a genuine bug.</p>
+        ${patternRows("crash_patterns", "java.lang.NullPointerException")}
+        <button class="ghost small" onclick="addPattern('crash_patterns')">Add another message</button>
+        <div style="margin-top:10px">
+          <label for="exit-codes">Exit codes that are not failures</label>
+          <input id="exit-codes" type="text" placeholder="0, 1"
+            value="${esc((o.expected_exit_codes || []).join(", "))}">
+        </div>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button class="ghost" onclick="stashStrategy(); gotoStep('generators')">Back</button>
+      <button class="primary" onclick="commitStrategy()">Continue</button>
+    </div>
+    <div id="err"></div>
+  </div>`;
+}
+
+function commitStrategy() { stashStrategy(); gotoStep("run"); }
+
 // ------------------------------------------------------------ step views
 
 function renderStep() {
-  ({ sut: stepSut, grammar: stepGrammar, generators: stepGenerators, run: stepRun }[S.step])();
+  ({ sut: stepSut, grammar: stepGrammar, generators: stepGenerators,
+     strategy: stepStrategy, run: stepRun }[S.step])();
 }
 
 function stepSut() {
@@ -144,19 +259,7 @@ function stepSut() {
     <div class="row" style="margin-top:4px">
       <div><label for="timeout">Timeout per input</label>
         <input id="timeout" type="text" value="${esc(sut().timeout || "5s")}"></div>
-      <div><label for="oracle">Oracle</label>
-        <select id="oracle">
-          <option value="crash" ${(cfg().oracle?.type !== "differential") ? "selected" : ""}>crash &amp; timeout</option>
-          <option value="differential" ${(cfg().oracle?.type === "differential") ? "selected" : ""}>differential</option>
-        </select></div>
     </div>
-    ${cfg().oracle?.rejection_patterns?.length ? `<div class="note">
-      This project defines <strong>${cfg().oracle.rejection_patterns.length} rejection pattern(s)</strong>,
-      which tell SpreadEx when the system under test correctly refused an input rather than broke.
-      They are preserved.</div>` : `<div class="note">
-      If your system exits non-zero for input it legitimately rejects, add
-      <span class="mono">oracle.rejection_patterns</span> to <span class="mono">spreadex.yaml</span>
-      afterwards, or every invalid input will be reported as a crash.</div>`}
     <div class="actions"><button class="primary" onclick="commitSut()">Continue</button></div>
     <div id="err"></div>
   </div>`;
@@ -197,7 +300,11 @@ function commitSut() {
   S.config.sut = t.length > 1
     ? { timeout: el("timeout").value, targets: t }
     : { timeout: el("timeout").value, command: t[0].command };
-  S.config.oracle = { ...(cfg().oracle || {}), type: t.length > 1 ? "differential" : el("oracle").value };
+  // A second implementation is the only thing that makes differential testing
+  // possible, so dropping back to one target has to retire it.
+  const o = { ...(cfg().oracle || {}) };
+  if (t.length < 2 && o.type === "differential") o.type = "crash";
+  S.config.oracle = o;
   gotoStep("grammar");
 }
 
@@ -598,7 +705,7 @@ function commitGenerators() {
       Install them, or deselect them.</div>`;
     return;
   }
-  gotoStep("run");
+  gotoStep("strategy");
 }
 
 async function stepRun() {
@@ -636,7 +743,7 @@ async function stepRun() {
       exactly this. Nothing else.</p>
     <pre id="preview">${esc(buildYaml())}</pre>
     <div class="actions">
-      <button class="ghost" onclick="gotoStep('generators')">Back</button>
+      <button class="ghost" onclick="gotoStep('strategy')">Back</button>
       <button class="ghost" onclick="refreshPreview()">Refresh preview</button>
       <button class="primary" id="launch" onclick="launch()">Save &amp; run</button>
     </div>

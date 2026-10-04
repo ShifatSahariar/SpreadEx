@@ -184,3 +184,21 @@ details summary:hover { color: var(--color-text); }
 }
 :root[data-theme="light"] .icon-sun { display: block; }
 :root[data-theme="light"] .icon-moon { display: none; }
+
+/* Testing strategy: a stack of checks, each with its own explanation. */
+.check { display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px;
+  border: 1px solid var(--color-border); border-radius: var(--radius); margin: 8px 0; cursor: pointer; }
+.check:has(input:disabled) { cursor: default; opacity: .72; }
+.check:has(input:checked) { border-color: var(--color-primary-bd); background: var(--color-primary-lt); }
+.check input { margin-top: 2px; flex: none; accent-color: var(--color-primary); }
+/* A check is a label, but it reads as prose -- not as a field caption, which is
+   what the global label rule styles. */
+.check { font-size: 14px; font-weight: 400; color: var(--color-text);
+  text-transform: none; letter-spacing: 0; }
+.check span { line-height: 1.45; display: block; }
+.check .muted { color: var(--color-muted); font-size: 13px; }
+.indent { margin: 2px 0 10px 34px; padding-left: 12px; border-left: 2px solid var(--color-border); }
+.indent .row { margin-bottom: 6px; }
+details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; padding: 6px 0; }
+.pat-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.pat-row button { flex: none; }
