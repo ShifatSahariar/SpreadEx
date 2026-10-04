@@ -49,6 +49,7 @@ const STEPS = [
 
 const S = {
   tab: "setup", step: "sut", project: null, config: {}, rejects: undefined,
+  rtab: "overview", detail: null,
   kind: null, sample: undefined, probe: null,
   generators: [], grammars: [], runs: [], current: null, polling: null,
 };
@@ -976,6 +977,16 @@ function budgetChart(actual, random, total) {
   ${random?.length ? `<span><span class="swatch" style="background:var(--color-muted)"></span>random ordering (mean of 200 shuffles)</span>` : ""}</div>`;
 }
 
+const RESULT_TABS = [
+  { id: "overview",   t: "Overview"   },
+  { id: "generators", t: "Generators" },
+  { id: "budget",     t: "Budget"     },
+  { id: "failures",   t: "Failures"   },
+  { id: "corpus",     t: "Corpus"     },
+];
+
+function pickResultTab(id) { S.rtab = id; paintRun(); }
+
 async function renderResults() {
   const v = el("view");
   if (!S.runs.length) {
@@ -988,16 +999,36 @@ async function renderResults() {
       ${esc(r.run_id.replace("T", " ").replace("Z", ""))} · ${num(r.executed)} executed${r.failures ? ` · <span class="bad">${r.failures} failing</span>` : ""}
     </button>`).join("")}</div><div id="detail"><div class="empty">Loading…</div></div>`;
 
-  let d;
-  try { d = await api(`/api/runs/${encodeURIComponent(S.current)}`); }
+  // run_detail shuffles the corpus 200 times for the random baseline, so it is
+  // fetched once per run and the tabs read from what came back.
+  try { S.detail = await api(`/api/runs/${encodeURIComponent(S.current)}`); }
   catch (e) { el("detail").innerHTML = `<div class="card bad">${esc(e.message)}</div>`; return; }
+  paintRun();
+}
 
-  const ver = d.verdicts || {};
-  const failing = (ver.crash || 0) + (ver.timeout || 0) + (ver.divergence || 0);
-  const costs = d.generators.map(g => g.cost_s).filter(c => c > 0);
-  const spread = costs.length > 1 ? Math.max(...costs) / Math.min(...costs) : 1;
-
+function paintRun() {
+  const d = S.detail;
+  if (!d) return;
+  const body = ({ overview: tabOverview, generators: tabGenerators, budget: tabBudget,
+                  failures: tabFailures, corpus: tabCorpus }[S.rtab] || tabOverview)(d);
   el("detail").innerHTML = `
+    <div class="rtabs" role="tablist">${RESULT_TABS.map(t => `
+      <button role="tab" aria-selected="${(S.rtab || "overview") === t.id}"
+        onclick="pickResultTab('${t.id}')">${t.t}${t.id === "failures" && d.signatures.length
+          ? ` <span class="tag ${d.signatures.length ? "bad" : ""}">${d.signatures.length}</span>` : ""}</button>`).join("")}
+    </div>${body}`;
+}
+
+function failingCount(d) {
+  const v = d.verdicts || {};
+  return (v.crash || 0) + (v.timeout || 0) + (v.divergence || 0);
+}
+
+// --------------------------------------------------------------- overview
+
+function tabOverview(d) {
+  const ver = d.verdicts || {}, failing = failingCount(d);
+  return `
   <div class="card">
     <div class="stats">
       <div class="stat"><div class="k">Executed</div><div class="v">${num(d.executed)}</div></div>
@@ -1009,37 +1040,15 @@ async function renderResults() {
     <div class="note">A <em>rejected</em> input is one the system under test correctly refused.
       Counting those as failures is the difference between a usable tool and a noise generator.</div>
   </div>
-  ${d.generators.length ? `<div class="card">
-    <h3>Generator comparison</h3>
-    <p class="why">Which generators deserve the next generation budget. Cluster coverage is computed
-      <em>before</em> anything is executed${d.corpus.k_eff ? `, over ${d.corpus.k_eff} clusters` : ""}.</p>
-    <table><thead><tr><th>Generator</th><th class="num">CC</th><th></th><th class="num">Inputs</th><th class="num">Generation cost</th></tr></thead>
-      <tbody>${d.generators.map((g, i) => `<tr><td>${esc(g.name)}</td>
-        <td class="num mono">${g.cc.toFixed(2)}</td>
-        <td style="width:32%"><span class="bar" style="width:${(g.cc * 100).toFixed(0)}%;background:var(--series-${i % 4})"></span></td>
-        <td class="num mono">${num(g.inputs)}</td><td class="num mono">${g.cost_s.toFixed(1)}s</td></tr>`).join("")}</tbody></table>
-    ${spread > 5 ? `<div class="note">Generation costs differ by more than 5&times;, so these CC values
-      compare equal <strong>input counts</strong>, not equal budgets.</div>` : ""}
-  </div>` : ""}
   <div class="card">
-    <h3>Budget curve</h3>
-    <p class="why">Distinct failure signatures against inputs executed. The dashed line is the same
-      inputs in random order, so the gap is what the ordering bought &mdash; and no gap is a real
-      answer too.</p>
-    ${budgetChart(d.budget_curve, d.random_curve, d.executed)}
-  </div>
-  <div class="card">
-    <h3>Failure signatures</h3>
-    <p class="why">A signature is not a bug: distinct bugs can share one and one bug can span
-      several. Treat the count as a triage aid.</p>
-    ${d.signatures.length ? d.signatures.map(s => `<details>
-      <summary><span class="mono">${esc(s.signature)}</span>
-        <span class="tag ${s.verdict === "divergence" ? "warn" : "bad"}">${esc(s.verdict)}</span>
-        &times;${s.count} · first at input ${s.first_rank + 1}${s.new ? ` <span class="tag warn">new</span>` : ""}</summary>
-      ${s.detail ? `<div class="muted" style="font-size:12.5px;margin-top:6px">${esc(s.detail)}</div>` : ""}
-      ${s.stderr ? `<pre>${esc(s.stderr)}</pre>` : ""}
-      <div class="actions"><button class="ghost small" onclick="showInput('${esc(s.example)}', this)">Show an input that triggers it</button></div>
-      <div class="holder"></div></details>`).join("") : `<div class="empty">No failures in this run.</div>`}
+    <h3>What happened</h3>
+    <p class="why">${failing
+      ? `SpreadEx executed ${num(d.executed)} inputs and ${num(failing)} did something worth
+         looking at, across ${d.signatures.length} distinct signature(s). The
+         <strong>Failures</strong> tab has them.`
+      : `SpreadEx executed ${num(d.executed)} inputs and nothing crashed, hung or diverged.
+         For a mature system under test that is the expected outcome, not a missing measurement
+         &mdash; the <strong>Budget</strong> tab shows how far the campaign actually got.`}</p>
   </div>
   <div class="card">
     <h3>Reproducing this run</h3>
@@ -1051,6 +1060,88 @@ async function renderResults() {
       <tr><td class="muted">Environment</td><td class="mono">python ${esc(d.environment.python)} · ${esc(d.environment.platform)}</td></tr>
     </tbody></table>
     <pre>spreadex replay ${esc(d.run_id)}</pre>
+  </div>`;
+}
+
+// ------------------------------------------------------------- generators
+
+function tabGenerators(d) {
+  if (!d.generators.length) {
+    return `<div class="card"><div class="empty">This campaign used existing inputs, so there is
+      no generator to compare.</div></div>`;
+  }
+  const costs = d.generators.map(g => g.cost_s).filter(c => c > 0);
+  const spread = costs.length > 1 ? Math.max(...costs) / Math.min(...costs) : 1;
+  return `<div class="card">
+    <h3>Generator comparison</h3>
+    <p class="why">Which generators deserve the next generation budget. Cluster coverage is computed
+      <em>before</em> anything is executed${d.corpus.k_eff ? `, over ${d.corpus.k_eff} clusters` : ""}.</p>
+    <table><thead><tr><th>Generator</th><th class="num">CC</th><th></th><th class="num">Inputs</th><th class="num">Generation cost</th></tr></thead>
+      <tbody>${d.generators.map((g, i) => `<tr><td>${esc(g.name)}</td>
+        <td class="num mono">${g.cc.toFixed(2)}</td>
+        <td style="width:32%"><span class="bar" style="width:${(g.cc * 100).toFixed(0)}%;background:var(--series-${i % 4})"></span></td>
+        <td class="num mono">${num(g.inputs)}</td><td class="num mono">${g.cost_s.toFixed(1)}s</td></tr>`).join("")}</tbody></table>
+    ${spread > 5 ? `<div class="note">Generation costs differ by more than 5&times;, so these CC values
+      compare equal <strong>input counts</strong>, not equal budgets.</div>` : ""}
+    <div class="note">Cluster coverage is measured against <em>this</em> pool. Add or remove a
+      generator and every score moves, so compare these numbers within a campaign, never across
+      campaigns.</div>
+  </div>`;
+}
+
+// ----------------------------------------------------------------- budget
+
+function tabBudget(d) {
+  return `<div class="card">
+    <h3>Budget curve</h3>
+    <p class="why">Distinct failure signatures against inputs executed. The dashed line is the same
+      inputs in random order, so the gap is what the ordering bought &mdash; and no gap is a real
+      answer too.</p>
+    ${budgetChart(d.budget_curve, d.random_curve, d.executed)}
+  </div>`;
+}
+
+// --------------------------------------------------------------- failures
+
+function tabFailures(d) {
+  return `<div class="card">
+    <h3>Failure signatures</h3>
+    <p class="why">A signature is not a bug: distinct bugs can share one and one bug can span
+      several. Treat the count as a triage aid.</p>
+    ${d.signatures.length ? d.signatures.map(s => `<details>
+      <summary><span class="mono">${esc(s.signature)}</span>
+        <span class="tag ${s.verdict === "divergence" ? "warn" : "bad"}">${esc(s.verdict)}</span>
+        &times;${s.count} · first at input ${s.first_rank + 1}${s.new ? ` <span class="tag warn">new</span>` : ""}</summary>
+      ${s.detail ? `<div class="muted" style="font-size:12.5px;margin-top:6px">${esc(s.detail)}</div>` : ""}
+      ${s.stderr ? `<pre>${esc(s.stderr)}</pre>` : ""}
+      <div class="actions"><button class="ghost small" onclick="showInput('${esc(s.example)}', this)">Show an input that triggers it</button></div>
+      <div class="holder"></div></details>`).join("") : `<div class="empty">Nothing crashed, hung or
+      diverged in this run.<br><span class="muted">That is a result, not a gap.</span></div>`}
+  </div>`;
+}
+
+// ----------------------------------------------------------------- corpus
+
+function tabCorpus(d) {
+  const c = d.corpus || {};
+  const row = (k, v, why) => v === null || v === undefined ? "" :
+    `<tr><th>${k}</th><td class="mono" style="width:70px">${num(v)}</td>
+       <td class="muted">${why}</td></tr>`;
+  return `<div class="card">
+    <h3>The corpus this campaign drew on</h3>
+    <p class="why">Inputs are stored once, by content, so the same input produced by two generators
+      or re-seen in a later version is one blob with several execution records.</p>
+    <table class="summary"><tbody>
+      ${row("Generated", c.generated, "written by the generators, before any filtering")}
+      ${row("Valid", c.valid, "kept after the generator's own validity check")}
+      ${row("Prioritized", c.prioritized, "ordered for execution by the selection signal")}
+      ${row("Executed", d.executed, "actually run before the execution budget ran out")}
+      ${row("Clusters", c.k_eff, "found by the shared clustering, which is what CC is measured over")}
+    </tbody></table>
+    ${c.prioritized && d.executed < c.prioritized ? `<div class="note">The execution budget ran out
+      after ${num(d.executed)} of ${num(c.prioritized)} inputs. The rest are still in the corpus and
+      a longer budget picks up where this one stopped.</div>` : ""}
+    <pre>spreadex export ${esc(d.run_id)}</pre>
   </div>`;
 }
 
