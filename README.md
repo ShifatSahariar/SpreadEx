@@ -5,8 +5,11 @@ under test and uses a finite budget to decide which generators and which generat
 execution.**
 
 Specialized fuzzers generate. SpreadEx orchestrates, measures, compares, prioritizes and
-reproduces. Everything runs on your machine: your SUT, grammars, generated programs, crashes and
-corpus never leave it.
+reproduces. It runs on your machine: your system under test, the inputs generated for it, the
+crashes and the corpus stay in your project's `.spreadex` directory, and running a campaign sends
+nothing anywhere. Two things do use the network, both only when you ask: installing a generator
+downloads it from PyPI, and the optional grammar assistant calls a model provider you configure.
+The assistant is off by default and names the host before it sends anything.
 
 The algorithms are those of the ICST 2026 paper *Embedding-based Diversity Mapping for Test
 Generator Selection and Input Prioritization in Grammar-based Testing*, and a CI gate asserts
@@ -15,22 +18,31 @@ this implementation still computes them — see [docs/MIGRATION.md](docs/MIGRATI
 ## Quick start
 
 ```bash
-pip install -e .          # no torch, no pandas, no Docker, no JDK
-cd examples/toy-parser
-spreadex doctor           # prints fixes, not diagnoses
-spreadex run
+uv tool install spreadex   # or: pipx install spreadex
+spreadex demo              # a real campaign, about a minute, nothing canned
 ```
+
+`spreadex demo` writes a small project — a hundred-line system under test with one real,
+documented bug — and runs the genuine pipeline against it: generate, cluster, prioritize,
+execute, judge, store. Then point it at your own:
+
+```bash
+cd my-project
+spreadex                   # opens the Workbench; the wizard writes spreadex.yaml
+```
+
+No torch, no pandas, no Docker, no JDK.
 
 ```
   Execution
-    Executed .............. 60
-    Passed ................ 40
-    Rejected (expected) ... 15
-    Crashes ............... 5
+    Executed .............. 155
+    Passed ................ 118
+    Rejected (expected) ... 21
+    Crashes ............... 16
 ```
 
-Note the third line: fifteen inputs were *correctly rejected* by the parser. A tool that counted
-those as failures would report twenty bugs where there is one. Telling those apart is the oracle's
+Note the third line: twenty-one inputs were *correctly rejected* by the system under test. A tool
+that counted those as failures would report thirty-seven findings where there is one bug. Telling those apart is the oracle's
 job, and it is the difference between a usable tool and a noise generator.
 
 ## Commands

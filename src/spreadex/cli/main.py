@@ -489,12 +489,20 @@ def cmd_replay(args) -> int:
 
 def cmd_export(args) -> int:
     config = _load(args)
-    out = Path(args.output or "campaign.zip").resolve()
+    run_id, output = args.run_id, args.output
+    # `spreadex export out.zip` is what people type. Reading that as a run id
+    # and then failing on a missing run directory would be a riddle, so a
+    # positional that is plainly a filename is taken as the destination.
+    if run_id and output is None and run_id.endswith(".zip"):
+        run_id, output = None, run_id
+    out = Path(output or "campaign.zip").resolve()
     with CorpusStore(config.state_dir) as store:
-        run_id = args.run_id or store.latest_run_id()
+        run_id = run_id or store.latest_run_id()
         if not run_id:
             _die("no runs to export")
         run_dir = store.run_dir(run_id)
+        if not run_dir.is_dir():
+            _die(f"no run {run_id!r}. `spreadex results --all` lists them.", code=1)
 
     import tempfile, zipfile
     with tempfile.TemporaryDirectory() as tmp:
@@ -640,8 +648,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_replay)
 
     s = sub.add_parser("export", help="export a campaign as a zip")
-    s.add_argument("run_id", nargs="?")
-    s.add_argument("-o", "--output")
+    s.add_argument("run_id", nargs="?",
+                   help="a campaign id, or just the .zip to write (default: the latest)")
+    s.add_argument("-o", "--output", help="where to write it")
     s.set_defaults(func=cmd_export)
     return p
 

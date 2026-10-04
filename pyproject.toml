@@ -8,8 +8,25 @@ version = "0.1.0a0"
 description = "Local-first harness that runs multiple grammar-based generators against a system under test and spends a finite budget on the inputs most worth executing."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+# PEP 639: an SPDX expression, with the file shipped rather than described.
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["fuzzing", "grammar", "testing", "compiler-testing", "test-prioritization"]
+authors = [{name = "Shifat Sahariar Bhuiyan", email = "shifat.sahariar.bhuiyan@usi.ch"}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+
 
 # Deliberately small: no torch, no pandas, no Docker, no JDK.
 dependencies = ["numpy>=1.24", "scikit-learn>=1.3", "PyYAML>=6.0"]
@@ -19,6 +36,11 @@ neural = ["torch>=2.0", "transformers>=4.35"]
 dev = ["pytest>=7.0"]
 # Only needed to run tests/golden against the research repository.
 golden = ["pytest>=7.0", "pandas>=2.0", "hdbscan>=0.8.33"]
+
+[project.urls]
+Homepage = "https://github.com/shifatsb/spreadex"
+Repository = "https://github.com/shifatsb/spreadex"
+Issues = "https://github.com/shifatsb/spreadex/issues"
 
 [project.scripts]
 spreadex = "spreadex.cli.main:main"

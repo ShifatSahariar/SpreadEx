@@ -1,0 +1,14 @@
+# What belongs in an sdist but is not a Python package.
+#
+# The wheel carries the demo project as package data, so `spreadex demo` works
+# from a plain `pip install`. examples/ and tests/ ship in the sdist only --
+# they are how someone verifies the tool, not how they run it.
+include LICENSE
+include README.md
+include CITATION.cff
+recursive-include examples *
+recursive-include tests *.py *.yaml *.bnf *.g4 *.txt
+recursive-include src/spreadex/demo *
+prune **/__pycache__
+prune **/.spreadex
+global-exclude *.py[cod]

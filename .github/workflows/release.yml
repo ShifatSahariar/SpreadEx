@@ -1,0 +1,71 @@
+# Builds a release and attaches it to the GitHub release.
+#
+# Publishing to PyPI is deliberately a SEPARATE, manual job: it needs an
+# environment that a maintainer approves, and nothing here runs on its own.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+
+      # A wheel that cannot run the journey is not a release. Installed into a
+      # clean environment, outside the checkout, so nothing resolves back into
+      # the source tree.
+      - name: verify the wheel
+        run: |
+          python -m venv /tmp/verify
+          /tmp/verify/bin/pip install dist/*.whl
+          mkdir -p /tmp/journey && cd /tmp/journey
+          /tmp/verify/bin/spreadex --version
+          /tmp/verify/bin/spreadex doctor || true   # no project here yet
+          /tmp/verify/bin/spreadex demo --no-run
+          cd spreadex-demo && /tmp/verify/bin/spreadex doctor
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  attach:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: dist, path: dist}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: true          # a human decides when it is public
+
+  # Trusted Publishing: no token lives in CI. Gated on an environment, so it
+  # runs only after a maintainer approves it, and never on a plain tag push.
+  pypi:
+    needs: build
+    if: false   # flip to `startsWith(github.ref, 'refs/tags/v')` to enable
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: dist, path: dist}
+      - uses: pypa/gh-action-pypi-publish@release/v1
