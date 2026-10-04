@@ -185,3 +185,28 @@ def test_project_summary(served):
     base, token, _ = served
     _, payload = get(f"{base}/api/project", token)
     assert payload["targets"] and payload["signal"] == "cc"
+
+
+def test_a_stray_browser_path_redirects_to_the_page(served):
+    """Someone typing a path into the address bar gets the UI, not raw JSON.
+    `/spreadex` in particular was a route in the older research webapp."""
+    from urllib.request import build_opener, HTTPRedirectHandler
+
+    base, _, _ = served
+
+    class Capture(HTTPRedirectHandler):
+        location = None
+
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            Capture.location = newurl
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    with build_opener(Capture).open(f"{base}/spreadex", timeout=10) as r:
+        assert r.status == 200
+    assert Capture.location.endswith("/")
+
+
+def test_unknown_api_routes_still_404_rather_than_redirect(served):
+    """An API typo must fail loudly; only browser paths are forgiven."""
+    base, token, _ = served
+    assert status_of(f"{base}/api/nonsense", token=token) == 404

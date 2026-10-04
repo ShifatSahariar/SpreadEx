@@ -167,7 +167,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(data.grammar_report(self.config))
             return
 
-        self._error(HTTPStatus.NOT_FOUND, f"no route {route!r}")
+        if route.startswith("/api/"):
+            self._error(HTTPStatus.NOT_FOUND, f"no route {route!r}")
+            return
+        # A person typed a path into the address bar. A JSON 404 helps nobody;
+        # send them to the one page there is. (/spreadex, for instance, was a
+        # route in the older research webapp.)
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", "/")
+        self.send_header("Content-Length", "0")
+        self.send_header("Content-Security-Policy", CSP)
+        self.end_headers()
 
     def _static(self, name: str) -> None:
         # Resolve inside STATIC_DIR so a crafted path cannot escape it.
