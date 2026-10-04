@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpreadEx</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --ink: #1c1c1a; --muted: #6b6b66;
+    --line: #e4e3df; --accent: #2f6f4f; --warn: #a66414; --bad: #a33a2a;
+    --ok: #2f6f4f; --rule: #d9d8d3;
+    --g0: #2f6f4f; --g1: #3f6f9f; --g2: #8a5fa8; --g3: #a66414;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a; --panel: #1d1f23; --ink: #e8e8e4; --muted: #9a9a94;
+      --line: #2c2f35; --accent: #6fbf8f; --warn: #d9a44c; --bad: #e08070;
+      --ok: #6fbf8f; --rule: #343840;
+      --g0: #6fbf8f; --g1: #7fb0e0; --g2: #b792d6; --g3: #d9a44c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header {
+    display: flex; align-items: baseline; gap: 14px; padding: 14px 22px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 16px; letter-spacing: .3px; }
+  header .path { color: var(--muted); font-size: 12px; }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  nav { display: flex; gap: 2px; margin-left: auto; flex-wrap: wrap; }
+  nav button {
+    background: none; border: 1px solid transparent; color: var(--muted);
+    padding: 5px 11px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  nav button[aria-selected="true"] { color: var(--ink); border-color: var(--line); background: var(--bg); }
+  main { display: grid; grid-template-columns: 236px 1fr; min-height: calc(100vh - 54px); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } aside { border-right: none !important; } }
+  aside { border-right: 1px solid var(--line); padding: 14px 10px; background: var(--panel); }
+  aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+             color: var(--muted); margin: 0 0 8px 10px; font-weight: 600; }
+  .run { display: block; width: 100%; text-align: left; background: none; cursor: pointer;
+         border: 1px solid transparent; border-radius: 7px; padding: 8px 10px; color: inherit; }
+  .run:hover { background: var(--bg); }
+  .run[aria-current="true"] { border-color: var(--line); background: var(--bg); }
+  .run .id { font-size: 12.5px; }
+  .run .meta { font-size: 11.5px; color: var(--muted); }
+  /* A grid item defaults to min-width:auto, so one long line inside a <pre>
+     widens the whole column instead of scrolling within its own box. */
+  section.body { padding: 20px 24px 60px; max-width: 1000px; min-width: 0; }
+  .panel, table, details { min-width: 0; max-width: 100%; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+           padding: 16px 18px; margin-bottom: 18px; }
+  .panel > h3 { margin: 0 0 3px; font-size: 14px; }
+  .panel > .why { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11.5px;
+       text-transform: uppercase; letter-spacing: .05em; padding: 0 10px 6px 0; }
+  td { padding: 5px 10px 5px 0; border-top: 1px solid var(--line); vertical-align: top;
+       overflow-wrap: anywhere; }
+  td.num, th.num { text-align: right; }
+  .bar { height: 7px; border-radius: 4px; background: var(--g0); display: inline-block; vertical-align: middle; }
+  .stats { display: flex; gap: 26px; flex-wrap: wrap; }
+  .stat .k { font-size: 11.5px; color: var(--muted); }
+  .stat .v { font-size: 21px; font-variant-numeric: tabular-nums; }
+  .pill { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .muted { color: var(--muted); }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+        padding: 10px 12px; overflow: auto; font-size: 12px; margin: 8px 0 0;
+        max-height: 260px; max-width: 100%; white-space: pre-wrap; word-break: break-word; }
+  .note { border-left: 3px solid var(--warn); padding: 6px 0 6px 11px; color: var(--muted);
+          font-size: 12.5px; margin-top: 12px; }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+  details { padding: 4px 0; border-top: 1px solid var(--line); }
+  details:first-of-type { border-top: none; }
+  details summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 4px 0; }
+  details summary:hover { color: var(--ink); }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .swatch { display: inline-block; width: 11px; height: 3px; vertical-align: middle; margin-right: 5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SpreadEx</h1>
+  <span class="path mono" id="root"></span>
+  <span class="badge" id="mode"></span>
+  <nav>
+    <button id="tab-run"     aria-selected="true"  onclick="show('run')">Campaign</button>
+    <button id="tab-grammar" aria-selected="false" onclick="show('grammar')">Grammar</button>
+  </nav>
+</header>
+<main>
+  <aside>
+    <h2>Runs</h2>
+    <div id="runs"></div>
+  </aside>
+  <section class="body" id="view"></section>
+</main>
+
+<script>
+// The token is handed over once in the URL, then kept in sessionStorage and
+// sent as a header -- so it stops sitting in the address bar, in history, or in
+// anything the page later links to.
+const url = new URL(location.href);
+if (url.searchParams.get("token")) {
+  sessionStorage.setItem("spreadex-token", url.searchParams.get("token"));
+  url.searchParams.delete("token");
+  history.replaceState({}, "", url.pathname + url.hash);
+}
+const TOKEN = sessionStorage.getItem("spreadex-token") || "";
+
+async function api(path) {
+  const r = await fetch(path, { headers: { "X-SpreadEx-Token": TOKEN } });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+}
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const num = n => (n ?? 0).toLocaleString();
+const el = id => document.getElementById(id);
+
+let STATE = { tab: "run", runs: [], current: null };
+
+function show(tab) {
+  STATE.tab = tab;
+  el("tab-run").setAttribute("aria-selected", tab === "run");
+  el("tab-grammar").setAttribute("aria-selected", tab === "grammar");
+  tab === "grammar" ? renderGrammar() : renderRun();
+}
+
+// ---------------------------------------------------------------- charts
+
+function budgetChart(actual, random, total) {
+  if (!actual || actual.length < 2) return "";
+  // Nothing failed: an empty chart would look like missing data rather than a
+  // result, so say which it is.
+  if (!actual.some(p => p[1] > 0)) {
+    return `<div class="empty">No failures in ${num(total)} executed inputs,
+      so there is no curve to draw.<br>
+      <span style="font-size:12.5px">For a mature system under test this is the
+      expected outcome, not a missing measurement.</span></div>`;
+  }
+  const W = 620, H = 180, P = { l: 34, r: 12, t: 10, b: 24 };
+  const maxY = Math.max(1, ...actual.map(p => p[1]), ...(random || []).map(p => p[1]));
+  const x = i => P.l + (i / Math.max(1, total - 1)) * (W - P.l - P.r);
+  const y = v => H - P.b - (v / maxY) * (H - P.t - P.b);
+  const line = pts => pts.map((p, i) => `${i ? "L" : "M"}${x(p[0] - 1).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+  const ticks = [0, Math.round(maxY / 2), maxY].filter((v, i, a) => a.indexOf(v) === i);
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img"
+            aria-label="distinct failure signatures against inputs executed">
+    ${ticks.map(t => `<g><line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}"
+         stroke="var(--rule)" stroke-dasharray="2 3"/>
+       <text x="${P.l - 7}" y="${y(t) + 4}" font-size="10" fill="var(--muted)" text-anchor="end">${t}</text></g>`).join("")}
+    <text x="${P.l}" y="${H - 6}" font-size="10" fill="var(--muted)">0</text>
+    <text x="${W - P.r}" y="${H - 6}" font-size="10" fill="var(--muted)" text-anchor="end">${total} executed</text>
+    ${random && random.length ? `<path d="${line(random)}" fill="none" stroke="var(--muted)"
+        stroke-width="1.5" stroke-dasharray="4 3"/>` : ""}
+    <path d="${line(actual)}" fill="none" stroke="var(--g0)" stroke-width="2"/>
+  </svg>
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--g0)"></span>this ordering</span>
+    ${random && random.length ? `<span><span class="swatch" style="background:var(--muted)"></span>random ordering (mean of 200 shuffles)</span>` : ""}
+  </div>`;
+}
+
+// ------------------------------------------------------------- run views
+
+function renderRuns() {
+  el("runs").innerHTML = STATE.runs.length ? STATE.runs.map(r => `
+    <button class="run" aria-current="${r.run_id === STATE.current}" onclick="pick('${esc(r.run_id)}')">
+      <div class="id mono">${esc(r.run_id.replace("T", " ").replace("Z", ""))}</div>
+      <div class="meta">${num(r.executed)} executed${r.failures ? ` · <span class="bad">${r.failures} failing</span>` : ""}${r.complete ? "" : " · incomplete"}</div>
+    </button>`).join("") : `<div class="empty">No runs yet.<br><span class="mono">spreadex run</span></div>`;
+}
+
+async function pick(id) { STATE.current = id; renderRuns(); show("run"); }
+
+async function renderRun() {
+  const v = el("view");
+  if (!STATE.current) { v.innerHTML = `<div class="empty">Run <span class="mono">spreadex run</span>, then reload.</div>`; return; }
+  v.innerHTML = `<div class="empty">Loading…</div>`;
+  let d;
+  try { d = await api(`/api/runs/${encodeURIComponent(STATE.current)}`); }
+  catch (e) { v.innerHTML = `<div class="panel bad">${esc(e.message)}</div>`; return; }
+
+  const ver = d.verdicts || {};
+  const failing = (ver.crash || 0) + (ver.timeout || 0) + (ver.divergence || 0);
+  const maxCost = Math.max(...d.generators.map(g => g.cost_s), 0.001);
+  const spread = d.generators.length > 1
+    ? Math.max(...d.generators.map(g => g.cost_s)) / Math.max(0.001, Math.min(...d.generators.map(g => g.cost_s)))
+    : 1;
+
+  v.innerHTML = `
+  <div class="panel">
+    <div class="stats">
+      <div class="stat"><div class="k">Executed</div><div class="v">${num(d.executed)}</div></div>
+      <div class="stat"><div class="k">Passed</div><div class="v">${num(ver.ok || 0)}</div></div>
+      <div class="stat"><div class="k">Rejected (expected)</div><div class="v">${num(ver.expected_rejection || 0)}</div></div>
+      <div class="stat"><div class="k">Failing</div><div class="v ${failing ? "bad" : ""}">${num(failing)}</div></div>
+      <div class="stat"><div class="k">Signatures</div><div class="v">${num(d.signatures.length)}</div></div>
+    </div>
+    <div class="note">A <em>rejected</em> input is one the system under test correctly refused.
+      Counting those as failures is the difference between a usable tool and a noise generator.</div>
+  </div>
+
+  ${d.generators.length ? `<div class="panel">
+    <h3>Generator comparison</h3>
+    <p class="why">Which generators deserve the next generation budget. Cluster coverage is
+      computed <em>before</em> anything is executed${d.corpus.k_eff ? `, over ${d.corpus.k_eff} clusters` : ""}.</p>
+    <table><thead><tr><th>Generator</th><th class="num">CC</th><th></th>
+      <th class="num">Inputs</th><th class="num">Generation cost</th></tr></thead><tbody>
+      ${d.generators.map((g, i) => `<tr>
+        <td>${esc(g.name)}</td>
+        <td class="num mono">${g.cc.toFixed(2)}</td>
+        <td style="width:34%"><span class="bar" style="width:${(g.cc * 100).toFixed(0)}%;background:var(--g${i % 4})"></span></td>
+        <td class="num mono">${num(g.inputs)}</td>
+        <td class="num mono">${g.cost_s.toFixed(1)}s</td></tr>`).join("")}
+    </tbody></table>
+    ${spread > 5 ? `<div class="note">Generation costs differ by more than 5&times;, so these
+      CC values compare equal <strong>input counts</strong>, not equal budgets.</div>` : ""}
+  </div>` : ""}
+
+  <div class="panel">
+    <h3>Budget curve</h3>
+    <p class="why">Distinct failure signatures found against inputs executed. The dashed line is the
+      same inputs in random order, so the gap is what the ordering bought &mdash; and no gap is a
+      real answer too.</p>
+    ${budgetChart(d.budget_curve, d.random_curve, d.executed) || `<div class="empty">No execution data.</div>`}
+  </div>
+
+  <div class="panel">
+    <h3>Failure signatures</h3>
+    <p class="why">A signature is not a bug: distinct bugs can share one and one bug can span
+      several. Treat the count as a triage aid.</p>
+    ${d.signatures.length ? d.signatures.map(s => `
+      <details>
+        <summary><span class="mono">${esc(s.signature)}</span>
+          <span class="pill ${s.verdict === "divergence" ? "warn" : "bad"}">${esc(s.verdict)}</span>
+          &times;${s.count} · first at input ${s.first_rank + 1}
+          ${s.new ? `<span class="pill warn">new</span>` : ""}</summary>
+        ${s.detail ? `<div class="muted" style="margin:6px 0 0;font-size:12.5px">${esc(s.detail)}</div>` : ""}
+        ${s.stderr ? `<pre>${esc(s.stderr)}</pre>` : ""}
+        <div style="margin-top:8px"><button class="run" style="width:auto;border-color:var(--line)"
+          onclick="showInput('${esc(s.example)}', this)">Show an input that triggers it</button></div>
+        <div class="holder"></div>
+      </details>`).join("") : `<div class="empty">No failures in this run.</div>`}
+  </div>
+
+  <div class="panel">
+    <h3>Reproducing this run</h3>
+    <table><tbody>
+      <tr><td class="muted">Config hash</td><td class="mono">${esc(d.config_hash)}</td></tr>
+      <tr><td class="muted">Seed / signal</td><td class="mono">${esc(d.seed)} / ${esc(d.signal)}</td></tr>
+      <tr><td class="muted">Budgets</td><td class="mono">generation ${esc(d.budgets.generation_s)}s, execution ${esc(d.budgets.execution_s)}s</td></tr>
+      ${(d.targets || []).map(t => `<tr><td class="muted">Target ${esc(t.name)}</td>
+        <td class="mono">${esc((t.command || []).join(" "))}<br><span class="muted">${esc(t.version || "version unknown")}</span></td></tr>`).join("")}
+      <tr><td class="muted">Environment</td><td class="mono">python ${esc(d.environment.python)} · ${esc(d.environment.platform)}</td></tr>
+    </tbody></table>
+    <pre>spreadex replay ${esc(d.run_id)}</pre>
+  </div>`;
+}
+
+async function showInput(hash, btn) {
+  const holder = btn.closest("details").querySelector(".holder");
+  if (holder.dataset.loaded) { holder.innerHTML = ""; delete holder.dataset.loaded; return; }
+  try {
+    const d = await api(`/api/input?hash=${encodeURIComponent(hash)}`);
+    holder.innerHTML = `<pre>${esc(d.text)}${d.truncated ? "\n… truncated" : ""}</pre>
+      <div class="muted" style="font-size:12px">${d.size_bytes} bytes · from ${esc(d.generators.join(", "))}</div>`;
+    holder.dataset.loaded = "1";
+  } catch (e) { holder.innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
+}
+
+// ---------------------------------------------------------- grammar view
+
+async function renderGrammar() {
+  const v = el("view");
+  v.innerHTML = `<div class="empty">Loading…</div>`;
+  let g;
+  try { g = await api("/api/grammar"); }
+  catch (e) { v.innerHTML = `<div class="panel bad">${esc(e.message)}</div>`; return; }
+
+  if (!g.configured) { v.innerHTML = `<div class="empty">No grammar configured for this project.</div>`; return; }
+  if (g.error) { v.innerHTML = `<div class="panel"><h3>Grammar</h3><pre>${esc(g.error)}</pre></div>`; return; }
+
+  const sev = s => s === "error" ? "bad" : s === "warning" ? "warn" : "muted";
+  const statusText = { direct: "directly", rewrite: "after rewriting", blocked: "cannot express", unsupported: "not emitted yet" };
+
+  v.innerHTML = `
+  <div class="panel">
+    <h3>${esc(g.source.split("/").pop())}</h3>
+    <p class="why mono">${esc(g.source)}</p>
+    <div class="stats">
+      <div class="stat"><div class="k">Rules</div><div class="v">${num(g.rules)}</div></div>
+      <div class="stat"><div class="k">Start</div><div class="v mono">&lt;${esc(g.start)}&gt;</div></div>
+    </div>
+    <div class="muted" style="margin-top:10px;font-size:12.5px">Uses: ${g.features.length ? esc(g.features.join(", ")) : "plain BNF"}</div>
+  </div>
+
+  <div class="panel">
+    <h3>Generator support</h3>
+    <p class="why">What each generator can express, before a budget is spent finding out.</p>
+    <table><tbody>
+      ${g.support.map(s => `<tr>
+        <td style="width:32%">${esc(s.generator)}</td>
+        <td><span class="${s.status === "blocked" ? "bad" : s.status === "unsupported" ? "muted" : "ok"}">
+            ${s.status === "blocked" || s.status === "unsupported" ? "&#10007;" : "&#10003;"}
+            ${statusText[s.status]}</span>
+          ${s.missing && s.missing.length ? `<div class="muted" style="font-size:12px">needs: ${esc(s.missing.join(", "))}</div>` : ""}
+          ${(s.blockers || []).map(b => `<div class="bad" style="font-size:12px">${esc(b)}</div>`).join("")}
+          ${(s.risks || []).map(r => `<div class="warn" style="font-size:12px">! ${esc(r)}</div>`).join("")}
+        </td></tr>`).join("")}
+    </tbody></table>
+  </div>
+
+  <div class="panel">
+    <h3>Diagnostics</h3>
+    <p class="why">What a generator will not tell you until the campaign has already run.</p>
+    ${g.findings.length ? g.findings.map(f => `
+      <div style="padding:7px 0;border-top:1px solid var(--line)">
+        <span class="pill ${sev(f.severity)}">${esc(f.code)}</span>
+        ${f.rule ? `<span class="mono muted"> &lt;${esc(f.rule)}&gt;</span>` : ""}
+        <div style="margin-top:3px">${esc(f.message)}</div>
+        ${f.fix ? `<div class="muted" style="font-size:12.5px;margin-top:2px">${esc(f.fix)}</div>` : ""}
+      </div>`).join("") : `<div class="empty">No problems found.</div>`}
+  </div>`;
+}
+
+// -------------------------------------------------------------- bootstrap
+
+(async function () {
+  try {
+    const p = await api("/api/project");
+    el("root").textContent = p.root;
+    el("mode").textContent = (p.differential ? "differential" : p.oracle) + " · signal: " + p.signal;
+    const r = await api("/api/runs");
+    STATE.runs = r.runs;
+    STATE.current = r.runs.length ? r.runs[0].run_id : null;
+    renderRuns();
+    show("run");
+  } catch (e) {
+    const noToken = !TOKEN || /token/i.test(e.message);
+    el("view").innerHTML = noToken
+      ? `<div class="panel"><h3>This tab has no access token</h3>
+           <p class="why">The token is handed over once in the URL and then kept only for this
+           tab, so a fresh tab has to be opened from the link SpreadEx printed.</p>
+           <pre>spreadex ui</pre></div>`
+      : `<div class="panel bad">${esc(e.message)}</div>`;
+  }
+})();
+</script>
+</body>
+</html>

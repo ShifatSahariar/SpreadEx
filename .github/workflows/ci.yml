@@ -42,6 +42,20 @@ jobs:
           grep -q "Divergences ........... 5" out.txt
       - run: spreadex generators list
 
+      - name: The UI starts and serves, with no extra dependencies
+        shell: bash
+        run: |
+          cd examples/toy-parser
+          spreadex run -j 4 >/dev/null
+          spreadex ui --no-open --port 8799 > ui.log 2>&1 &
+          for _ in $(seq 20); do grep -q token ui.log && break; sleep 0.5; done
+          TOKEN=$(grep -oE 'token=[A-Za-z0-9_-]+' ui.log | head -1 | cut -d= -f2)
+          test -n "$TOKEN"
+          code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
+          test "$(code -H "X-SpreadEx-Token: $TOKEN" http://127.0.0.1:8799/api/runs)" = 200
+          test "$(code http://127.0.0.1:8799/api/runs)" = 401
+          test "$(code -H 'Host: evil.example.com' -H "X-SpreadEx-Token: $TOKEN" http://127.0.0.1:8799/api/runs)" = 403
+
   # The gate: the tool must still compute the published algorithms.
   golden:
     runs-on: ubuntu-latest

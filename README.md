@@ -42,6 +42,7 @@ job, and it is the difference between a usable tool and a noise generator.
 | `spreadex generators list` / `install` | see and install generators into isolated environments |
 | `spreadex run` | generate → rank → prioritize → execute → judge → persist |
 | `spreadex report` | list past runs |
+| `spreadex ui` | browse campaigns in a local, read-only browser UI |
 | `spreadex replay <id>` | inspect a past campaign, or re-run it (`--execute`) |
 | `spreadex export` | zip the manifest, results and failing inputs |
 
@@ -150,6 +151,36 @@ expressibility.
     - grammarinator  SpreadEx cannot emit this dialect yet
 ```
 
+## The UI
+
+```bash
+spreadex ui
+```
+
+Prints a tokenized `http://127.0.0.1:…` URL and opens it. Four views, each tied
+to a decision rather than to a metric that looked nice:
+
+- **Generator comparison** — cluster coverage beside input count and generation
+  cost, so a coverage number is never read without its price.
+- **Budget curve** — distinct failure signatures against inputs executed, with
+  the same inputs in random order as a dashed line. The gap is what the
+  ordering bought, and no gap is a real answer too.
+- **Failure signatures** — the stderr that produced each one, and the input
+  that triggers it.
+- **Grammar** — diagnostics and what each generator can express, before a
+  budget is spent finding out.
+
+It is **read-only**: the UI reads `.spreadex/` and never starts, stops or
+changes a campaign, which keeps the browser out of the trust path for anything
+that executes code. It is also stdlib-only, so it needs no extra install, and
+its Content-Security-Policy forbids loading anything off-machine.
+
+A localhost bind is not an authentication boundary — any page you visit can
+POST to 127.0.0.1, and DNS rebinding defeats naive Origin checks. So: a random
+per-session token on every API request, and strict `Host` validation, which is
+what actually stops rebinding. The server runs in the foreground, so it cannot
+be orphaned and there is never a question of which instance you are looking at.
+
 ## Selection signals
 
 ```
@@ -209,7 +240,7 @@ diagnostics and per-generator expressibility.
 
 All four Tier-1 generators now run: FuzzingBook, Fandango, ISLa and Grammarinator.
 
-Not yet: coverage collection, the browser UI, regression mode, adaptive allocation.
+Not yet: coverage collection, regression mode, adaptive allocation.
 
 ## Development
 

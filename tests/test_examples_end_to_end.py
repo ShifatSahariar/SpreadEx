@@ -20,7 +20,8 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 def project(tmp_path):
     def _copy(name):
         dest = tmp_path / name
-        shutil.copytree(EXAMPLES / name, dest)
+        shutil.copytree(EXAMPLES / name, dest,
+                    ignore=shutil.ignore_patterns(".spreadex", "__pycache__"))
         return load_config(dest / "spreadex.yaml")
     return _copy
 

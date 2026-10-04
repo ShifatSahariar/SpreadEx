@@ -50,12 +50,23 @@ class CorpusStore:
         self._conn = sqlite3.connect(self.db_path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA_PATH.read_text())
+        self._migrate()
         self._conn.execute(
             "INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('version', ?)",
             (SCHEMA_VERSION,),
         )
         self._conn.commit()
         return self
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a store was first created.
+
+        A corpus outlives the version that made it, so opening an older one
+        must not fail -- the accumulated history is the point.
+        """
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(failures)")}
+        if "example_stderr" not in existing:
+            self._conn.execute("ALTER TABLE failures ADD COLUMN example_stderr TEXT")
 
     def close(self) -> None:
         if self._conn is not None:
@@ -191,6 +202,9 @@ class CorpusStore:
         observations: Sequence[Observation],
         judgement: Judgement,
     ) -> None:
+        stderr_sample = next(
+            (o.stderr_preview for o in observations if o.stderr_preview), None
+        )
         for obs in observations:
             self.conn.execute(
                 """INSERT OR REPLACE INTO executions(
@@ -206,17 +220,21 @@ class CorpusStore:
                 ),
             )
         if judgement.is_failure and judgement.signature:
-            self._record_failure(run_id, blob_hash, judgement)
+            self._record_failure(run_id, blob_hash, judgement, stderr_sample)
 
-    def _record_failure(self, run_id: str, blob_hash: str, j: Judgement) -> None:
+    def _record_failure(self, run_id: str, blob_hash: str, j: Judgement,
+                        stderr_sample: str | None = None) -> None:
         self.conn.execute(
             """INSERT INTO failures(signature, verdict, first_seen_run, first_seen_at,
-                                    last_seen_run, occurrences, example_blob_hash, detail)
-               VALUES (?,?,?,?,?,1,?,?)
+                                    last_seen_run, occurrences, example_blob_hash, detail,
+                                    example_stderr)
+               VALUES (?,?,?,?,?,1,?,?,?)
                ON CONFLICT(signature) DO UPDATE SET
-                   occurrences   = failures.occurrences + 1,
-                   last_seen_run = excluded.last_seen_run""",
-            (j.signature, j.verdict.value, run_id, utcnow(), run_id, blob_hash, j.detail),
+                   occurrences    = failures.occurrences + 1,
+                   last_seen_run  = excluded.last_seen_run,
+                   example_stderr = COALESCE(failures.example_stderr, excluded.example_stderr)""",
+            (j.signature, j.verdict.value, run_id, utcnow(), run_id, blob_hash, j.detail,
+             stderr_sample),
         )
 
     def run_summary(self, run_id: str) -> dict[str, int]:

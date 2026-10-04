@@ -169,6 +169,21 @@ def _print_result(r, config) -> None:
     print(f"  Replay:  spreadex replay {r.run_id}")
 
 
+# ----------------------------------------------------------------------- ui
+
+def cmd_ui(args) -> int:
+    from ..api import serve
+
+    config = _load(args)
+    try:
+        serve(config, host=args.host, port=args.port,
+              open_browser=not args.no_open, verbose=args.verbose)
+    except OSError as exc:
+        _die(f"could not start the UI on {args.host}:{args.port}: {exc}\n"
+             f"  Fix: pass --port to pick another, or stop whatever is using it.", code=1)
+    return 0
+
+
 # ------------------------------------------------------------------ grammar
 
 def cmd_grammar(args) -> int:
@@ -413,6 +428,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fail-on", choices=["never", "new-failure", "any-failure"], default="never",
                    help="exit non-zero on failures (for CI)")
     s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("ui", help="browse this project's campaigns in a local browser UI")
+    s.add_argument("--port", type=int, default=8777)
+    s.add_argument("--host", default="127.0.0.1",
+                   help="interface to bind (default: loopback only)")
+    s.add_argument("--no-open", action="store_true", help="do not open a browser")
+    s.add_argument("-v", "--verbose", action="store_true", help="log every request")
+    s.set_defaults(func=cmd_ui)
 
     s = sub.add_parser("grammar", help="check a grammar, or derive each generator's dialect")
     s.add_argument("--start", help="start symbol (default: <start>, else the first rule)")

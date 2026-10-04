@@ -26,7 +26,8 @@ def rhino_project(tmp_path):
     if not shutil.which("java"):
         pytest.skip("java not available")
     dest = tmp_path / "rhino"
-    shutil.copytree(EXAMPLE, dest)
+    shutil.copytree(EXAMPLE, dest,
+                    ignore=shutil.ignore_patterns(".spreadex", "__pycache__"))
     cfg = load_config(dest / "spreadex.yaml")
     cfg.raw.setdefault("generation", {})["count"] = 30   # keep the test short
     cfg.budget.generation_s = 180

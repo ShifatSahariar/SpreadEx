@@ -67,7 +67,10 @@ CREATE TABLE IF NOT EXISTS failures (
     occurrences         INTEGER NOT NULL DEFAULT 1,
     example_blob_hash   TEXT REFERENCES inputs(blob_hash),
     minimized_blob_hash TEXT REFERENCES inputs(blob_hash),
-    detail              TEXT
+    detail              TEXT,
+    -- One sample of what the SUT printed, so a signature can be triaged
+    -- without re-running it. Per signature, not per execution.
+    example_stderr      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS schema_meta (

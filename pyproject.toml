@@ -29,6 +29,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "spreadex.corpus" = ["*.sql"]
 "spreadex.generators" = ["catalog/*.yaml"]
+"spreadex.api" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
