@@ -23,6 +23,7 @@ from ..exec.oracle import Judgement, Verdict, make_oracle
 from ..signals import Item, make_signal
 from . import sources
 from .budget import Clock, uniform_allocation
+from ..exec.inputs import InputFiles
 from .config import Config
 from .manifest import Manifest, capture_environment, probe_target_version
 
@@ -181,9 +182,11 @@ class Campaign:
             failures_so_far = 0
             sigs_so_far: set[str] = set()
 
+            input_files = InputFiles(cfg.input_extension)
+
             def execute(item):
                 """Run one input against every target. Pure: no store access."""
-                path = store.blob_path(item.blob_hash)
+                path = input_files.path(item.blob_hash, store.blob_path(item.blob_hash))
                 observations = [run_one(t, path, input_hash=item.blob_hash) for t in cfg.targets]
                 return observations, oracle.judge(observations)
 

@@ -39,6 +39,9 @@ class Config:
     signal: str = "cc"
     embedding: dict = field(default_factory=lambda: {"model": "tfidf"})
     seed: int = 42
+    #: e.g. ".js". Executed inputs are linked under a name ending in it, because many
+    #: systems choose a front end from the extension. Empty keeps the bare hash name.
+    input_extension: str = ""
     raw: dict = field(default_factory=dict)
     #: False for a directory that has no spreadex.yaml yet. The UI serves such a
     #: project so the setup wizard -- whose whole job is to write that file --
@@ -259,8 +262,19 @@ def load_config(path: Path | None = None) -> Config:
         signal=raw.get("selection_signal", raw.get("signal", "cc")),
         embedding=raw.get("embedding") or {"model": "tfidf"},
         seed=int(raw.get("seed", 42)),
+        input_extension=_input_extension(raw.get("input_extension"), path),
         raw=raw,
     )
+
+
+def _input_extension(value, path) -> str:
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str) or not re.fullmatch(r"\.[A-Za-z0-9_+-]{1,12}", value):
+        raise ConfigError(
+            f"{path}: input_extension is {value!r}; use a dot and letters or digits, "
+            f"like `.js` or `.sql`.")
+    return value
 
 
 # Written verbatim with placeholder tokens rather than str.format, so that

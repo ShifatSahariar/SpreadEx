@@ -251,6 +251,9 @@ const ICONS = {
   help: I(`<circle cx="12" cy="12" r="10" /> <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /> <path d="M12 17h.01" />`),
   bulb: I(`<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" /> <path d="M9 18h6" /> <path d="M10 22h4" />`),
   example: I(`<path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35" /> <path d="M14 2v5a1 1 0 0 0 1 1h5" /> <path d="m5 16-3 3 3 3" /> <path d="m9 22 3-3-3-3" />`),
+  upload: I(`<path d="M12 3v12" /> <path d="m17 8-5-5-5 5" /> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />`),
+  import: I(`<circle cx="18" cy="5" r="3" /> <circle cx="6" cy="12" r="3" /> <circle cx="18" cy="19" r="3" /> <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" /> <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />`),
+  back: I(`<path d="m12 19-7-7 7-7" /> <path d="M19 12H5" />`),
   grid: I(`<rect width="7" height="7" x="3" y="3" rx="1" /> <rect width="7" height="7" x="14" y="3" rx="1" /> <rect width="7" height="7" x="14" y="14" rx="1" /> <rect width="7" height="7" x="3" y="14" rx="1" />`),
 };
 
@@ -268,7 +271,6 @@ const ICON_RESERVE = {
   edit: I(`<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /> <path d="m15 5 4 4" />`),
   search: I(`<path d="m21 21-4.34-4.34" /> <circle cx="11" cy="11" r="8" />`),
   download: I(`<path d="M12 15V3" /> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /> <path d="m7 10 5 5 5-5" />`),
-  upload: I(`<path d="M12 3v12" /> <path d="m17 8-5-5-5 5" /> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />`),
   clock: I(`<circle cx="12" cy="12" r="10" /> <path d="M12 6v6l4 2" />`),
   cpu: I(`<path d="M12 20v2" /> <path d="M12 2v2" /> <path d="M17 20v2" /> <path d="M17 2v2" /> <path d="M2 12h2" /> <path d="M2 17h2" /> <path d="M2 7h2" /> <path d="M20 12h2" /> <path d="M20 17h2" /> <path d="M20 7h2" /> <path d="M7 20v2" /> <path d="M7 2v2" /> <rect x="4" y="4" width="16" height="16" rx="2" /> <rect x="8" y="8" width="8" height="8" rx="1" />`),
   stdin: I(`<path d="m10 17 5-5-5-5" /> <path d="M15 12H3" /> <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />`),
@@ -637,6 +639,7 @@ function buildYaml() {
   lines.push("", `generators: [${(c.generators || []).join(", ")}]`);
   if (c.grammar?.source) lines.push("", "grammar:", `  source: ${c.grammar.source}`);
   if (c.corpus?.path) lines.push("", "corpus:", `  path: ${c.corpus.path}`);
+  if (c.input_extension) lines.push("", `input_extension: ${q(c.input_extension)}`);
   if ((c.generation?.mode || "time") === "time" && !c.generation?.count) {
     lines.push("", "generation:", "  mode: time",
                `  per_generator: ${c.generation.per_generator || "30s"}`);
@@ -1092,46 +1095,350 @@ function commitSut() {
   gotoStep("grammar");
 }
 
-async function stepGrammar(current = () => true) {
-  el("view").innerHTML = `<div class="card"><div class="empty">Looking for grammars…</div></div>`;
-  const { grammars } = await api("/api/files");
-  if (!current()) return;   // the user moved on while this was loading
-  S.grammars = grammars;
-  const chosen = cfg().grammar?.source || "";
+// ------------------------------------------------------- step 2: inputs
+
+// What each way of describing the inputs means in this tool today. Registry is
+// deliberately absent: "SpreadEx grammar" offers the few grammars that ship in
+// the wheel and that the test suite exercises, not a catalogue of languages.
+const INP_MODES = [
+  { id: "builtin", t: "SpreadEx grammar", d: "Start from a tested grammar that ships with SpreadEx.", icon: "book",   tone: "green" },
+  { id: "provide", t: "Provide grammar",  d: "Pick a grammar file from this project, or upload one.", icon: "upload", tone: "blue" },
+  { id: "import",  t: "Import grammar",   d: "ANTLR (.g4) or FuzzingBook (.py), converted for you.",  icon: "import", tone: "purple" },
+  { id: "none",    t: "No grammar",       d: "Use inputs you already have in a folder.",               icon: "doc",    tone: "orange" },
+];
+
+const INP_LANGS = [
+  { id: "",     t: "Not specified",          ext: "",      badge: "" },
+  { id: "js",   t: "JavaScript / ECMAScript", ext: ".js",   badge: "JS" },
+  { id: "py",   t: "Python",                  ext: ".py",   badge: "PY" },
+  { id: "sql",  t: "SQL",                     ext: ".sql",  badge: "SQL" },
+  { id: "lua",  t: "Lua",                     ext: ".lua",  badge: "LUA" },
+  { id: "java", t: "Java",                    ext: ".java", badge: "JV" },
+  { id: "json", t: "JSON",                    ext: ".json", badge: "{}" },
+  { id: "txt",  t: "Plain text / other",      ext: ".txt",  badge: "TXT" },
+];
+
+// Small, hand-written illustrations of each notation. They are examples of the
+// format, not tested grammars; the test suite parses every one of them.
+const INP_EXAMPLES = [
+  { id: "bnf", t: "BNF", file: "expr.bnf", code:
+`<start> ::= <expr>
+<expr>  ::= <term> | <term> " + " <expr>
+<term>  ::= <digit> | "(" <expr> ")"
+<digit> ::= "0" | "1" | "2"` },
+  { id: "ebnf", t: "EBNF", file: "list.ebnf", code:
+`<start> ::= <item> ("," <item>)*
+<item>  ::= <word> | <word> " " <word>
+<word>  ::= "a" | "b" | "c"` },
+  { id: "antlr", t: "ANTLR", file: "Expr.g4", code:
+`grammar Expr;
+start : expr ;
+expr  : term ('+' term)* ;
+term  : DIGIT | '(' expr ')' ;
+DIGIT : [0-9] ;` },
+  { id: "fan", t: "Fandango", file: "expr.fan", code:
+`<start> ::= <expr>
+<expr> ::= <term> | <term> " + " <expr>
+<term> ::= <digit>
+<digit> ::= "0" | "1"` },
+];
+
+
+// Decorative only; colours come from the theme tokens so dark mode needs no second copy.
+const INP_ART = `<svg viewBox="0 0 320 150" role="presentation" focusable="false">
+  <ellipse cx="170" cy="82" rx="118" ry="56" fill="var(--color-primary)" opacity=".10"/>
+  <ellipse cx="96" cy="60" rx="46" ry="30" fill="#1687F8" opacity=".10"/>
+  <rect x="104" y="30" width="112" height="90" rx="12" fill="var(--color-surface)" stroke="var(--color-border)" stroke-width="2"/>
+  <path d="M122 54h50M122 70h74M122 86h58" stroke="#1687F8" stroke-width="5" stroke-linecap="round" opacity=".75"/>
+  <rect x="190" y="84" width="52" height="46" rx="10" fill="#9333EA"/>
+  <path d="M204 100h24M204 112h16" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+</svg>`;
+
+const INP_FORMATS = ["BNF", "EBNF", "ANTLR (.g4)", "Fandango", "ISLa", "FuzzingBook (.py)"];
+
+const INP_TIPS = [
+  "Start from a bundled grammar if one fits; edit a copy in your project.",
+  "Upload BNF, EBNF, Fandango or ANTLR; SpreadEx converts it for each generator.",
+  "No grammar? Point at a folder of inputs. Generators are skipped, the rest works.",
+  "Set the file extension if your system picks its parser from it.",
+];
+
+function inpState() {
+  if (S.inp) return S.inp;
+  const c = cfg();
+  const ext = c.input_extension || "";
+  const lang = ext ? (INP_LANGS.find(l => l.ext === ext) || INP_LANGS[INP_LANGS.length - 1]) : INP_LANGS[0];
+  S.inp = {
+    lang: lang.id,
+    ext,
+    extTouched: !!ext,
+    mode: c.grammar?.source ? "provide" : (c.corpus?.path ? "none" : "builtin"),
+    picked: c.grammar?.source || "",
+    corpus: c.corpus?.path || "",
+    analysis: null, details: false, busy: "", msg: "",
+    exampleTab: "bnf",
+    constraintsOpen: false,
+  };
+  return S.inp;
+}
+
+function stashInp() {
+  const d = inpState();
+  if (el("inp-ext")) d.ext = el("inp-ext").value.trim();
+  if (el("corpus")) d.corpus = el("corpus").value.trim();
+  if (el("inp-project") && el("inp-project").value) d.picked = el("inp-project").value;
+  return d;
+}
+
+function pickInpLang() {
+  const d = stashInp();
+  d.lang = el("inp-lang").value;
+  const l = INP_LANGS.find(x => x.id === d.lang);
+  if (l && !d.extTouched) d.ext = l.ext;
+  paintInputs();
+}
+function touchInpExt() { const d = inpState(); d.extTouched = true; d.ext = el("inp-ext").value.trim(); }
+
+function pickInpMode(id) {
+  const d = stashInp();
+  d.mode = id; d.msg = "";
+  // Switching tabs must not leave a stale analysis for a grammar the new tab
+  // is not using.
+  if (id === "none") d.analysis = null;
+  paintInputs();
+  if (id !== "none" && d.picked) analyseGrammar();
+}
+
+function inpExampleTab(id) { stashInp().exampleTab = id; paintInputs(); }
+function copyInpExample(button) {
+  const ex = INP_EXAMPLES.find(x => x.id === inpState().exampleTab) || INP_EXAMPLES[0];
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(ex.code).then(() => {
+    button.classList.add("copied");
+    setTimeout(() => button.classList.remove("copied"), 1400);
+  }).catch(() => {});
+}
+
+// Saving goes through the server, which parses the text with the front end its
+// file name asks for and refuses what does not pass -- so "picked" always means
+// "validated".
+async function saveInpGrammar(path, text) {
+  const d = inpState();
+  d.busy = "Checking the grammar…"; d.msg = ""; paintInputs();
+  let res;
+  try { res = await api("/api/grammar/save", { path, text }); }
+  catch (e) { d.busy = ""; d.msg = e.message; d.analysis = null; paintInputs(); return false; }
+  d.busy = "";
+  if (!res.ok) { d.msg = res.error; d.analysis = null; paintInputs(); return false; }
+  d.picked = res.written; d.msg = "";
+  await analyseGrammar();
+  return true;
+}
+
+async function useBundled(id) {
+  const g = (S.bundled || []).find(x => x.id === id);
+  if (!g) return;
+  const d = stashInp();
+  // A bundled grammar belongs to the project once chosen, so editing it never
+  // touches the installed package. It does not decide the file extension: that
+  // is a fact about the system under test, not about the grammar.
+  await saveInpGrammar(g.path, g.text);
+}
+
+async function uploadInp(input, rename) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 2_000_000) { inpState().msg = "That file is over 2 MB; a grammar should be far smaller."; paintInputs(); return; }
+  const text = await file.text();
+  const name = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+  await saveInpGrammar(`grammars/${name}`, text);
+}
+
+async function analyseGrammar() {
+  const d = inpState();
+  if (!d.picked) { d.analysis = null; paintInputs(); return; }
+  d.busy = "Checking the grammar…"; paintInputs();
+  try { d.analysis = await api(`/api/grammar?source=${encodeURIComponent(d.picked)}`); }
+  catch (e) { d.analysis = { error: e.message }; }
+  d.busy = ""; d.details = false; paintInputs();
+}
+
+function toggleInpDetails() { stashInp().details = !inpState().details; paintInputs(); }
+function toggleInpConstraints(open) { inpState().constraintsOpen = open; }
+
+function inpAnalysis() {
+  const d = inpState(), g = d.analysis;
+  if (d.busy) return `<div class="res note" role="status"><span class="spinner"></span> ${esc(d.busy)}</div>`;
+  if (d.msg) return `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span>
+    <div class="res-main"><div class="res-t">SpreadEx could not use that grammar</div><div class="res-s"><pre class="inp-err">${esc(d.msg)}</pre></div></div></div>`;
+  if (!g) return "";
+  if (g.error) return `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span>
+    <div class="res-main"><div class="res-t">This grammar could not be read</div><div class="res-s"><pre class="inp-err">${esc(g.error)}</pre></div></div></div>`;
+  const errors = (g.findings || []).filter(f => f.severity === "error");
+  const warns = (g.findings || []).filter(f => f.severity === "warning");
+  const tone = errors.length ? "bad" : warns.length ? "warn" : "good";
+  const icon = errors.length ? ICONS.error : warns.length ? ICONS.alert : ICONS.success;
+  const title = errors.length ? "Grammar has problems" : warns.length ? "Grammar is usable, with warnings" : "Grammar ready!";
+  const sub = errors.length ? `${errors.length} error${errors.length > 1 ? "s" : ""} to fix before generators can use it.`
+    : "The grammar has been parsed and checked.";
+  const facts = [["Start symbol", `<span class="mono">&lt;${esc(g.start)}&gt;</span>`],
+                 ["Productions", num(g.rules)],
+                 ["Alternatives", num(g.alternatives ?? g.rules)],
+                 ["Uses", esc((g.features || []).join(", ") || "plain BNF")]];
+  const sev = s => s === "error" ? "bad" : s === "warning" ? "warn" : "muted";
+  const detail = d.details ? `
+    <table class="inp-support"><tbody>${(g.support || []).map(s => `<tr><td>${esc(s.generator)}</td><td>
+      <span class="${s.status === "blocked" || s.status === "unsupported" ? "bad" : "ok"}">
+      ${s.status === "blocked" || s.status === "unsupported" ? "Cannot use it" : "Can use it"}
+      ${{ direct: "directly", rewrite: "after rewriting", blocked: "", unsupported: "(dialect not emitted yet)" }[s.status] || ""}</span>
+      ${(s.blockers || []).map(b => `<div class="bad">${esc(b)}</div>`).join("")}
+      ${(s.risks || []).map(r => `<div class="warn">! ${esc(r)}</div>`).join("")}</td></tr>`).join("")}</tbody></table>
+    ${(g.findings || []).map(f => `<div class="inp-find"><span class="tag ${sev(f.severity)}">${esc(f.code)}</span>
+      ${f.rule ? `<span class="mono muted"> &lt;${esc(f.rule)}&gt;</span>` : ""} ${esc(f.message)}</div>`).join("")}` : "";
+  return `<div class="res ${tone}" role="status"><span class="res-ico" aria-hidden="true">${icon}</span>
+    <div class="res-main"><div class="res-t">${title}</div><div class="res-s">${sub}</div>
+      <dl class="res-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>${detail}</div>
+    <button type="button" class="ghost small res-btn" onclick="toggleInpDetails()" aria-expanded="${d.details}">${d.details ? "Hide details" : "View details"}</button></div>`;
+}
+
+function inpPanel() {
+  const d = inpState();
+  const picked = d.picked ? `<div class="muted inp-picked">Using <span class="mono">${esc(d.picked)}</span></div>` : "";
+  if (d.mode === "builtin") {
+    const list = S.bundled || [];
+    return `<h4>Choose a bundled grammar</h4>
+      <p class="muted inp-sub">Copied into this project when you pick it, so you can edit your copy freely.</p>
+      <div class="inp-list">${list.map(g => `<button type="button" class="inp-g ${d.picked === g.path ? "on" : ""}"
+        onclick="useBundled('${esc(g.id)}')" aria-pressed="${d.picked === g.path}">
+        <span class="tile green" aria-hidden="true">${ICONS.doc}</span>
+        <span><strong>${esc(g.name)}</strong><br><span class="muted">${esc(g.summary)} · ${g.rules} productions</span></span>
+        <span class="inp-ok" aria-hidden="true">${ICONS.check}</span></button>`).join("") ||
+        `<div class="muted">No bundled grammars found.</div>`}</div>
+      <p class="muted inp-sub">Only grammars that SpreadEx's own tests exercise are bundled. For another language, use Provide or Import.</p>${picked}`;
+  }
+  if (d.mode === "provide") {
+    const gs = S.grammars || [];
+    return `<h4>Provide a grammar</h4>
+      <p class="muted inp-sub">BNF, EBNF, Fandango or ISLa. It is parsed and checked before it is used.</p>
+      <label for="inp-project">A grammar already in this project</label>
+      <select id="inp-project" onchange="stashInp(); analyseGrammar()">
+        <option value="">— choose a file —</option>
+        ${gs.map(g => `<option value="${esc(g.path)}" ${g.path === d.picked ? "selected" : ""}>${esc(g.path)}</option>`).join("")}
+      </select>
+      ${gs.length ? "" : `<div class="muted inp-sub">No grammar-shaped files found under this project yet.</div>`}
+      <div class="inp-up"><label class="btn-like" for="inp-file">${ICONS.upload} Upload a file</label>
+        <input id="inp-file" type="file" accept=".bnf,.ebnf,.fan,.isla,.txt" onchange="uploadInp(this)">
+        <span class="muted">Saved to <span class="mono">grammars/</span> in this project.</span></div>${picked}`;
+  }
+  if (d.mode === "import") {
+    return `<h4>Import a grammar</h4>
+      <p class="muted inp-sub">An ANTLR grammar (<span class="mono">.g4</span>) or a FuzzingBook grammar dict (<span class="mono">.py</span>).
+        SpreadEx reads it into its own form and checks it; the original file is copied unchanged.</p>
+      <div class="inp-up"><label class="btn-like" for="inp-file2">${ICONS.upload} Choose a .g4 or .py file</label>
+        <input id="inp-file2" type="file" accept=".g4,.py" onchange="uploadInp(this)"></div>${picked}`;
+  }
+  return `<h4>Use inputs you already have</h4>
+    <p class="muted inp-sub">A folder of example inputs. Generators need a grammar, so they are skipped;
+      prioritization and execution work the same.</p>
+    <label for="corpus">Folder of inputs</label>
+    <input id="corpus" type="text" value="${esc(d.corpus)}" placeholder="./seeds" spellcheck="false">`;
+}
+
+function paintInputs() {
+  const d = inpState();
+  const ex = INP_EXAMPLES.find(x => x.id === d.exampleTab) || INP_EXAMPLES[0];
+  const lang = INP_LANGS.find(l => l.id === d.lang) || INP_LANGS[0];
   el("view").innerHTML = `
-  <div class="card">
-    <h3>Where do the inputs come from?</h3>
-    <p class="why">A grammar describes what a valid input looks like, and generators write new
-      ones from it. One grammar is enough: SpreadEx derives each generator's dialect &mdash; a
-      FuzzingBook dict, plain BNF for ISLa, BNF-with-operators for Fandango, ANTLRv4 for
-      Grammarinator &mdash; so you write it once.</p>
-    <p class="why">No grammar? Point SpreadEx at a directory of inputs you already have. That
-      rules out the generators, but prioritization and execution work the same.</p>
-    <label for="grammar">A grammar in this project</label>
-    <select id="grammar" onchange="inspectGrammar()">
-      <option value="">— none; I will use existing inputs instead —</option>
-      ${grammars.map(g => `<option value="${esc(g.path)}" ${g.path === chosen ? "selected" : ""}>${esc(g.path)}</option>`).join("")}
-    </select>
-    ${grammars.length ? "" : `<div class="note">No grammar-shaped files found under this project
-      (.bnf, .g4, .fan, .ebnf, or a .py holding a grammar dict).</div>`}
-    <label for="corpus">Or a directory of inputs you already have</label>
-    <input id="corpus" type="text" placeholder="./seeds" value="${esc(cfg().corpus?.path || "")}">
-    <div id="ginfo"></div>
-    <div class="actions">
-      <button class="ghost" onclick="gotoStep('sut')">Back</button>
-      ${S.project?.experimental
-        ? `<button class="ghost" onclick="toggleAssistant()">Help me write one</button>`
-        : ""}
-      <button class="primary" onclick="commitGrammar()">Continue</button>
+  <div class="sut">
+   <div class="sut-main">
+    <header class="sut-head">
+      <span class="sut-badge" aria-hidden="true">2</span>
+      <div><h3>Define the input specification</h3>
+        <p class="why">Tell SpreadEx what valid test inputs for your program look like and where they come from.</p></div>
+    </header>
+
+    <section class="sut-sec">
+      <h4><span class="num" aria-hidden="true">1</span> Input language <span class="muted">(optional)</span></h4>
+      <p class="muted inp-sub">Sets the file extension your inputs are given when they are executed.</p>
+      <div class="inp-lang">
+        <div><label for="inp-lang">Language</label>
+          <select id="inp-lang" onchange="pickInpLang()">${INP_LANGS.map(l => `<option value="${l.id}" ${l.id === d.lang ? "selected" : ""}>${l.t}</option>`).join("")}</select></div>
+        <div><label for="inp-ext">File extension</label>
+          <input id="inp-ext" type="text" value="${esc(d.ext)}" oninput="touchInpExt()" spellcheck="false" placeholder="${esc(lang.ext || "e.g. .js")}"></div>
+      </div>
+    </section>
+
+    <section class="sut-sec" aria-labelledby="inp-q">
+      <h4 id="inp-q"><span class="num" aria-hidden="true">2</span> How should SpreadEx understand your input language?</h4>
+      <div class="sut-kinds" role="radiogroup" aria-labelledby="inp-q">
+        ${INP_MODES.map(m => `<button type="button" role="radio" class="sut-kind ${d.mode === m.id ? "on" : ""}"
+          aria-checked="${d.mode === m.id}" onclick="pickInpMode('${m.id}')">
+          <span class="tile ${m.tone}" aria-hidden="true">${ICONS[m.icon]}</span>
+          <span class="sk-t">${m.t}</span><span class="sk-d">${m.d}</span>
+          <span class="sk-ok" aria-hidden="true">${ICONS.check}</span></button>`).join("")}
+      </div>
+      <div class="inp-panel">${inpPanel()}</div>
+    </section>
+
+    ${d.mode === "none" ? "" : `<section class="sut-sec" aria-live="polite">
+      <h4><span class="num" aria-hidden="true">3</span> Grammar analysis</h4>
+      <p class="muted inp-sub">Checks the grammar and shows which generators can use it.</p>
+      ${inpAnalysis() || `<div class="muted inp-empty">Choose or add a grammar above to see its analysis.</div>`}
+    </section>`}
+
+    <details class="sut-adv" ${d.constraintsOpen ? "open" : ""} ontoggle="toggleInpConstraints(this.open)">
+      <summary><span><strong>Semantic constraints</strong> (optional)</span>
+        <span class="muted">Rules a grammar alone cannot say, such as &ldquo;every variable is declared before use&rdquo;.</span></summary>
+      <div class="sut-adv-body"><p class="muted">Constraints live in the grammar itself: Fandango and ISLa grammars can
+        carry them, and SpreadEx passes them through to those two generators. There is nothing to configure
+        here; the other generators ignore constraints. ${S.project?.experimental ? "" : "A model-assisted draft is available with <span class=\"mono\">spreadex ui --experimental</span>."}</p></div>
+    </details>
+
+    <div id="err"></div>
+    <div class="actions inp-actions">
+      <button type="button" class="ghost" onclick="gotoStep('sut')">${ICONS.back} Back to System under test</button>
+      ${S.project?.experimental ? `<button type="button" class="ghost" onclick="toggleAssistant()">Help me write one</button>` : ""}
+      <button type="button" class="primary" onclick="commitGrammar()">Continue to Generators ${ICONS.arrow}</button>
     </div>
-    ${S.project?.experimental ? "" : `<div class="note">
-      No grammar yet? SpreadEx can ask a model to draft one from examples and then check its
-      answer against your inputs before offering it. That is the one feature that sends anything
-      off this machine, it has no evaluation behind it, and it is off by default:
-      <span class="mono">spreadex ui --experimental</span>.</div>`}
+   </div>
+
+   <aside class="sut-side" aria-label="Help">
+    <div class="side-card inp-hero" aria-hidden="true">${INP_ART}</div>
+    <div class="side-card">
+      <h4>${ICONS.book} What are input specifications?</h4>
+      <p>An input specification tells SpreadEx what valid test inputs for your program look like. It usually consists of a grammar and, optionally, semantic constraints.</p>
+    </div>
+    <div class="side-card">
+      <h4>${ICONS.example} Example grammars</h4>
+      <div class="ex-tabs" role="tablist">${INP_EXAMPLES.map(x => `<button type="button" role="tab"
+        aria-selected="${x.id === ex.id}" class="${x.id === ex.id ? "on" : ""}" onclick="inpExampleTab('${x.id}')">${x.t}</button>`).join("")}</div>
+      <div class="ex-code ex-block"><pre><code>${esc(ex.code)}</code></pre>
+        <button type="button" class="ex-copy" onclick="copyInpExample(this)" aria-label="Copy example">${ICONS.copy}</button></div>
+    </div>
+    <div class="side-card">
+      <h4>${ICONS.grid} Supported formats</h4>
+      <p>SpreadEx reads and normalises grammars written as:</p>
+      <div class="chips">${INP_FORMATS.map(f => `<span class="chip">${f}</span>`).join("")}</div>
+    </div>
+    <div class="side-card">
+      <h4>${ICONS.bulb} Tips</h4>
+      <ul class="tips-list">${INP_TIPS.map(t => `<li><span aria-hidden="true">${ICONS.check}</span>${esc(t)}</li>`).join("")}</ul>
+    </div>
+   </aside>
   </div>
   <div id="assistant"></div>`;
-  if (chosen) inspectGrammar();
+}
+
+async function stepGrammar(current = () => true) {
+  el("view").innerHTML = `<div class="card"><div class="empty">Looking for grammars…</div></div>`;
+  const [{ grammars }, bundled] = await Promise.all([api("/api/files"), api("/api/grammars/bundled")]);
+  if (!current()) return;   // the user moved on while this was loading
+  S.grammars = grammars;
+  S.bundled = bundled.grammars;
+  const d = inpState();
+  // The assistant (and a returning user) can change the config under us.
+  if (cfg().grammar?.source && cfg().grammar.source !== d.picked) { d.picked = cfg().grammar.source; d.mode = "provide"; }
+  paintInputs();
+  if (d.mode !== "none" && d.picked) analyseGrammar();
 }
 
 // ------------------------------------------------------- assistant (opt-in)
@@ -1175,7 +1482,7 @@ function paintKeyField() {
 function paintAssistant() {
   const holder = el("assistant");
   if (!holder) return;
-  const corpusPath = (el("corpus")?.value || "").trim();
+  const corpusPath = (el("corpus")?.value || S.inp?.corpus || cfg().corpus?.path || "").trim();
   holder.innerHTML = `
   <div class="card">
     <h3>Grammar assistant</h3>
@@ -1280,51 +1587,27 @@ async function acceptProposal() {
   } catch (e) { el("saveerr").innerHTML = `<div class="note bad">${esc(e.message)}</div>`; }
 }
 
-async function inspectGrammar() {
-  const source = el("grammar").value;
-  const info = el("ginfo");
-  if (!source) { info.innerHTML = ""; return; }
-  info.innerHTML = `<div class="empty"><span class="spinner"></span> Checking the grammar…</div>`;
-  let g;
-  try { g = await api(`/api/grammar?source=${encodeURIComponent(source)}`); }
-  catch (e) { info.innerHTML = `<div class="note bad">${esc(e.message)}</div>`; return; }
-  if (g.error) { info.innerHTML = `<pre class="bad">${esc(g.error)}</pre>`; return; }
-
-  const sev = s => s === "error" ? "bad" : s === "warning" ? "warn" : "muted";
-  info.innerHTML = `
-    <div style="margin-top:16px" class="stats">
-      <div class="stat"><div class="k">Rules</div><div class="v">${num(g.rules)}</div></div>
-      <div class="stat"><div class="k">Start</div><div class="v mono">&lt;${esc(g.start)}&gt;</div></div>
-    </div>
-    <div class="muted" style="font-size:12.5px;margin-top:8px">Uses: ${g.features?.length ? esc(g.features.join(", ")) : "plain BNF"}</div>
-    <table style="margin-top:14px"><tbody>
-      ${(g.support || []).map(s => `<tr><td style="width:30%">${esc(s.generator)}</td><td>
-        <span class="${s.status === "blocked" || s.status === "unsupported" ? "bad" : "ok"}">
-          ${s.status === "blocked" || s.status === "unsupported" ? "&#10007;" : "&#10003;"}
-          ${{ direct: "directly", rewrite: "after rewriting", blocked: "cannot express", unsupported: "not emitted yet" }[s.status]}</span>
-        ${(s.blockers || []).map(b => `<div class="bad" style="font-size:12px">${esc(b)}</div>`).join("")}
-        ${(s.risks || []).map(r => `<div class="warn" style="font-size:12px">! ${esc(r)}</div>`).join("")}
-      </td></tr>`).join("")}
-    </tbody></table>
-    ${(g.findings || []).length ? `<details open style="margin-top:12px">
-      <summary>${g.findings.length} diagnostic(s)</summary>
-      ${g.findings.map(f => `<div style="padding:6px 0">
-        <span class="tag ${sev(f.severity)}">${esc(f.code)}</span>
-        ${f.rule ? `<span class="mono muted"> &lt;${esc(f.rule)}&gt;</span>` : ""}
-        <div style="margin-top:3px">${esc(f.message)}</div></div>`).join("")}
-    </details>` : `<div class="note" style="border-left-color:var(--color-success);background:var(--color-success-lt)">
-      No problems found in this grammar.</div>`}`;
-}
-
 function commitGrammar() {
-  const source = el("grammar").value, corpus = el("corpus").value.trim();
+  const d = stashInp();
+  const useGrammar = d.mode !== "none";
+  const source = useGrammar ? d.picked : "";
+  const corpus = d.mode === "none" ? d.corpus : "";
+  const err = m => { el("err").innerHTML = `<div class="note bad" role="alert">${esc(m)}</div>`; };
   if (!source && !corpus) {
-    el("ginfo").innerHTML = `<div class="note bad">Pick a grammar or point at a corpus directory &mdash;
-      SpreadEx needs somewhere for inputs to come from.</div>`;
+    err(d.mode === "none" ? "Enter the folder that holds your inputs."
+                          : "Choose or add a grammar first, or pick \u201cNo grammar\u201d to use inputs you already have.");
     return;
+  }
+  if (useGrammar && d.analysis?.error) { err("That grammar could not be read; fix it or choose another."); return; }
+  if (useGrammar && (d.analysis?.findings || []).some(f => f.severity === "error")) {
+    err("The grammar has errors. Open View details, fix them, then continue."); return;
+  }
+  if (d.ext && !/^\.[A-Za-z0-9_+-]{1,12}$/.test(d.ext)) {
+    err("File extension: use a dot and letters or digits, like .js or .sql."); el("inp-ext")?.focus(); return;
   }
   S.config.grammar = source ? { source } : undefined;
   S.config.corpus = corpus ? { path: corpus } : undefined;
+  S.config.input_extension = d.ext || undefined;
   gotoStep("generators");
 }
 
@@ -1911,6 +2194,7 @@ async function showInput(hash, btn) {
     const conf = await api("/api/config");
     S.config = conf.parsed || {};
     S.draft = null;
+    S.inp = null;
     await loadRuns();
     renderSteps();
     go(initialView(S.project, S.runs));

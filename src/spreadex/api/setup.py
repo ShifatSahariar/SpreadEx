@@ -254,13 +254,54 @@ def assist(config, body: dict) -> dict[str, Any]:
     return {"ok": True, "proposal": proposal.as_dict()}
 
 
+def _parse_for(rel: str, text: str):
+    """Parse grammar text with the front end its file extension names."""
+    from ..grammar.parse import parse_bnf, parse_fuzzingbook
+
+    suffix = Path(rel).suffix.lower()
+    if suffix == ".g4":
+        from ..grammar.antlr import parse_antlr
+        return parse_antlr(text, source_path=rel)[0]
+    if suffix == ".py":
+        return parse_fuzzingbook(text, source_path=rel)
+    fmt = {".fan": "fandango", ".isla": "isla", ".ebnf": "ebnf"}.get(suffix, "bnf")
+    return parse_bnf(text, source_format=fmt, source_path=rel)
+
+
+#: Grammars that ship inside the wheel. Deliberately a short, honest list: each
+#: entry is a file SpreadEx's own tests exercise, not a registry of languages.
+BUNDLED_GRAMMARS = [
+    {"id": "arithmetic", "name": "Arithmetic expressions", "language": "Calculator",
+     "file": "calc.bnf",
+     "summary": "Numbers, + - * / %, brackets. The grammar behind `spreadex demo`."},
+]
+
+
+def bundled_grammars() -> dict[str, Any]:
+    from ..grammar import GrammarError, diagnose
+    from importlib.resources import files
+
+    out = []
+    for g in BUNDLED_GRAMMARS:
+        text = (files("spreadex.demo") / "project" / g["file"]).read_text()
+        try:
+            grammar = _parse_for(g["file"], text)
+            rules, start = len(grammar.rules), grammar.start
+            ok = not diagnose(grammar).errors
+        except GrammarError:
+            rules, start, ok = 0, "", False
+        out.append({**{k: v for k, v in g.items() if k != "file"}, "text": text,
+                    "rules": rules, "start": start, "ok": ok, "path": f"grammars/{g['id']}.bnf"})
+    return {"grammars": out}
+
+
 def save_grammar(config, body: dict) -> dict[str, Any]:
     """Write an accepted proposal into the project.
 
     Refuses to leave the project directory, and refuses to write a grammar the
     validator rejects -- accepting a proposal has to mean it passed.
     """
-    from ..grammar import GrammarError, diagnose, parse_bnf
+    from ..grammar import GrammarError, diagnose
 
     rel = (body.get("path") or "").strip()
     text = body.get("text") or ""
@@ -274,7 +315,7 @@ def save_grammar(config, body: dict) -> dict[str, Any]:
 
     if not body.get("allow_invalid"):
         try:
-            report = diagnose(parse_bnf(text))
+            report = diagnose(_parse_for(rel, text))
         except GrammarError as exc:
             return {"ok": False, "error": f"refusing to save: {exc}"}
         if report.errors:

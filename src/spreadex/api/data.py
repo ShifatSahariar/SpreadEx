@@ -239,6 +239,8 @@ def _report_for(config, path: Path) -> dict[str, Any]:
         # the grammar itself, not only a summary of it.
         "text": path.read_text(errors="replace")[:40000],
         "rules": len(grammar.rules),
+        "alternatives": sum(len(n.options) if hasattr(n, "options") else 1
+                            for n in grammar.rules.values()),
         "start": grammar.start,
         "features": sorted(f.value for f in grammar.features()),
         "findings": [

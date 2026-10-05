@@ -261,6 +261,10 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             self._json(payload)
             return
+        if route == "/api/grammars/bundled":
+            from . import setup
+            self._json(setup.bundled_grammars())
+            return
         if route == "/api/grammar":
             source = (query.get("source") or [None])[0]
             self._json(data.grammar_report(self.config, source))
