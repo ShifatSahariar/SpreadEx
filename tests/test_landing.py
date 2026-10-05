@@ -450,3 +450,132 @@ def test_the_header_wraps_only_when_it_genuinely_cannot_fit():
     assert ".tabs { order: 4; flex-basis: 100%" in block
     assert ".topbar-tools { margin-left: auto; }" in block
     assert ".topbar-sep { display: none; }" in block, "a divider with nothing beside it"
+
+
+# ------------------------------------------------------- the "Get started" cards
+
+import re as _re
+
+_LANDING = APP[APP.index("function renderLanding"):APP.index("function showDemoHint")]
+_STEPS = _re.findall(
+    r'\{ n: (\d), tone: "(\w+)",\s*icon: ICONS\.(\w+),\s*title: "([^"]+)",\s*'
+    r'body: "([^"]+)",\s*tip: ((?:"[^"]*"\s*\+?\s*)+)\}', _LANDING)
+
+
+def _tip(raw: str) -> str:
+    return "".join(_re.findall(r'"([^"]*)"', raw))
+
+
+def test_there_are_four_steps_in_order_each_with_its_own_colour():
+    assert [(n, tone) for n, tone, *_ in _STEPS] == [
+        ("1", "green"), ("2", "blue"), ("3", "orange"), ("4", "purple")]
+
+
+def test_the_face_of_each_card_is_precise_and_the_guidance_lives_in_the_tooltip():
+    """Two layers on purpose: a short line saying WHAT on the card, a sentence
+    or two saying HOW in the (i). The tip is bounded too -- measured, at 133
+    characters it fills 209x120px inside a 233px card, and the earlier 250-char
+    version ran nine lines and hung out of the bottom."""
+    for n, _tone, _icon, title, body, tip_raw in _STEPS:
+        tip = _tip(tip_raw)
+        assert len(body) <= 50, f"card {n} subtext is not precise ({len(body)}): {body}"
+        assert len(tip) <= 145, f"card {n} tooltip will not fit the card ({len(tip)})"
+        assert len(tip) > len(body), f"card {n}: the tooltip adds nothing to the subtext"
+        assert tip != body and title not in body
+
+
+def test_the_card_copy_claims_only_what_the_tool_does():
+    """An earlier version promised "coverage, mutation score and input
+    diversity". Mutation testing and code coverage live in the research
+    repository; v0.1 does neither. It also offered "a built-in system" with no
+    picker to choose one -- there is the bundled demo, and the copy now says so."""
+    text = " ".join(f"{body} {_tip(tip)}" for *_, body, tip in _STEPS).lower()
+    for claim in ("mutation", "code coverage", "built-in system"):
+        assert claim not in text, f"the cards promise {claim!r}, which v0.1 does not do"
+    assert "spreadex demo" in text, "the way to a first run should be on the page"
+
+
+def test_each_card_has_the_design_s_parts_and_a_properly_wired_tooltip():
+    card = _LANDING[_LANDING.index("const card = c =>"):_LANDING.index('el("view").innerHTML')]
+    for part in ('class="sc-num"', 'class="start-icon"', 'class="sc-info"',
+                 'class="sc-tip"', '<h3 class="sc-title">', 'type="button"'):
+        assert part in card, part
+    # The button names itself, points at its tooltip, and reports whether it is open.
+    assert 'aria-label="More about: ${c.title}"' in card
+    assert 'aria-describedby="tip-${c.n}"' in card and 'id="tip-${c.n}"' in card
+    assert 'aria-expanded="false"' in card and 'role="tooltip"' in card
+    # The tooltip must directly follow its button, or the `+` selector cannot see it.
+    assert card.index("sc-info") < card.index("sc-tip")
+    assert "ICONS.info" in card
+
+
+def test_the_tooltip_can_be_dismissed_without_moving_the_pointer():
+    """WCAG 1.4.13: content shown on hover must be dismissible without moving
+    the pointer. After a click the pointer is still on the (i), so hover alone
+    holds the tooltip open; Escape has to override it."""
+    for needle in ("function dismissTips", "tip-dismissed", 'e.key === "Escape"',
+                   'document.addEventListener("click", closeTips)',
+                   'document.addEventListener("focusin"', 'document.addEventListener("pointerover"'):
+        assert needle in APP, needle
+    assert "relatedTarget" in APP, "must only reset when the pointer arrives afresh"
+    # Existing is not enough: Escape must actually CALL it. Calling closeTips
+    # instead clears the pinned state but leaves a hovered tooltip showing,
+    # which is the exact gap this exists to close.
+    assert 'if (e.key === "Escape") dismissTips();' in APP
+    assert ".start-card:not(.tip-dismissed) .sc-info:hover + .sc-tip" in CSS
+    assert ".start-card:not(.tip-dismissed) .sc-info:focus-visible + .sc-tip" in CSS
+
+
+def test_touch_can_open_the_tooltip_because_safari_does_not_focus_a_tapped_button():
+    assert "function toggleTip" in APP and "event.stopPropagation()" in APP
+    assert ".start-card.tip-open .sc-tip" in CSS
+
+
+def test_a_tooltip_cannot_be_hidden_behind_the_card_below_it():
+    """Cards are separate stacking contexts, so in two columns a later card
+    would paint over an earlier card's tooltip. The active card is lifted."""
+    assert ".start-card:hover, .start-card:focus-within, .start-card.tip-open { z-index: 5; }" in CSS
+
+
+def test_every_card_has_its_own_colour_shade_along_the_bottom():
+    """The tinted wave is the design's signature. Each tone defines its own, and
+    the wave sits BEHIND the text so it can never reduce a word's contrast."""
+    for tone in ("green", "blue", "orange", "purple"):
+        rule = _re.search(rf"^\.{tone}-card\s+\{{[^}}]*\}}", CSS, flags=_re.M).group(0)
+        for var in ("--tone:", "--badge:", "--tone-wave:", "--tone-edge:"):
+            assert var in rule, f"{tone}-card has no {var}"
+    wave = CSS[CSS.index(".start-card::after {"):]
+    wave = wave[:wave.index("}") + 1]
+    assert "z-index: -1" in wave and "mask:" in wave and "-webkit-mask:" in wave, wave
+    assert "isolation: isolate" in CSS[CSS.index(".start-card {"):][:900]
+
+
+def test_the_cards_theme_through_the_page_surface_not_fixed_pastels():
+    """A hard-coded light tint looked fine in light mode and glared in dark.
+    Deriving the tile from the tone and the page surface works in both."""
+    tile = CSS[CSS.index(".start-icon {"):]
+    tile = tile[:tile.index("}") + 1]
+    assert "color-mix(in srgb, var(--tone)" in tile and "var(--color-surface)" in tile, tile
+
+
+def test_the_arrows_live_in_the_gaps_and_go_away_when_the_cards_stack():
+    cards = CSS[CSS.index(".start-cards {"):]
+    cards = cards[:cards.index("}") + 1]
+    assert cards.count("auto") == 3, "three arrow tracks between four cards"
+    assert "minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr)" in cards
+    stacked = CSS[CSS.index("@media (max-width: 1180px)"):]
+    stacked = stacked[:stacked.index("\n}")]
+    assert ".card-arrow { display: none; }" in stacked, "a 2x2 grid has no order to point along"
+
+
+def test_get_started_is_smaller_than_it_was():
+    heading = CSS[CSS.index(".section-heading h2 {"):]
+    heading = heading[:heading.index("}") + 1]
+    assert "clamp(1.15rem, 1.9vw, 1.45rem)" in heading, heading
+    assert "clamp(1.45rem, 2.6vw, 2rem)" not in CSS, "the old, larger size is still in the sheet"
+
+
+def test_the_tooltip_respects_reduced_motion():
+    block = CSS[CSS.index("@media (prefers-reduced-motion: reduce)"):]
+    block = block[:block.index("\n}")]
+    assert ".sc-tip { transition: none;" in block

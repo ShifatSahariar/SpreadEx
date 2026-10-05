@@ -206,6 +206,7 @@ const WORKFLOW_SVG = `
 </svg>`;
 
 const ICONS = {
+  info:       I(`<circle cx="12" cy="12" r="9.5"/><path d="M12 11.2v5.3"/><path d="M12 7.7v.01" stroke-width="2.4"/>`),
   home:       I(`<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-5.5h5V20"/>`),
   folder:     I(`<path d="M3 7a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.6.8l.9 1.2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`),
   sliders:    I(`<path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h8M16 17h4"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="14" cy="17" r="2"/>`),
@@ -258,19 +259,41 @@ function copyDemoCommand(button) {
 function renderLanding() {
   const readOnly = Boolean(S.project?.read_only);
 
+  // Two layers of copy on purpose. The face of each card says WHAT in a short
+  // line; the (i) says HOW, in a sentence or two. Every claim here is something
+  // the tool does today -- an earlier version promised "coverage, mutation
+  // score" (that is the research repository, not this tool) and "a built-in
+  // system" (there is no picker; there is the bundled demo).
   const STEPS = [
     { n: 1, tone: "green",  icon: ICONS.folder,  title: "Choose a subject",
-      body: "Select a built-in system or add your own (compiler, interpreter, parser, etc.)." },
+      body: "Add your own system, or try the bundled demo.",
+      tip: "Give SpreadEx the command that runs your system on one input file. " +
+           "No system handy? Run <code>spreadex demo</code> for a bundled one." },
     { n: 2, tone: "blue",   icon: ICONS.sliders, title: "Configure generators",
-      body: "Pick one or more generators and set key parameters." },
+      body: "Pick generators and set parameters.",
+      tip: "Choose which generators write inputs from your grammar, compare them on equal " +
+           "time or equal count, and say what counts as a failure." },
     { n: 3, tone: "orange", icon: ICONS.gear,    title: "Run campaign",
-      body: "Generate, validate, execute and collect results." },
+      body: "Generate, execute and collect results.",
+      tip: "SpreadEx generates inputs, runs the most different ones first, executes as " +
+           "many as the budget allows, and records every outcome." },
     { n: 4, tone: "purple", icon: ICONS.chart,   title: "Explore results",
-      body: "Analyze coverage, mutation score and input diversity." },
+      body: "Analyze and export reports.",
+      tip: "See what failed and why, how the generators compared, and whether the ordering " +
+           "beat random. Export a campaign as a zip to reproduce it." },
   ];
   const card = c => `<div class="start-card ${c.tone}-card">
-      <em>${c.n}</em><span class="start-icon">${c.icon}</span>
-      <strong>${c.title}</strong><p>${c.body}</p></div>`;
+      <div class="sc-top">
+        <span class="sc-num">${c.n}</span>
+        <span class="start-icon">${c.icon}</span>
+      </div>
+      <button type="button" class="sc-info" aria-label="More about: ${c.title}"
+              aria-describedby="tip-${c.n}" aria-expanded="false"
+              onclick="toggleTip(event, this)">${ICONS.info}</button>
+      <span class="sc-tip" role="tooltip" id="tip-${c.n}">${c.tip}</span>
+      <h3 class="sc-title">${c.title}</h3>
+      <p>${c.body}</p>
+    </div>`;
 
   el("view").innerHTML = `
     <section class="landing dashboard-home" aria-labelledby="landing-title">
@@ -321,6 +344,52 @@ function renderLanding() {
       </section>
     </section>`;
 }
+
+// ----------------------------------------------------------- card tooltips
+// Hover and keyboard focus show a tooltip through CSS alone. A tap does not
+// focus a button in Safari, so touch (and a deliberate click) toggles a class
+// instead; Escape or any outside click closes it.
+//
+// Escape must also hide a tooltip that hover or focus is holding open, even
+// though the pointer has not moved (WCAG 1.4.13: content shown on hover must be
+// dismissible without moving the pointer). That is what `tip-dismissed` is: it
+// overrides hover and focus until the pointer or focus arrives afresh.
+function closeTips() {
+  document.querySelectorAll(".start-card.tip-open").forEach(card => {
+    card.classList.remove("tip-open");
+    card.querySelector(".sc-info")?.setAttribute("aria-expanded", "false");
+  });
+}
+function dismissTips() {
+  document.querySelectorAll(".start-card").forEach(card => {
+    const tip = card.querySelector(".sc-tip");
+    if (tip && getComputedStyle(tip).visibility === "visible") card.classList.add("tip-dismissed");
+  });
+  closeTips();
+}
+function toggleTip(event, button) {
+  event.stopPropagation();                  // or the document handler closes it at once
+  const card = button.closest(".start-card");
+  const opening = !card.classList.contains("tip-open");
+  closeTips();
+  if (opening) {
+    card.classList.remove("tip-dismissed");
+    card.classList.add("tip-open");
+    button.setAttribute("aria-expanded", "true");
+  }
+}
+document.addEventListener("click", closeTips);
+document.addEventListener("keydown", e => { if (e.key === "Escape") dismissTips(); });
+// "Afresh" = the pointer coming in from outside the button, or focus landing on it.
+document.addEventListener("pointerover", e => {
+  const button = e.target.closest?.(".sc-info");
+  if (button && !button.contains(e.relatedTarget)) {
+    button.closest(".start-card").classList.remove("tip-dismissed");
+  }
+});
+document.addEventListener("focusin", e => {
+  e.target.closest?.(".sc-info")?.closest(".start-card").classList.remove("tip-dismissed");
+});
 
 function showDemoHint() {
   // The demo is a terminal command, not a thing the browser can start: it
