@@ -1972,8 +1972,9 @@ function refLabel(r) {
 }
 function refTitle(r) {
   if (!r) return "";
-  return [r.authors, r.title ? `\u201c${r.title}\u201d` : "", r.venue && r.year ? `${r.venue} ${r.year}` : (r.kind || "")]
+  const base = [r.authors, r.title ? `\u201c${r.title}\u201d` : "", r.venue && r.year ? `${r.venue} ${r.year}` : (r.kind || "")]
     .filter(Boolean).join(", ");
+  return r.note ? `${base}. ${r.note}.` : base;
 }
 function refLine(r) {
   const t = refLabel(r);
@@ -2045,8 +2046,7 @@ function upcomingCard(u) {
     <div class="gbody static">${genLogo(u.id)}<span class="gtext">
       <span class="gname">${esc(u.name)} ${u.ours ? `<span class="tag gfam">Our tool</span>` : ""}</span>
       <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[u.family])}</span></span>
-      ${refLine(u.reference)}
-      <span class="muted gopt">${esc(u.summary)}</span></span></div></div>`;
+      ${refLine(u.reference)}</span></div></div>`;
 }
 
 function setGenFilter(id) { genState().filter = id; paintGenerators(); }

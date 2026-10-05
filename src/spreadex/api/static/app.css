@@ -1030,8 +1030,11 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 /* Coming soon: visibly a different kind of thing -- grey, flat, nothing to click. */
 .gsec.soonsec { background: color-mix(in srgb, var(--color-text) 3%, var(--color-surface)); border-style: dashed; }
 .gsec.soonsec .gsec-h h4 { color: var(--color-muted); }
-.gsec.soonsec .gcard.soon { background: transparent; filter: grayscale(1); opacity: .72; }
+/* Grey everything EXCEPT the logo: the mark stays in its own colours so the generator is still
+   recognisable, while name, tags and reference read as unavailable. */
+.gsec.soonsec .gcard.soon { background: transparent; }
 .gsec.soonsec .gcard.soon .gname { color: var(--color-muted); }
+.gsec.soonsec .gcard.soon .tag { filter: grayscale(1); opacity: .8; }
 .gcard.soon .gbody { padding-left: 12px; }
 .gref { display: inline-flex; align-items: center; gap: 5px; font-size: .72rem; color: var(--color-muted); cursor: help; }
 .gref svg { width: 12px; height: 12px; flex: none; }

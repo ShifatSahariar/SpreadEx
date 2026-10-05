@@ -124,7 +124,11 @@ UPCOMING_GENERATORS = [
                    "title": "NAUTILUS: Fishing for Deep Bugs with Grammars"},
      "summary": "Coverage-guided grammar fuzzer with feedback."},
     {"id": "dharma", "name": "Dharma", "family": "probabilistic",
-     "reference": {"kind": "Mozilla security tool", "authors": "Mozilla", "title": "Dharma"},
+     # No paper exists (Crossref, 2026-10-06). The repository description is "Generation-based,
+     # context-free grammar fuzzer"; it was created in 2015 and is now archived in favour of a fork.
+     "reference": {"kind": "Mozilla's grammar fuzzer", "authors": "Mozilla Security",
+                   "title": "Dharma: a generation-based, context-free grammar fuzzer",
+                   "note": "No paper; open-source repository since 2015"},
      "summary": "Mozilla's generational grammar fuzzer."},
     {"id": "fuzz4all", "name": "Fuzz4All", "family": "llm-based",
      "reference": {"venue": "ICSE", "year": 2024, "authors": "Xia et al.",

@@ -274,7 +274,10 @@ def test_coming_soon_is_its_own_grey_section_apart_from_other_generators():
     assert 'class="gsec soonsec"' in p and "Coming soon" in p
     other = p[p.index('id="gh-oth"'):p.index('class="gsec soonsec"')]
     assert "upcomingCard" not in other
-    assert re.search(r"\.gsec\.soonsec \.gcard\.soon \{[^}]*grayscale\(1\)", CSS)
+    soon_card = CSS[CSS.index(".gsec.soonsec .gcard.soon {"):]
+    assert "filter" not in soon_card[:soon_card.index("}")], "the card as a whole must not be greyed"
+    assert re.search(r"\.gsec\.soonsec \.gcard\.soon \.tag \{[^}]*grayscale\(1\)", CSS)
+    assert ".soonsec .gen-logo" not in CSS, "the logo keeps its own colours"
 
 
 def test_the_review_screen_names_what_will_be_downloaded_and_run_asks_to_install():
@@ -316,6 +319,7 @@ def test_the_api_carries_the_reference_for_real_and_upcoming_generators(tmp_path
     for gid, (venue, year) in VERIFIED_UPCOMING.items():
         assert (soon[gid]["venue"], soon[gid]["year"]) == (venue, year), gid
     assert "venue" not in soon["dharma"], "Dharma has no paper"
+    assert soon["dharma"]["kind"] == "Mozilla's grammar fuzzer"
 
 
 def test_the_card_shows_a_small_grey_reference_with_the_full_citation_as_a_tooltip():
@@ -323,3 +327,12 @@ def test_the_card_shows_a_small_grey_reference_with_the_full_citation_as_a_toolt
     assert JS.count("refLine(") >= 4          # real cards, coming-soon cards, the popup
     assert re.search(r"\.gref \{[^}]*color: var\(--color-muted\)", CSS)
     assert 'title="${esc(refTitle(r))}"' in JS
+
+
+def test_coming_soon_cards_show_only_the_reference_not_a_description():
+    u = JS[JS.index("function upcomingCard"):JS.index("function setGenFilter")]
+    assert "refLine(u.reference)" in u and "u.summary" not in u
+
+
+def test_a_reference_note_reaches_the_tooltip():
+    assert "r.note ?" in JS[JS.index("function refTitle"):JS.index("function refLine")]
