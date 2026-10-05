@@ -317,7 +317,7 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .h-ico.amber { color: #F59E0B; filter: drop-shadow(0 0 5px rgba(245, 158, 11, .55)); }
 .side-card h4 .h-ico svg { color: inherit; }
 .side-hero { padding: 0; overflow: hidden; background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface)); }
-.side-hero svg { display: block; width: 100%; height: auto; }
+.side-hero svg { display: block; width: 100%; height: auto; aspect-ratio: 320 / 170; }
 .sk-t { font-weight: 600; font-size: .9rem; }
 .sk-d { color: var(--color-muted); font-size: .76rem; line-height: 1.35; }
 .sk-ok { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%;
@@ -327,9 +327,6 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .sut-lab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .sut-lab label { margin: 0; text-transform: none; letter-spacing: 0; font-size: .95rem;
   font-weight: 600; color: var(--color-text); }
-.sut-help { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0;
-  background: none; color: var(--color-muted); cursor: help; }
-.sut-help svg { width: 18px; height: 18px; }
 .sut-pill { font-size: .75rem; color: var(--color-muted); background: var(--color-bg);
   border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 10px; }
 .sut-pill code { color: var(--color-primary); font-weight: 600; }
@@ -442,6 +439,26 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .lang-opt:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
 .lang-name { margin-top: 4px; font-weight: 600; font-size: .85rem; }
 .lang-sub { color: var(--color-muted); font-size: .72rem; line-height: 1.25; }
+/* Tooltips: hover, keyboard focus, Escape to dismiss. */
+.hint { position: relative; display: inline-flex; vertical-align: middle; margin-left: 4px; }
+.hint-btn { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0;
+  background: none; color: var(--color-muted); cursor: help; border-radius: 50%; }
+.hint-btn:hover, .hint-btn:focus-visible { color: var(--color-primary); }
+.hint-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.hint-btn svg { width: 17px; height: 17px; }
+.hint-box { position: absolute; z-index: 40; bottom: calc(100% + 8px); left: -10px;
+  width: max-content; max-width: 260px; padding: 8px 10px; border-radius: 8px; font: 500 .75rem/1.4 inherit;
+  text-transform: none; letter-spacing: 0; text-align: left; color: var(--color-surface); background: var(--color-text);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .25); opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s; }
+.hint:hover .hint-box, .hint:focus-within .hint-box { opacity: 1; visibility: visible; }
+.inp-h5 { margin: 14px 0 8px; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--color-muted); }
+.inp-g.off { cursor: not-allowed; opacity: .62; border-style: dashed; }
+.inp-g.off:hover { border-color: var(--color-border); }
+.inp-guide { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; padding: 12px 14px; font-size: .84rem;
+  border: 1px solid var(--color-border); border-radius: var(--radius); background: var(--color-surface); }
+.inp-guide > svg { flex: none; width: 18px; height: 18px; margin-top: 2px; color: #F59E0B; }
+.inp-guide a { color: var(--color-primary); font-weight: 600; }
 .inp-sub { margin: -4px 0 10px; font-size: .82rem; }
 .inp-lang { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 14px; }
 .inp-lang label { margin-top: 0; }

@@ -1023,8 +1023,7 @@ function stepSut() {
 
     <section class="sut-sec">
       <div class="sut-lab"><label for="sut-cmd">Execution command</label>
-        <button type="button" class="sut-help" aria-label="SpreadEx runs this command once per generated input. Quote any argument that contains a space."
-          title="SpreadEx runs this once per generated input. Quote any argument that contains a space.">${ICONS.help}</button>
+        ${hint("hint-cmd", "SpreadEx runs this command once for every generated input. Quote any argument that contains a space.")}
         <span class="sut-pill"><code>{input}</code> will be replaced with each generated test file</span></div>
       <input id="sut-cmd" class="sut-cmd" type="text" spellcheck="false" autocomplete="off"
         value="${esc(d.command)}" placeholder="${esc((SUT_KINDS.find(k => k.id === d.kind) || {}).cmd || "your-command {input}")}">
@@ -1122,8 +1121,8 @@ function commitSut() {
 // the wheel and that the test suite exercises, not a catalogue of languages.
 const INP_MODES = [
   { id: "builtin", t: "SpreadEx grammar", d: "Start from a tested grammar that ships with SpreadEx.", icon: "book",   tone: "green" },
-  { id: "provide", t: "Provide grammar",  d: "Pick a grammar file from this project, or upload one.", icon: "upload", tone: "blue" },
-  { id: "import",  t: "Import grammar",   d: "ANTLR (.g4) or FuzzingBook (.py), converted for you.",  icon: "import", tone: "purple" },
+  { id: "provide", t: "Provide grammar",  d: "Use a grammar file that is already in this project.", icon: "folder", tone: "blue" },
+  { id: "import",  t: "Import grammar",   d: "Bring one from elsewhere: ANTLR, BNF, EBNF and more.",  icon: "import", tone: "purple" },
   { id: "none",    t: "No grammar",       d: "Use inputs you already have in a folder.",               icon: "doc",    tone: "orange" },
 ];
 
@@ -1158,14 +1157,61 @@ DIGIT : [0-9] ;` },
 
 
 // Decorative only; colours come from the theme tokens so dark mode needs no second copy.
-const INP_ART = `<svg viewBox="0 0 320 150" role="presentation" focusable="false">
-  <ellipse cx="170" cy="82" rx="118" ry="56" fill="var(--color-primary)" opacity=".10"/>
-  <ellipse cx="96" cy="60" rx="46" ry="30" fill="#1687F8" opacity=".10"/>
-  <rect x="104" y="30" width="112" height="90" rx="12" fill="var(--color-surface)" stroke="var(--color-border)" stroke-width="2"/>
-  <path d="M122 54h50M122 70h74M122 86h58" stroke="#1687F8" stroke-width="5" stroke-linecap="round" opacity=".75"/>
-  <rect x="190" y="84" width="52" height="46" rx="10" fill="#9333EA"/>
-  <path d="M204 100h24M204 112h16" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+const inpArt = id => `<svg viewBox="0 0 320 170" role="presentation" focusable="false">
+  <path d="M30 96c-10-38 24-70 64-62 34-30 96-24 112 10 40-6 76 24 66 60-8 30-40 46-76 40-40 30-110 26-136-8-20-2-28-16-30-40z" fill="#1687F8" opacity=".12"/>
+  <ellipse cx="226" cy="64" rx="70" ry="46" fill="#9333EA" opacity=".10"/>
+  <rect x="96" y="30" width="128" height="104" rx="12" fill="var(--color-surface)" stroke="var(--color-border)" stroke-width="2"/>
+  <path d="M114 56h56M114 72h82M114 88h64" stroke="#1687F8" stroke-width="6" stroke-linecap="round" opacity=".8"/>
+  <rect x="180" y="96" width="62" height="52" rx="10" fill="#9333EA"/>
+  <text x="211" y="130" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="${(LANG_ABBR[id] || "").length > 2 ? 17 : 22}" font-weight="700" fill="#fff">${esc(LANG_ABBR[id] ?? "")}</text>
 </svg>`;
+
+
+// Where a person can get a grammar for each language, and what the upstream project calls its
+// versions. Looked up in antlr/grammars-v4 on 2026-10-05; SpreadEx bundles none of these (the
+// repository has no single licence -- each grammar carries its own), so every block below is
+// shown inactive and the guidance points at Import / Provide instead.
+const GV4 = "https://github.com/antlr/grammars-v4/tree/master/";
+const LANG_PACKS = {
+  js:   { dir: "javascript", blocks: [["ECMAScript 5.1", "javascript/ecmascript"], ["Modern JavaScript", "javascript/javascript"], ["JSX", "javascript/jsx"]] },
+  ts:   { dir: "javascript/typescript", blocks: [["TypeScript", "javascript/typescript"]] },
+  py:   { dir: "python", blocks: [["Python 3.14", "python/python3_14"], ["Python 3 (3.6-based)", "python/python3"], ["Python 2.7", "python/python2_7_18"]] },
+  java: { dir: "java", blocks: [["Java (latest)", "java/java"], ["Java 20", "java/java20"], ["Java 9", "java/java9"], ["Java 8", "java/java8"]] },
+  sql:  { dir: "sql", blocks: [["SQLite", "sql/sqlite"], ["PostgreSQL", "sql/postgresql"], ["MySQL", "sql/mysql"], ["T-SQL", "sql/tsql"], ["PL/SQL", "sql/plsql"]] },
+  lua:  { dir: "lua", blocks: [["Lua", "lua"]] },
+  c:    { dir: "c", blocks: [["C", "c"]] },
+  cpp:  { dir: "cpp", blocks: [["C++", "cpp"]] },
+  rust: { dir: "rust", blocks: [["Rust (1.60 reference)", "rust"]] },
+  go:   { dir: "golang", blocks: [["Go", "golang"]] },
+  php:  { dir: "php", blocks: [["PHP", "php"]] },
+  r:    { dir: "r", blocks: [["R", "r"]] },
+  kotlin: { dir: "kotlin", blocks: [["Kotlin", "kotlin"]] },
+  swift:  { dir: "swift", blocks: [["Swift", "swift"]] },
+  scala:  { dir: "scala", blocks: [["Scala", "scala"]] },
+  cs:   { dir: "csharp", blocks: [["C#", "csharp"]] },
+  hs:   { dir: "haskell", blocks: [["Haskell", "haskell"]] },
+  dart: { dir: "dart2", blocks: [["Dart 2", "dart2"]] },
+  ex:   { dir: "elixir", blocks: [["Elixir", "elixir"]] },
+  basic:{ dir: "basic", blocks: [["jvmBASIC", "basic"]] },
+  json: { dir: "json", blocks: [["JSON", "json"]] },
+  ruby: { dir: "", blocks: [] },   // no Ruby grammar in grammars-v4
+};
+
+// The picture above the help column names the chosen language on its badge.
+const LANG_ABBR = { js: "JS", py: "PY", java: "JV", sql: "SQL", lua: "LUA", c: "C", cpp: "C++", rust: "RS",
+  go: "GO", ruby: "RB", php: "PHP", r: "R", kotlin: "KT", swift: "SW", ts: "TS", scala: "SC", cs: "C#",
+  hs: "HS", dart: "DT", ex: "EX", basic: "BAS", txt: "TXT", json: "{}", other: "</>", "": "…" };
+
+// A (?) that explains itself on hover AND keyboard focus, and can be dismissed with Escape
+// (WCAG 1.4.13). The text is also the button's accessible name, so a screen reader gets it
+// without having to find the tooltip.
+function hint(id, text) {
+  return `<span class="hint"><button type="button" class="hint-btn" aria-label="${esc(text)}" aria-describedby="${id}">${ICONS.help}</button>
+    <span class="hint-box" role="tooltip" id="${id}">${esc(text)}</span></span>`;
+}
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && document.activeElement?.closest?.(".hint")) document.activeElement.blur();
+});
 
 const INP_FORMATS = ["BNF", "EBNF", "ANTLR (.g4)", "Fandango", "ISLa", "FuzzingBook (.py)"];
 
@@ -1348,41 +1394,69 @@ function inpAnalysis() {
     <button type="button" class="ghost small res-btn" onclick="toggleInpDetails()" aria-expanded="${d.details}">${d.details ? "Hide details" : "View details"}</button></div>`;
 }
 
+function bundledCards(d) {
+  return (S.bundled || []).map(g => `<button type="button" class="inp-g ${d.picked === g.path ? "on" : ""}"
+    onclick="useBundled('${esc(g.id)}')" aria-pressed="${d.picked === g.path}">
+    <span class="lang-tile big" style="--b:#16A34A" aria-hidden="true">${ICONS.calc}</span>
+    <span class="inp-gt"><strong>${esc(g.name)}</strong><span class="muted">${esc(g.language)} · ${g.rules} productions</span></span>
+    <span class="inp-ok" aria-hidden="true">${ICONS.check}</span></button>`).join("");
+}
+
+// What the language the user chose has upstream, shown as inactive blocks: SpreadEx does not
+// ship these, and a block that looked clickable would promise something it cannot do.
+function languagePack(d) {
+  const l = langById(d.lang), pack = LANG_PACKS[d.lang];
+  if (!d.lang || !pack) return `<p class="muted inp-sub">Choose an input language above to see the grammars that exist for it.</p>`;
+  const blocks = pack.blocks.map(([name, dir]) => `<div class="inp-g off" aria-disabled="true">
+    ${langLogo(l, true)}<span class="inp-gt"><strong>${esc(name)}</strong><span class="muted">Not bundled yet</span></span></div>`).join("");
+  const where = pack.blocks.length
+    ? `The ANTLR project's <a href="${GV4}${pack.dir}" target="_blank" rel="noopener noreferrer">grammars-v4 &rarr; <span class="mono">${esc(pack.dir)}</span></a>
+       has ${pack.blocks.length > 1 ? "these" : "this"}. Check each grammar's own licence, then bring the file in with
+       <button type="button" class="linkish" onclick="pickInpMode('import')">Import grammar</button>.`
+    : `grammars-v4 has no ${esc(l.t)} grammar. Write one in BNF (see the examples on the right) and add it with
+       <button type="button" class="linkish" onclick="pickInpMode('import')">Import grammar</button>.`;
+  return `<h5 class="inp-h5">${esc(l.t)} grammars</h5>
+    ${blocks ? `<div class="inp-list">${blocks}</div>` : ""}
+    <div class="inp-guide">${ICONS.info}<div><strong>No ready-made ${esc(l.t)} grammar ships with SpreadEx yet.</strong>
+      <div class="muted">${where}</div></div></div>`;
+}
+
 function inpPanel() {
   const d = inpState();
   const picked = d.picked ? `<div class="muted inp-picked">Using <span class="mono">${esc(d.picked)}</span></div>` : "";
   if (d.mode === "builtin") {
-    const list = S.bundled || [];
     return `<h4>Pick a ready-made grammar</h4>
       <p class="muted inp-sub">Ready to use, and copied into your project so you can edit it freely.</p>
-      <div class="inp-list">${list.map(g => `<button type="button" class="inp-g ${d.picked === g.path ? "on" : ""}"
-        onclick="useBundled('${esc(g.id)}')" aria-pressed="${d.picked === g.path}">
-        <span class="lang-tile big" style="--b:#16A34A" aria-hidden="true">${ICONS.calc}</span>
-        <span class="inp-gt"><strong>${esc(g.name)}</strong><span class="muted">${esc(g.language)} · ${g.rules} productions</span></span>
-        <span class="inp-ok" aria-hidden="true">${ICONS.check}</span></button>`).join("") ||
-        `<div class="muted">No bundled grammars found.</div>`}</div>
-      <p class="muted inp-sub">More languages: use <em>Provide grammar</em> or <em>Import grammar</em>.</p>${picked}`;
+      ${languagePack(d)}
+      <h5 class="inp-h5">Demo grammar</h5>
+      <div class="inp-list">${bundledCards(d) || `<div class="muted">No bundled grammars found.</div>`}</div>${picked}`;
   }
   if (d.mode === "provide") {
     const gs = S.grammars || [];
-    return `<h4>Provide a grammar</h4>
-      <p class="muted inp-sub">BNF, EBNF, Fandango or ISLa. It is parsed and checked before it is used.</p>
-      <label for="inp-project">A grammar already in this project</label>
+    return `<h4>Use a grammar from this project</h4>
+      <p class="muted inp-sub">Pick a grammar file that is already in your project folder. It is read in place and never copied or changed.</p>
+      ${gs.length ? `<label for="inp-project">Grammar file</label>
       <select id="inp-project" onchange="stashInp(); analyseGrammar()">
         <option value="">— choose a file —</option>
         ${gs.map(g => `<option value="${esc(g.path)}" ${g.path === d.picked ? "selected" : ""}>${esc(g.path)}</option>`).join("")}
-      </select>
-      ${gs.length ? "" : `<div class="muted inp-sub">No grammar-shaped files found under this project yet.</div>`}
-      <div class="inp-up"><label class="btn-like" for="inp-file">${ICONS.upload} Upload a file</label>
-        <input id="inp-file" type="file" accept=".bnf,.ebnf,.fan,.isla,.txt" onchange="uploadInp(this)">
-        <span class="muted">Saved to <span class="mono">grammars/</span> in this project.</span></div>${picked}`;
+      </select>` : `<div class="inp-guide">${ICONS.info}<div><strong>No grammar files found in this project.</strong>
+        <div class="muted">SpreadEx looks for .bnf, .ebnf, .g4, .fan, .isla and FuzzingBook .py files. Have one somewhere else?
+        <button type="button" class="linkish" onclick="pickInpMode('import')">Import grammar</button> copies it in.</div></div></div>`}${picked}`;
   }
   if (d.mode === "import") {
-    return `<h4>Import a grammar</h4>
-      <p class="muted inp-sub">An ANTLR grammar (<span class="mono">.g4</span>) or a FuzzingBook grammar dict (<span class="mono">.py</span>).
-        SpreadEx reads it into its own form and checks it; the original file is copied unchanged.</p>
-      <div class="inp-up"><label class="btn-like" for="inp-file2">${ICONS.upload} Choose a .g4 or .py file</label>
-        <input id="inp-file2" type="file" accept=".g4,.py" onchange="uploadInp(this)"></div>${picked}`;
+    const l = langById(d.lang), pack = LANG_PACKS[d.lang];
+    const tip = d.lang && pack && pack.dir
+      ? `<div class="inp-guide">${ICONS.bulb}<div><strong>Looking for a ${esc(l.t)} grammar?</strong>
+          <div class="muted"><a href="${GV4}${pack.dir}" target="_blank" rel="noopener noreferrer">grammars-v4 &rarr; <span class="mono">${esc(pack.dir)}</span></a>
+          publishes ${esc(pack.blocks.map(b => b[0]).join(", "))} as ANTLR <span class="mono">.g4</span> files. Download the grammar file, then choose it below.</div></div></div>` : "";
+    return `<h4>Import a grammar from elsewhere</h4>
+      <p class="muted inp-sub">Choose a file on your computer. SpreadEx checks it, converts it for each generator, and saves a copy in
+        <span class="mono">grammars/</span>; your original stays where it is.</p>
+      ${tip}
+      <div class="inp-up"><label class="btn-like" for="inp-file2">${ICONS.upload} Choose a grammar file</label>
+        <input id="inp-file2" type="file" accept=".g4,.py,.bnf,.ebnf,.fan,.isla,.txt" onchange="uploadInp(this)">
+        <span class="chips"><span class="chip">.g4 ANTLR</span><span class="chip">.bnf</span><span class="chip">.ebnf</span>
+          <span class="chip">.fan Fandango</span><span class="chip">.isla</span><span class="chip">.py FuzzingBook</span></span></div>${picked}`;
   }
   return `<h4>Use inputs you already have</h4>
     <p class="muted inp-sub">A folder of example inputs. Generators need a grammar, so they are skipped;
@@ -1405,8 +1479,8 @@ function paintInputs() {
     </header>
 
     <section class="sut-sec">
-      <h4><span class="num" aria-hidden="true">1</span> Input language <span class="muted">(optional)</span></h4>
-      <p class="muted inp-sub">Sets the file extension your inputs are given when they are executed.</p>
+      <h4><span class="num" aria-hidden="true">1</span> Input language <span class="muted">(optional)</span> ${hint("hint-lang", "Optional. Choosing a language fills in the file extension and shows where to find grammars for it.")}</h4>
+      <p class="muted inp-sub">Choose the input language for presets and file extensions.</p>
       <div class="inp-lang">
         <div class="lang-pick"><label id="lang-lab">Language</label>
           <button type="button" id="lang-btn" class="lang-btn" aria-haspopup="listbox" aria-expanded="false"
@@ -1416,7 +1490,7 @@ function paintInputs() {
             <div class="lang-grid">${INP_LANGS.slice(0, -4).map(l => langOption(l, d)).join("")}</div>
             <div class="lang-foot">${INP_LANGS.slice(-4).map(l => langOption(l, d)).join("")}</div>
           </div></div>
-        <div><label for="inp-ext">File extension</label>
+        <div><label for="inp-ext">File extension ${hint("hint-ext", "The ending given to every input file when it is run, for example .js. Many programs pick their parser from it. Leave it empty to use none.")}</label>
           <input id="inp-ext" type="text" value="${esc(d.ext)}" oninput="touchInpExt()" spellcheck="false" placeholder="${esc(lang.ext || "e.g. .js")}"></div>
       </div>
     </section>
@@ -1456,7 +1530,7 @@ function paintInputs() {
    </div>
 
    <aside class="sut-side" aria-label="Help">
-    <div class="side-card inp-hero side-hero" aria-hidden="true">${INP_ART}</div>
+    <div class="side-card inp-hero side-hero" aria-hidden="true">${inpArt(d.lang)}</div>
     <div class="side-card">
       <h4><span class="h-ico blue">${ICONS.book}</span> What are input specifications?</h4>
       <p>An input specification tells SpreadEx what valid test inputs for your program look like. It usually consists of a grammar and, optionally, semantic constraints.</p>

@@ -230,4 +230,53 @@ def test_the_extension_box_is_warm_code_and_the_grammar_picker_uses_plain_words(
     rule = CSS[CSS.index(".sut input.sut-cmd, .sut input#sut-cwd"):]
     assert "input#inp-ext" in rule[:rule.index("}")]
     assert "Pick a ready-made grammar" in JS and "Choose a bundled grammar" not in JS
-    assert "lang-tile big" in JS[JS.index("function inpPanel"):]
+    assert "lang-tile big" in JS[JS.index("function bundledCards"):]
+
+
+# ------------------------------------------------ tooltips, language packs, modes
+
+def test_input_language_and_file_extension_both_have_a_keyboard_reachable_tooltip():
+    assert JS.count('hint("hint-lang"') == 1 and JS.count('hint("hint-ext"') == 1
+    h = JS[JS.index("function hint("):]
+    h = h[:h.index("\n}\n")]
+    assert 'role="tooltip"' in h and "aria-describedby" in h and "aria-label" in h
+    assert ".hint:hover .hint-box, .hint:focus-within .hint-box" in CSS
+    assert 'e.key === "Escape" && document.activeElement?.closest?.(".hint")' in JS
+
+
+def test_the_step_1_command_help_uses_the_same_tooltip_not_a_title_attribute():
+    assert 'hint("hint-cmd"' in JS and 'class="sut-help"' not in JS
+
+
+def test_every_language_pack_points_at_a_real_grammars_v4_directory_or_admits_there_is_none():
+    packs = JS[JS.index("const LANG_PACKS = {"):JS.index("// The picture above the help column")]
+    ids = {l["id"] for l in _langs()}
+    for m in re.finditer(r'\n  (\w+):\s*\{ dir: "([^"]*)", blocks: \[(.*?)\] \}', packs):
+        key, dir_, blocks = m.groups()
+        assert key in ids, key
+        assert bool(dir_) == bool(blocks), key          # no directory <=> no blocks (Ruby)
+        for name, path in re.findall(r'\["([^"]+)", "([^"]+)"\]', blocks):
+            assert path.startswith(dir_.split("/")[0]), (key, path)
+    assert 'ruby: { dir: "", blocks: [] }' in packs
+
+
+def test_upstream_blocks_are_inactive_and_nothing_claims_they_ship():
+    p = JS[JS.index("function languagePack"):JS.index("function inpPanel")]
+    assert 'class="inp-g off" aria-disabled="true"' in p and "<button" not in p.split("const where")[0]
+    assert "Not bundled yet" in p and "ships with SpreadEx yet" in p
+    assert 'rel="noopener noreferrer"' in p
+
+
+def test_provide_and_import_differ_by_where_the_file_is_not_by_format():
+    prov = JS[JS.index('if (d.mode === "provide")'):JS.index('if (d.mode === "import")')]
+    imp = JS[JS.index('if (d.mode === "import")'):JS.index("Use inputs you already have</h4>")]
+    assert "already in your project" in prov and "never copied or changed" in prov and "uploadInp" not in prov
+    assert "on your computer" in imp and "saves a copy" in imp and "uploadInp(this)" in imp
+    assert "Use a grammar file that is already in this project." in JS
+    assert "Bring one from elsewhere" in JS
+
+
+def test_the_hero_picture_has_the_same_box_on_both_steps_and_names_the_language():
+    assert JS.count('viewBox="0 0 320 170"') >= 2
+    assert re.search(r"\.side-hero svg \{[^}]*aspect-ratio: 320 / 170", CSS)
+    assert "LANG_ABBR[id]" in JS and "inpArt(d.lang)" in JS
