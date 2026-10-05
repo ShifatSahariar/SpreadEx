@@ -47,6 +47,8 @@ class Generator:
     capabilities: dict = field(default_factory=dict)
     #: probabilistic | constraint-based | coverage-guided | llm-based (the filter in step 3)
     family: str = ""
+    #: {venue, year, authors, title} for a paper, or {kind, authors, title} where there is none.
+    reference: dict = field(default_factory=dict)
 
     @property
     def package(self) -> str:
@@ -91,6 +93,7 @@ def load_catalog(catalog_dir: Path | None = None) -> dict[str, Generator]:
             check=data.get("check") or {},
             capabilities=data.get("capabilities") or {},
             family=data.get("family", ""),
+            reference=data.get("reference") or {},
         )
     return out
 

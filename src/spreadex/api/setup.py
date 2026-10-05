@@ -113,15 +113,23 @@ GENERATOR_FAMILIES = [
     {"id": "llm-based", "label": "LLM-based"},
 ]
 
+# `reference` entries were checked against Crossref on 2026-10-06. ClusGram is this project's own
+# ICST 2026 paper: venue and year only, because its title is not recorded here.
 UPCOMING_GENERATORS = [
     {"id": "clusgram", "name": "ClusGram", "family": "coverage-guided", "ours": True,
+     "reference": {"venue": "ICST", "year": 2026, "authors": "", "title": ""},
      "summary": "Rule-coverage-driven generation for diverse inputs."},
     {"id": "nautilus", "name": "Nautilus", "family": "coverage-guided",
+     "reference": {"venue": "NDSS", "year": 2019, "authors": "Aschermann et al.",
+                   "title": "NAUTILUS: Fishing for Deep Bugs with Grammars"},
      "summary": "Coverage-guided grammar fuzzer with feedback."},
     {"id": "dharma", "name": "Dharma", "family": "probabilistic",
+     "reference": {"kind": "Mozilla security tool", "authors": "Mozilla", "title": "Dharma"},
      "summary": "Mozilla's generational grammar fuzzer."},
     {"id": "fuzz4all", "name": "Fuzz4All", "family": "llm-based",
-     "summary": "LLM-driven universal fuzzer (Xia et al., ICSE 2024). Planned; no model is bundled."},
+     "reference": {"venue": "ICSE", "year": 2024, "authors": "Xia et al.",
+                   "title": "Fuzz4All: Universal Fuzzing with Large Language Models"},
+     "summary": "LLM-driven universal fuzzer. Planned; no model is bundled."},
 ]
 
 
@@ -142,6 +150,7 @@ def generator_status(config) -> dict[str, Any]:
             "dialect": gen.grammar_dialect,
             "constraints": gen.supports_constraints,
             "family": gen.family,
+            "reference": gen.reference,
             "installed": status.installed,
             "version": status.version,
             "where": status.where,

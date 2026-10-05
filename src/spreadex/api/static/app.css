@@ -1033,3 +1033,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .gsec.soonsec .gcard.soon { background: transparent; filter: grayscale(1); opacity: .72; }
 .gsec.soonsec .gcard.soon .gname { color: var(--color-muted); }
 .gcard.soon .gbody { padding-left: 12px; }
+.gref { display: inline-flex; align-items: center; gap: 5px; font-size: .72rem; color: var(--color-muted); cursor: help; }
+.gref svg { width: 12px; height: 12px; flex: none; }
+.gm-h .gref { margin: -2px 0 6px; }

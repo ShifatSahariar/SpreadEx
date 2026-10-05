@@ -9,6 +9,11 @@ install:
 check:
   type: command
   command: [grammarinator-process, --version]
+reference:
+  venue: A-TEST
+  year: 2018
+  authors: 'Hodován et al.'
+  title: 'Grammarinator: a grammar-based open source fuzzer'
 family: probabilistic
 capabilities:
   grammar: antlr4

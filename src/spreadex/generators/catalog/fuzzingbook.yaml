@@ -10,6 +10,10 @@ install:
 check:
   type: python_import
   module: fuzzingbook.GrammarFuzzer
+reference:
+  kind: Online book
+  authors: 'Zeller et al.'
+  title: 'The Fuzzing Book'
 family: probabilistic
 capabilities:
   grammar: fuzzingbook-dict

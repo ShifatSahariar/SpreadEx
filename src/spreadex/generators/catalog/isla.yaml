@@ -15,6 +15,11 @@ install:
 check:
   type: python_import
   module: isla.solver
+reference:
+  venue: ESEC/FSE
+  year: 2022
+  authors: 'Steinhöfel & Zeller'
+  title: 'Input invariants'
 family: constraint-based
 capabilities:
   grammar: bnf

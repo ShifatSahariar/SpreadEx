@@ -9,6 +9,11 @@ install:
 check:
   type: command
   command: [fandango, --version]
+reference:
+  venue: ISSTA
+  year: 2025
+  authors: 'Zamudio Amaya et al.'
+  title: 'Fandango: Evolving Language-Based Testing'
 family: constraint-based
 capabilities:
   grammar: fandango-fan

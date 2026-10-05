@@ -1963,6 +1963,23 @@ function genLogo(id, big) {
   return `<span class="gen-logo ${big ? "big" : ""} ${GEN_LOGO[id] ? "" : "glyph"}" aria-hidden="true">${inner}</span>`;
 }
 
+// "A-TEST 2018", or "Online book" where there is no paper. Grey and small on purpose: it is context,
+// not a status. The full citation is the tooltip.
+function refLabel(r) {
+  if (!r) return "";
+  if (r.venue && r.year) return `${r.venue} ${r.year}`;
+  return r.kind || "";
+}
+function refTitle(r) {
+  if (!r) return "";
+  return [r.authors, r.title ? `\u201c${r.title}\u201d` : "", r.venue && r.year ? `${r.venue} ${r.year}` : (r.kind || "")]
+    .filter(Boolean).join(", ");
+}
+function refLine(r) {
+  const t = refLabel(r);
+  return t ? `<span class="gref" title="${esc(refTitle(r))}">${ICONS.book}<span>${esc(t)}</span></span>` : "";
+}
+
 function genState() {
   if (!S.gen) S.gen = { filter: "all", modal: null, draftConstraints: true, analysis: null };
   return S.gen;
@@ -2016,6 +2033,7 @@ function genCard({ g, fit }, recommended) {
         <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[g.family] || "Grammar")}</span>
           ${installTag(g)}
           ${cleanVersion(g.version) ? `<span class="muted gver">v${esc(cleanVersion(g.version))}</span>` : ""}</span>
+        ${refLine(g.reference)}
         ${fit.ok ? "" : `<span class="gwhy">${ICONS.alert}<span>${esc(fit.why)}</span></span>`}
         ${chosen && opt.constraints === false ? `<span class="muted gopt">Constraints off: grammar only</span>` : ""}
         ${chosen && line ? `<span class="sem-line ${line.tone}">${ICONS[line.tone === "ok" ? "success" : line.tone === "warn" ? "alert" : "info"]}<span>${esc(line.text)}</span></span>` : ""}
@@ -2027,6 +2045,7 @@ function upcomingCard(u) {
     <div class="gbody static">${genLogo(u.id)}<span class="gtext">
       <span class="gname">${esc(u.name)} ${u.ours ? `<span class="tag gfam">Our tool</span>` : ""}</span>
       <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[u.family])}</span></span>
+      ${refLine(u.reference)}
       <span class="muted gopt">${esc(u.summary)}</span></span></div></div>`;
 }
 
@@ -2228,6 +2247,7 @@ function paintGenModal() {
    <div class="gm" role="dialog" aria-modal="true" aria-labelledby="gm-t" onkeydown="genModalKeys(event)">
     <header class="gm-h">${genLogo(g.id, true)}
       <div><h3 id="gm-t">Configure ${esc(g.name)}</h3>
+        ${refLine(g.reference)}
         <div class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[g.family] || "Grammar")}</span> ${status}</div></div>
       <button type="button" class="gx" onclick="closeGenModal()" aria-label="Close">&times;</button></header>
     <p class="muted gm-sum">${esc(g.summary)}</p>

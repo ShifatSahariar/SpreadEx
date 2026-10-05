@@ -281,3 +281,45 @@ def test_the_review_screen_names_what_will_be_downloaded_and_run_asks_to_install
     assert "Installed on first run" in JS and "downloaded from PyPI" in JS
     assert "install_missing: true" in JS
     assert "if (!S.generators)" in JS[JS.index("async function stepRun"):][:300]
+
+
+# ------------------------------------------------------------ publication info
+
+# Checked against Crossref on 2026-10-06. Pinned so an edit cannot drift from the source silently.
+VERIFIED = {"grammarinator": ("A-TEST", 2018), "fandango": ("ISSTA", 2025), "isla": ("ESEC/FSE", 2022)}
+VERIFIED_UPCOMING = {"nautilus": ("NDSS", 2019), "fuzz4all": ("ICSE", 2024), "clusgram": ("ICST", 2026)}
+
+
+def test_every_catalog_generator_says_where_it_was_published_or_what_it_is():
+    for g in load_catalog().values():
+        r = g.reference
+        assert r, g.id
+        if "venue" in r:
+            assert r["venue"] and isinstance(r["year"], int) and 2000 <= r["year"] <= 2030, g.id
+        else:
+            assert r.get("kind"), f"{g.id}: no paper, so it must say what it is"
+        assert r.get("authors") and r.get("title"), g.id
+
+
+def test_the_venues_and_years_match_what_was_checked():
+    cat = load_catalog()
+    for gid, (venue, year) in VERIFIED.items():
+        assert (cat[gid].reference["venue"], cat[gid].reference["year"]) == (venue, year), gid
+    assert "venue" not in cat["fuzzingbook"].reference, "FuzzingBook is a book; do not invent a year for it"
+
+
+def test_the_api_carries_the_reference_for_real_and_upcoming_generators(tmp_path):
+    from spreadex.core.config import Config
+    r = setup.generator_status(Config.unconfigured(tmp_path))
+    assert all(g["reference"] for g in r["generators"])
+    soon = {u["id"]: u["reference"] for u in r["upcoming"]}
+    for gid, (venue, year) in VERIFIED_UPCOMING.items():
+        assert (soon[gid]["venue"], soon[gid]["year"]) == (venue, year), gid
+    assert "venue" not in soon["dharma"], "Dharma has no paper"
+
+
+def test_the_card_shows_a_small_grey_reference_with_the_full_citation_as_a_tooltip():
+    assert "function refLabel" in JS and "function refTitle" in JS and "function refLine" in JS
+    assert JS.count("refLine(") >= 4          # real cards, coming-soon cards, the popup
+    assert re.search(r"\.gref \{[^}]*color: var\(--color-muted\)", CSS)
+    assert 'title="${esc(refTitle(r))}"' in JS
