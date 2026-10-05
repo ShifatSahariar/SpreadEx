@@ -259,6 +259,7 @@ const ICONS = {
   dots: I(`<circle cx="12" cy="12" r="1" /> <circle cx="19" cy="12" r="1" /> <circle cx="5" cy="12" r="1" />`),
   calc: I(`<rect width="16" height="20" x="4" y="2" rx="2" /> <line x1="8" x2="16" y1="6" y2="6" /> <line x1="16" x2="16" y1="14" y2="18" /> <path d="M16 10h.01" /> <path d="M12 10h.01" /> <path d="M8 10h.01" /> <path d="M12 14h.01" /> <path d="M8 14h.01" /> <path d="M12 18h.01" /> <path d="M8 18h.01" />`),
   chevron: I(`<path d="m6 9 6 6 6-6" />`),
+  scale: I(`<path d="M12 3v18" /> <path d="m19 8 3 8a5 5 0 0 1-6 0zV7" /> <path d="M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1" /> <path d="m5 8 3 8a5 5 0 0 1-6 0zV7" /> <path d="M7 21h10" />`),
   grid: I(`<rect width="7" height="7" x="3" y="3" rx="1" /> <rect width="7" height="7" x="14" y="3" rx="1" /> <rect width="7" height="7" x="14" y="14" rx="1" /> <rect width="7" height="7" x="3" y="14" rx="1" />`),
 };
 
@@ -630,6 +631,40 @@ function semanticLine(g, sem, experimental) {
   return { tone: others.length ? "warn" : "muted", text: parts.join(" ") };
 }
 
+// ---- testing strategy (pure: the tests run this under Node too) ---------------
+
+function parseExitCodes(text) {
+  return String(text || "").split(/[,\s]+/).filter(Boolean).map(x => Number(x))
+    .filter(n => Number.isInteger(n));
+}
+// Blank entries go; the rest are kept EXACTLY as typed. A pattern like "^js: " has a trailing space
+// that matters, so trimming it would quietly change what it matches.
+const cleanPatterns = list => (list || []).map(p => String(p)).filter(p => p.trim() !== "");
+
+// The oracle block that a set of switches means. Other keys the user wrote by hand (banners,
+// compare_stdout) pass through untouched; a switch that is off removes its own keys so nothing stale
+// is saved.
+function strategyOracle(base, st, multi) {
+  const o = { ...(base || {}) };
+  o.type = st.diff && multi ? "differential" : "crash";
+  const rej = cleanPatterns(st.rejPats), sig = cleanPatterns(st.sigPats), codes = parseExitCodes(st.codes);
+  if (st.rej && rej.length) o.rejection_patterns = rej; else delete o.rejection_patterns;
+  if (st.rej && codes.length) o.expected_exit_codes = codes; else delete o.expected_exit_codes;
+  if (st.sig && sig.length) o.crash_patterns = sig; else delete o.crash_patterns;
+  return o;
+}
+
+// Starting points, not answers: patterns are what many systems print, never what YOUR system prints.
+const STRATEGY_PRESETS = {
+  parser:      { t: "Compiler / Parser", d: "Crashes, timeouts, rejections, patterns",
+                 st: { rej: true, rejPats: ["SyntaxError", "ParseError"], codes: "", sig: false, sigPats: [], diff: false } },
+  interpreter: { t: "Interpreter", d: "Crashes, timeouts, patterns",
+                 st: { rej: false, rejPats: [], codes: "", sig: true, sigPats: ["Segmentation fault", "Assertion failed", "panic:"], diff: false } },
+  custom:      { t: "Custom", d: "Start from scratch",
+                 st: { rej: false, rejPats: [], codes: "", sig: false, sigPats: [], diff: false } },
+};
+// ---- end testing strategy ------------------------------------------------------
+
 const DURATION = /^\d+(\.\d+)?\s*[smh]?$/i;
 // ---- end command line helpers ----------------------------------------------
 
@@ -718,113 +753,240 @@ async function saveConfig(write) {
 
 // ------------------------------------------------- step 4: testing strategy
 
-// Checks, not a single "oracle" dropdown. The engine already distinguishes
-// ok / expected_rejection / crash / timeout / divergence; this step only
-// decides which of those the user wants reported, in their words.
+// Every input is RUN; these checks decide which results deserve attention. The engine already
+// separates ok / expected_rejection / crash / timeout / divergence, so this step only chooses which
+// of those to report, in the user's words. Crashes and timeouts are the floor and cannot be turned
+// off; the other three are switches that write (or remove) their own keys in `oracle:`.
 
-function patternRows(key, placeholder) {
-  const list = cfg().oracle?.[key] || [];
+const STRAT_CHECKS = [
+  { id: "crash", t: "Crashes & timeouts", tone: "red",    icon: "bug",     floor: true,
+    tip: "A signal, a crash-shaped exit, or no answer before the timeout. Always on: this is the floor." },
+  { id: "rej",   t: "Expected rejections", tone: "green", icon: "success",
+    tip: "Many systems exit non-zero on input they legitimately refuse. Say how yours does, or every invalid input is reported as a crash." },
+  { id: "sig",   t: "Failure signatures", tone: "blue",   icon: "doc",
+    tip: "Messages that always mean a real failure. They are checked first, so a broad rejection rule cannot hide a bug. Failures are also grouped by signature automatically in the results." },
+  { id: "diff",  t: "Differential testing", tone: "purple", icon: "scale",
+    tip: "Run the same input on two or more implementations; a different exit class, exception or output is a divergence. No expected output needed." },
+];
+
+function stratState() {
+  if (S.strat) return S.strat;
+  const o = cfg().oracle || {};
+  S.strat = {
+    rej: !!((o.rejection_patterns || []).length || (o.expected_exit_codes || []).length),
+    rejPats: [...(o.rejection_patterns || [])], codes: (o.expected_exit_codes || []).join(", "),
+    sig: !!(o.crash_patterns || []).length, sigPats: [...(o.crash_patterns || [])],
+    diff: o.type === "differential",
+    open: {}, menu: false, undo: null, note: "",
+    tip: (() => { try { return sessionStorage.getItem("spreadex-tip4") !== "1"; } catch (e) { return true; } })(),
+  };
+  return S.strat;
+}
+
+// Two halves, and the order matters. readStrat() copies what is ON SCREEN into the state; call it
+// once, BEFORE changing anything. syncStrat() writes the state to the config without looking at the
+// screen. Reading the screen after a change would copy the old inputs back over the new state.
+function readStrat() {
+  const st = stratState();
+  document.querySelectorAll(".pat-rejPats").forEach((i, k) => { st.rejPats[k] = i.value; });
+  document.querySelectorAll(".pat-sigPats").forEach((i, k) => { st.sigPats[k] = i.value; });
+  if (el("exit-codes")) st.codes = el("exit-codes").value;
+  return st;
+}
+function syncStrat() {
+  const st = stratState();
+  S.config.oracle = strategyOracle(cfg().oracle, st, targets().length > 1);
+  return st;
+}
+function stashStrat() { readStrat(); return syncStrat(); }   // for leaving the page, where nothing changes
+
+function stratSet(id, on) {
+  const st = readStrat();
+  if (id === "diff" && on && targets().length < 2) return;
+  st[id] = on;
+  // Switching a check on opens its settings, and one with no patterns yet gets an empty row to type in.
+  if (on) { st.open[id] = true; if (id === "rej" && !st.rejPats.length) st.rejPats = [""]; if (id === "sig" && !st.sigPats.length) st.sigPats = [""]; }
+  st.note = ""; syncStrat(); stepStrategy();
+}
+function stratToggleRow(id) { const st = readStrat(); st.open[id] = !st.open[id]; syncStrat(); stepStrategy(); }
+function stratAddPattern(key) { const st = readStrat(); st[key].push(""); st.open[key === "rejPats" ? "rej" : "sig"] = true; syncStrat(); stepStrategy();
+  const rows = document.querySelectorAll(`.pat-${key}`); rows[rows.length - 1]?.focus(); }
+function stratDropPattern(key, i) { const st = readStrat(); st[key].splice(i, 1); syncStrat(); stepStrategy(); }
+function stratClear() { const st = readStrat(); st.undo = JSON.stringify(st); Object.assign(st, { rej: false, sig: false, diff: false }); st.note = "Cleared. Crashes and timeouts are always checked."; syncStrat(); stepStrategy(); }
+
+function stratPreset(id) {
+  const st = readStrat(), p = STRATEGY_PRESETS[id];
+  if (!p) return;
+  st.undo = JSON.stringify({ rej: st.rej, rejPats: st.rejPats, codes: st.codes, sig: st.sig, sigPats: st.sigPats, diff: st.diff });
+  Object.assign(st, JSON.parse(JSON.stringify(p.st)), { menu: false });
+  if (st.diff && targets().length < 2) st.diff = false;
+  st.open = { rej: st.rej, sig: st.sig };
+  st.note = id === "custom" ? "Starting from scratch." :
+    `Applied “${p.t}”. The patterns are starting points: replace them with real messages from your system.`;
+  syncStrat(); stepStrategy();
+}
+function stratUndo() { const st = stratState(); if (!st.undo) return; Object.assign(st, JSON.parse(st.undo), { undo: null, note: "Undone." }); syncStrat(); stepStrategy(); }
+function stratMenu(open) { const st = readStrat(); st.menu = open === undefined ? !st.menu : open; syncStrat(); stepStrategy(); }
+function stratDismissTip() { stratState().tip = false; try { sessionStorage.setItem("spreadex-tip4", "1"); } catch (e) { /* fine */ } stepStrategy(); }
+
+// JavaScript's regex dialect is close to Python's but not the same, so this is a hint: the server
+// compiles every pattern with Python's engine when the config is saved, and has the last word.
+function patternHint(p) {
+  if (!p.trim()) return "";
+  try { new RegExp(p, "i"); return ""; } catch (e) { return "This may not be a valid pattern. Escape special characters like ( with a backslash."; }
+}
+
+function patRows(key, placeholder) {
+  const list = stratState()[key];
   const rows = list.length ? list : [""];
-  return rows.map((v, i) => `
-    <div class="pat-row">
-      <input type="text" class="pat-${key}" value="${esc(v)}" placeholder="${esc(placeholder)}">
-      <button class="ghost small" onclick="dropPattern('${key}', ${i})"
-        title="Remove this message" aria-label="Remove">&times;</button>
+  return rows.map((v, i) => `<div class="pat-row">
+      <input type="text" class="sut-cmd pat-${key}" value="${esc(v)}" placeholder="${esc(placeholder)}" spellcheck="false"
+        aria-label="Message pattern ${i + 1}" oninput="this.nextElementSibling.nextElementSibling.textContent = patternHint(this.value)">
+      <button type="button" class="gx" onclick="stratDropPattern('${key}', ${i})" aria-label="Remove this pattern">&times;</button>
+      <span class="pat-warn warn" role="status">${esc(patternHint(v))}</span>
     </div>`).join("");
 }
 
-function readPatterns(key) {
-  return Array.from(document.querySelectorAll(`.pat-${key}`))
-    .map(i => i.value.trim()).filter(Boolean);
+function stratActive() {
+  const st = stratState();
+  return STRAT_CHECKS.filter(c => c.floor || st[c.id]);
 }
 
-function stashStrategy() {
-  // Keep what is on screen before re-rendering, so adding a row never eats what
-  // the user already typed -- and keep the answer to "does this system reject
-  // input?" separately, because it stays true while the list is still empty.
-  const o = { ...(cfg().oracle || {}) };
-  if (el("chk-reject")) {
-    S.rejects = el("chk-reject").checked;
-    o.rejection_patterns = S.rejects ? readPatterns("rejection_patterns") : [];
-    o.crash_patterns = readPatterns("crash_patterns");
-    o.type = (el("chk-diff") && el("chk-diff").checked) ? "differential" : "crash";
-    const codes = (el("exit-codes").value || "").split(/[,\s]+/)
-      .map(x => parseInt(x, 10)).filter(n => !Number.isNaN(n));
-    if (codes.length) o.expected_exit_codes = codes; else delete o.expected_exit_codes;
+function stratChips(c) {
+  const st = stratState(), o = cfg().oracle || {};
+  const chip = (icon, text) => `<span class="schip">${ICONS[icon]}<span>${esc(text)}</span></span>`;
+  if (c.id === "crash") {
+    const judged = st.rej || (o.expected_exit_codes || []).length;
+    return chip("clock", `Timeout: ${sut().timeout || "5s"}`) +
+           chip("alert", judged ? "Non-zero exit: judged" : "Non-zero exit: counts as crash");
   }
-  S.config.oracle = o;
+  if (c.id === "rej") {
+    if (!st.rej) return "";
+    const n = parseExitCodes(st.codes).length, m = cleanPatterns(st.rejPats).length;
+    return (n ? chip("file", `${n} exit code${n > 1 ? "s" : ""}`) : "") + (m ? chip("file", `${m} message pattern${m > 1 ? "s" : ""}`) : "")
+      || chip("file", "Nothing set up yet");
+  }
+  if (c.id === "sig") {
+    if (!st.sig) return "";
+    const m = cleanPatterns(st.sigPats).length;
+    return chip("file", m ? `${m} pattern${m > 1 ? "s" : ""}` : "Nothing set up yet");
+  }
+  if (targets().length > 1) return chip("grid", `${targets().length} implementations`);
+  return `<button type="button" class="schip add" onclick="stratGoAddReference()">${ICONS.plus}<span>Add reference</span></button>`;
 }
+function stratGoAddReference() { stashStrat(); const d = sutDraft(); if (!d.extra.length) d.extra.push({ name: "sut2", command: "" }); gotoStep("sut"); }
 
-function addPattern(key) { stashStrategy();
-  S.config.oracle[key] = [...(cfg().oracle[key] || []), ""]; stepStrategy(); }
-function dropPattern(key, i) { stashStrategy();
-  const v = [...(cfg().oracle[key] || [])]; v.splice(i, 1);
-  S.config.oracle[key] = v; stepStrategy(); }
-function redrawStrategy() { stashStrategy(); stepStrategy(); }
+function stratDetail(c) {
+  const st = stratState();
+  if (c.id === "crash") return `<p class="muted">An input that gets no answer in <strong>${esc(sut().timeout || "5s")}</strong> is reported as a timeout.
+      The limit is set in <button type="button" class="linkish" onclick="stashStrat(); gotoStep('sut')">System under test</button>.</p>
+      <p class="muted">A non-zero exit counts as a crash unless you say it is expected, using Expected rejections.</p>`;
+  if (c.id === "rej") return `<label for="exit-codes">Exit codes that are not failures</label>
+      <input id="exit-codes" type="text" class="sut-cmd" placeholder="0, 1" value="${esc(st.codes)}" spellcheck="false">
+      <label>Messages that mean &ldquo;I rejected this&rdquo;</label>
+      <p class="muted">Matched against the output as regular expressions, ignoring case. Copy a real error message from your system.</p>
+      ${patRows("rejPats", "SyntaxError")}
+      <button type="button" class="ghost small" onclick="stratAddPattern('rejPats')">${ICONS.plus} Add another message</button>`;
+  if (c.id === "sig") return `<label>Messages that always mean a real failure</label>
+      <p class="muted">Checked <em>before</em> the rejection messages, so a broad rejection rule cannot hide a genuine bug.</p>
+      ${patRows("sigPats", "Segmentation fault")}
+      <button type="button" class="ghost small" onclick="stratAddPattern('sigPats')">${ICONS.plus} Add another message</button>`;
+  return targets().length > 1
+    ? `<p class="muted">${targets().length} implementations run every input. A different exit class, exception or output is a divergence; all of them refusing the same input is not.</p>`
+    : `<p class="muted">Needs a second implementation to compare against. Add one in System under test; no expected output is required.</p>
+       <button type="button" class="ghost small" onclick="stratGoAddReference()">${ICONS.plus} Add a second implementation</button>`;
+}
 
 function stepStrategy() {
-  const o = cfg().oracle || {}, multi = targets().length > 1;
-  if (S.rejects === undefined) S.rejects = (o.rejection_patterns || []).length > 0;
-  const rejects = S.rejects;
+  const st = stratState(), multi = targets().length > 1;
+  const active = stratActive();
   el("view").innerHTML = `
-  <div class="card">
-    <h3>What counts as a failure?</h3>
-    <p class="why">SpreadEx distinguishes a measurement from a judgement. Every input is
-      <em>run</em>; these checks decide which results are worth your attention. Most generated
-      input is invalid on purpose, and a parser rejecting it is doing its job &mdash; not a bug.</p>
+  <div class="sut strat">
+   <div class="sut-main">
+    <header class="sut-head">
+      <span class="sut-badge orange" aria-hidden="true">4</span>
+      <div class="strat-title"><h3>What do you want to detect? ${hint("hint-strat", "SpreadEx runs every input, then these checks decide which results deserve your attention. Most generated input is invalid on purpose, so a refusal is not automatically a bug.")}</h3>
+        <p class="why">Choose how results are judged.</p></div>
+      <div class="preset-pick"><button type="button" class="ghost" aria-haspopup="menu" aria-expanded="${st.menu}" onclick="stratMenu()">Use a preset ${ICONS.chevron}</button>
+        ${st.menu ? `<div class="preset-menu" role="menu">${Object.entries(STRATEGY_PRESETS).map(([id, p]) =>
+          `<button type="button" role="menuitem" onclick="stratPreset('${id}')"><strong>${esc(p.t)}</strong><span class="muted">${esc(p.d)}</span></button>`).join("")}</div>` : ""}</div>
+    </header>
 
-    <label class="check"><input type="checkbox" checked disabled>
-      <span><strong>Crashes and hangs</strong><br>
-      <span class="muted">A signal, a crash-shaped exit, or no answer before the timeout.
-      Always on &mdash; this is the floor.</span></span></label>
+    ${st.note ? `<div class="inp-guide" role="status">${ICONS.info}<div>${esc(st.note)}${st.undo ? ` <button type="button" class="linkish" onclick="stratUndo()">Undo</button>` : ""}</div></div>` : ""}
 
-    <label class="check"><input type="checkbox" id="chk-diff" ${o.type === "differential" ? "checked" : ""}
-      ${multi ? "" : "disabled"} onchange="redrawStrategy()">
-      <span><strong>Disagreement between implementations</strong><br>
-      <span class="muted">${multi
-        ? "Both run the same input; a different exit code, exception or output is a divergence. No expected output needed."
-        : "Add a second implementation on step 1 to enable this."}</span></span></label>
-
-    <label class="check"><input type="checkbox" id="chk-reject" ${rejects ? "checked" : ""}
-      onchange="redrawStrategy()">
-      <span><strong>This system reports invalid input itself</strong><br>
-      <span class="muted">If it exits non-zero for input it legitimately refuses, say how it
-      says so &mdash; otherwise every invalid input is reported as a crash.</span></span></label>
-
-    ${rejects ? `
-    <div class="indent">
-      <label>Messages that mean &ldquo;I rejected this&rdquo;</label>
-      <p class="muted" style="font-size:12.5px;margin:2px 0 6px">One per line, matched against
-        the output as a regular expression. Copy a real error message from your system.</p>
-      ${patternRows("rejection_patterns", "SyntaxError")}
-      <button class="ghost small" onclick="addPattern('rejection_patterns')">Add another message</button>
-    </div>` : ""}
-
-    <details ${(o.crash_patterns || []).length || (o.expected_exit_codes || []).length ? "open" : ""}>
-      <summary>Advanced</summary>
-      <div class="indent">
-        <label>Messages that always mean a real failure</label>
-        <p class="muted" style="font-size:12.5px;margin:2px 0 6px">Checked <em>before</em> the
-          rejection messages above, so a broad rejection rule cannot hide a genuine bug.</p>
-        ${patternRows("crash_patterns", "java.lang.NullPointerException")}
-        <button class="ghost small" onclick="addPattern('crash_patterns')">Add another message</button>
-        <div style="margin-top:10px">
-          <label for="exit-codes">Exit codes that are not failures</label>
-          <input id="exit-codes" type="text" placeholder="0, 1"
-            value="${esc((o.expected_exit_codes || []).join(", "))}">
-        </div>
-      </div>
-    </details>
-
-    <div class="actions">
-      <button class="ghost" onclick="stashStrategy(); gotoStep('generators')">Back</button>
-      <button class="primary" onclick="commitStrategy()">Continue</button>
+    <div class="schecks" role="group" aria-label="Checks">
+      ${STRAT_CHECKS.map(c => {
+        const on = c.floor || st[c.id], dis = c.floor || (c.id === "diff" && !multi);
+        return `<label class="scheck tc-${c.tone} ${on ? "on" : ""} ${dis && !c.floor ? "dis" : ""}">
+          <span class="stile ${c.tone}" aria-hidden="true">${ICONS[c.icon]}</span>
+          <span class="scheck-t">${c.t}</span>
+          <input type="checkbox" ${on ? "checked" : ""} ${dis ? "disabled" : ""} onchange="stratSet('${c.id}', this.checked)" aria-label="${esc(c.t)}${c.floor ? " (always on)" : ""}">
+          <span class="box" aria-hidden="true">${ICONS.check}</span>
+          ${hint("hint-" + c.id, c.tip)}</label>`; }).join("")}
     </div>
+
+    <section class="sut-sec" aria-labelledby="cfg-h">
+      <h4 id="cfg-h">Configuration</h4>
+      <p class="muted inp-sub">Set up the selected checks. Use the defaults or customise as needed.</p>
+      <div class="srows">${STRAT_CHECKS.map(c => {
+        const on = c.floor || st[c.id], open = !!st.open[c.id] || (c.floor && st.open[c.id]);
+        const dis = c.id === "diff" && !multi;
+        return `<div class="srow ${on ? "" : "off"}">
+          <div class="srow-h">
+            <button type="button" class="switch" role="switch" aria-checked="${on}" ${c.floor || dis ? "disabled" : ""}
+              aria-label="${esc(c.t)}${c.floor ? " (always on)" : ""}" onclick="stratSet('${c.id}', ${!on})"><span></span></button>
+            <span class="stile ${c.tone}" aria-hidden="true">${ICONS[c.icon]}</span>
+            <strong class="srow-t">${c.t}${c.floor ? ` <span class="tag">Always on</span>` : ""}</strong>
+            <span class="schips">${stratChips(c)}</span>
+            <button type="button" class="chev ${open ? "open" : ""}" aria-expanded="${open}" aria-label="${open ? "Hide" : "Show"} settings for ${esc(c.t)}"
+              onclick="stratToggleRow('${c.id}')">${ICONS.chevron}</button>
+          </div>
+          ${open ? `<div class="srow-b">${stratDetail(c)}</div>` : ""}
+        </div>`; }).join("")}
+      </div>
+    </section>
+
     <div id="err"></div>
+    <div class="actions inp-actions">
+      <button type="button" class="ghost" onclick="stashStrat(); gotoStep('generators')">${ICONS.back} Back to Generators</button>
+      <button type="button" class="primary" onclick="commitStrategy()">Continue to Budget &amp; run ${ICONS.arrow}</button>
+    </div>
+   </div>
+
+   <aside class="sut-side" aria-label="Help">
+    ${st.tip ? `<div class="side-card tipcard"><div class="gsel-h"><h4><span class="h-ico amber">${ICONS.bulb}</span> Quick tip</h4>
+        <button type="button" class="gx" onclick="stratDismissTip()" aria-label="Dismiss tip">&times;</button></div>
+      <p>Non-zero exit codes are not always crashes. Configure expected rejections to avoid false positives.</p></div>` : ""}
+    <div class="side-card">
+      <h4><span class="h-ico purple">${ICONS.doc}</span> Presets</h4>
+      ${Object.entries(STRATEGY_PRESETS).map(([id, p]) => `<button type="button" class="preset" onclick="stratPreset('${id}')">
+        <span><strong>${esc(p.t)}</strong><span class="muted">${esc(p.d)}</span></span>${ICONS.arrow}</button>`).join("")}
+    </div>
+    <div class="side-card">
+      <div class="gsel-h"><h4>Selected checks <span class="muted">(${active.length})</span></h4>
+        <button type="button" class="linkish" onclick="stratClear()">Clear all</button></div>
+      ${active.map(c => `<div class="gsel-row"><span class="stile sm ${c.tone}" aria-hidden="true">${ICONS[c.icon]}</span><strong>${c.t}</strong>
+        ${c.floor ? `<span class="muted">always on</span>` : `<button type="button" class="gx" onclick="stratSet('${c.id}', false)" aria-label="Turn off ${esc(c.t)}">&times;</button>`}</div>`).join("")}
+    </div>
+   </aside>
   </div>`;
 }
 
-function commitStrategy() { stashStrategy(); gotoStep("run"); }
+function commitStrategy() {
+  const st = stashStrat();
+  if (st.rej && !cleanPatterns(st.rejPats).length && !parseExitCodes(st.codes).length) {
+    st.open.rej = true; stepStrategy();
+    el("err").innerHTML = `<div class="note bad" role="alert">Expected rejections is on but nothing is set up. Add a message your system prints
+      when it refuses input, or turn the check off.</div>`;
+    return;
+  }
+  if (st.sig && !cleanPatterns(st.sigPats).length) {
+    st.open.sig = true; stepStrategy();
+    el("err").innerHTML = `<div class="note bad" role="alert">Failure signatures is on but has no patterns. Add one, or turn the check off.</div>`;
+    return;
+  }
+  gotoStep("run");
+}
 
 // ------------------------------------------------------------ step views
 
@@ -2828,6 +2990,7 @@ async function showInput(hash, btn) {
     S.draft = null;
     S.inp = null;
     S.gen = null;
+    S.strat = null;
     await loadRuns();
     renderSteps();
     go(initialView(S.project, S.runs));

@@ -1039,3 +1039,75 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .gref { display: inline-flex; align-items: center; gap: 5px; font-size: .72rem; color: var(--color-muted); cursor: help; }
 .gref svg { width: 12px; height: 12px; flex: none; }
 .gm-h .gref { margin: -2px 0 6px; }
+
+/* Step 4: testing strategy */
+.sut-badge.orange { background: #F59E0B; }
+.strat-title h3 { display: flex; align-items: center; gap: 4px; }
+.sut-head .preset-pick { margin-left: auto; position: relative; }
+.preset-pick .ghost { display: inline-flex; align-items: center; gap: 6px; }
+.preset-pick .ghost svg { width: 16px; height: 16px; }
+.preset-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 270px; padding: 6px;
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .18); }
+.preset-menu button { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; padding: 9px 10px;
+  background: none; border: 0; border-radius: 8px; color: var(--color-text); font: inherit; cursor: pointer; }
+.preset-menu button:hover, .preset-menu button:focus-visible { background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface)); }
+.preset-menu .muted, .preset .muted { font-size: .76rem; display: block; }
+/* The four checks. Red, green, blue, purple are the semantic tones; the box is the step's orange. */
+.stile { --t: #64748B; display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 11px;
+  color: var(--t); background: color-mix(in srgb, var(--t) 12%, var(--color-surface)); }
+.stile.red { --t: #EF4444; } .stile.green { --t: #16A34A; } .stile.blue { --t: #1687F8; } .stile.purple { --t: #9333EA; }
+.stile svg { width: 22px; height: 22px; } .stile.sm { width: 30px; height: 30px; border-radius: 9px; } .stile.sm svg { width: 17px; height: 17px; }
+.schecks { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 6px 0 22px; }
+.scheck { --tc: #64748B; position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 0;
+  padding: 14px; cursor: pointer; text-transform: none; letter-spacing: 0; color: var(--color-text);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); }
+.scheck.tc-red { --tc: #EF4444; } .scheck.tc-green { --tc: #16A34A; } .scheck.tc-blue { --tc: #1687F8; } .scheck.tc-purple { --tc: #9333EA; }
+.scheck.on { border-color: color-mix(in srgb, var(--tc) 55%, var(--color-border)); background: color-mix(in srgb, var(--tc) 7%, var(--color-surface)); }
+.scheck.dis:not(.on) { opacity: .6; cursor: not-allowed; }
+.scheck-t { font-weight: 700; font-size: .88rem; }
+.scheck input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: inherit; }
+.scheck .box { position: absolute; top: 12px; right: 12px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px;
+  border: 1.5px solid var(--color-border); background: var(--color-surface); color: transparent; }
+.scheck .box svg { width: 14px; height: 14px; display: block; stroke-width: 3.4; }
+.scheck input:checked + .box { background: #F59E0B; border-color: #F59E0B; color: #fff; }
+.scheck input:focus-visible + .box { outline: 2px solid #F59E0B; outline-offset: 2px; }
+.scheck .hint { position: absolute; top: 46px; right: 8px; margin: 0; z-index: 2; }
+.scheck .hint-box { left: auto; right: -6px; }
+.srows { display: grid; gap: 10px; }
+.srow { border: 1px solid var(--color-border); border-radius: var(--radius); background: var(--color-surface); }
+.srow.off .srow-t, .srow.off .stile { opacity: .6; }
+.srow-h { display: flex; align-items: center; gap: 12px; padding: 12px 14px; flex-wrap: wrap; }
+.srow-t { font-size: .92rem; min-width: 150px; }
+.srow-t .tag { font-weight: 500; margin-left: 6px; }
+.schips { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.schip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; font-size: .76rem; color: var(--color-muted);
+  background: color-mix(in srgb, var(--color-text) 5%, var(--color-surface)); border: 0; border-radius: 8px; font-family: inherit; }
+.schip svg { width: 14px; height: 14px; }
+.schip.add { cursor: pointer; } .schip.add:hover { color: var(--color-primary); }
+.chev { flex: none; width: 28px; height: 28px; padding: 4px; background: none; border: 0; color: var(--color-muted); cursor: pointer; border-radius: 8px; }
+.chev svg { display: block; width: 100%; height: 100%; transition: transform .15s; }
+.chev.open svg { transform: rotate(180deg); }
+.chev:hover { color: var(--color-text); }
+.switch { flex: none; position: relative; width: 40px; height: 22px; padding: 0; border: 0; border-radius: 99px; cursor: pointer;
+  background: color-mix(in srgb, var(--color-muted) 35%, var(--color-surface)); transition: background .15s; }
+.switch span { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch[aria-checked="true"] { background: #F59E0B; }
+.switch[aria-checked="true"] span { transform: translateX(18px); }
+.switch:disabled { cursor: not-allowed; opacity: .75; }
+.switch:focus-visible { outline: 2px solid #F59E0B; outline-offset: 2px; }
+.srow-b { padding: 4px 16px 16px; border-top: 1px solid var(--color-border); }
+.srow-b label { margin-top: 12px; }
+.srow-b p { margin: 4px 0 8px; font-size: .82rem; }
+.pat-row { flex-wrap: wrap; }
+.pat-row .sut-cmd { flex: 1; width: auto; }
+.pat-warn { flex-basis: 100%; font-size: .74rem; min-height: 0; }
+.pat-warn:empty { display: none; }
+.tipcard { background: color-mix(in srgb, #F59E0B 8%, var(--color-surface)); border-color: color-mix(in srgb, #F59E0B 30%, var(--color-border)); }
+.preset { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; margin-top: 8px; padding: 10px 12px;
+  text-align: left; background: var(--color-surface); color: var(--color-text); font: inherit; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: var(--radius); }
+.preset:hover { border-color: var(--color-primary); }
+.preset svg { width: 16px; height: 16px; color: var(--color-muted); flex: none; }
+.preset strong { display: block; font-size: .86rem; }
+@media (max-width: 720px) { .schips { margin-left: 0; width: 100%; } .sut-head .preset-pick { margin-left: 0; } }

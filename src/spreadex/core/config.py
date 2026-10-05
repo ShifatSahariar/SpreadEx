@@ -258,6 +258,8 @@ def load_config(path: Path | None = None) -> Config:
             f"{path}: `oracle.type: differential` needs at least two entries under `sut.targets`."
         )
 
+    _check_oracle(oracle, path)
+
     b = raw.get("budget") or {}
     budget = BudgetConfig(
         generation_s=_parse_duration(b.get("generation", 60)),
@@ -306,6 +308,40 @@ def _generator_options(value, path) -> dict:
                 raise ConfigError(f"{path}: generator_options.{gid}.{key} must be true or false.")
         out[str(gid)] = dict(opts)
     return out
+
+
+def _check_oracle(oracle: dict, path) -> None:
+    """Catch a malformed oracle while the user can still fix it.
+
+    Patterns are compiled the way the oracle will use them (case-insensitive, multiline). An invalid
+    one used to surface only when the first execution reached the judge, after generation had
+    already spent its budget, as a bare `re.error` from inside a worker.
+    """
+    for key in ("rejection_patterns", "crash_patterns"):
+        value = oracle.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list):
+            raise ConfigError(f"{path}: oracle.{key} must be a list of regular expressions, "
+                              f"one per entry.\n  Fix: write it as [\"first\", \"second\"].")
+        for i, pat in enumerate(value):
+            if not isinstance(pat, str):
+                raise ConfigError(f"{path}: oracle.{key}[{i}] must be text, not {type(pat).__name__}.")
+            if not pat.strip():
+                raise ConfigError(f"{path}: oracle.{key}[{i}] is empty, and an empty pattern matches "
+                                  f"every output.\n  Fix: remove it, or write the message to look for.")
+            try:
+                re.compile(pat, re.IGNORECASE | re.MULTILINE)
+            except re.error as exc:
+                raise ConfigError(
+                    f"{path}: oracle.{key}[{i}] {pat!r} is not a valid regular expression: {exc}.\n"
+                    f"  Fix: escape special characters with a backslash, e.g. \\( for a literal bracket.") from exc
+    codes = oracle.get("expected_exit_codes")
+    if codes is not None:
+        if not isinstance(codes, list):
+            raise ConfigError(f"{path}: oracle.expected_exit_codes must be a list, e.g. [0, 1].")
+        if not all(isinstance(c, int) and not isinstance(c, bool) for c in codes):
+            raise ConfigError(f"{path}: oracle.expected_exit_codes must be whole numbers, e.g. [0, 1].")
 
 
 def _semantics(value, path) -> "Semantics":
