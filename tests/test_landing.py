@@ -114,7 +114,7 @@ def test_every_icon_inherits_colour_and_is_hidden_from_assistive_tech():
     assert 'stroke="currentColor"' in APP
     assert 'aria-hidden="true"' in APP
     assert "focusable=\"false\"" in APP, "IE/Edge focus the SVG without this"
-    for name in ("home", "folder", "sliders", "play", "download", "gear",
+    for name in ("home", "folder", "sliders", "play", "chart", "gear",
                  "playSolid", "book", "arrow", "chart"):
         assert f"{name}:" in icons, f"ICONS.{name} is missing"
 
@@ -526,7 +526,7 @@ def test_each_card_has_the_design_s_parts_and_a_properly_wired_tooltip():
     assert 'aria-expanded="false"' in card and 'role="tooltip"' in card
     # The tooltip must directly follow its button, or the `+` selector cannot see it.
     assert card.index("sc-info") < card.index("sc-tip")
-    assert "ICONS.info" in card
+    assert "ICONS.help" in card
 
 
 def test_the_tooltip_can_be_dismissed_without_moving_the_pointer():

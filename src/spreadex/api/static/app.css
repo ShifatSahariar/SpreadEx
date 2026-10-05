@@ -294,8 +294,14 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .sut-kind:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .sut-kind.on { border-color: var(--color-primary); border-width: 2px; padding: 15px 9px 13px;
   background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface)); }
-.sk-ico { width: 30px; height: 30px; color: var(--color-primary); }
-.sk-ico svg { width: 100%; height: 100%; }
+/* Icon tiles: 44px, 12px radius, a very light tint, the stronger shade for the glyph. */
+.tile { --t: #64748B; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px;
+  color: var(--t); background: color-mix(in srgb, var(--t) 11%, var(--color-surface)); }
+.tile.green { --t: #16A34A; } .tile.blue { --t: #1687F8; } .tile.purple { --t: #9333EA; }
+.tile.orange { --t: #F59E0B; } .tile.slate { --t: #64748B; }
+.tile svg { width: 24px; height: 24px; }
+.side-card h4 { display: flex; align-items: center; gap: 8px; }
+.side-card h4 svg { width: 18px; height: 18px; color: var(--color-muted); }
 .sk-t { font-weight: 600; font-size: .9rem; }
 .sk-d { color: var(--color-muted); font-size: .76rem; line-height: 1.35; }
 .sk-ok { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%;
@@ -335,11 +341,10 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .res.warn { border-color: var(--color-warn-bd); background: var(--color-warn-lt); }
 .res.bad { border-color: var(--color-error-bd); background: var(--color-error-lt); }
 .res, .res.warn, .res.bad { color: var(--color-text); }
-.res-ico { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
-  background: var(--color-primary); color: #fff; padding: 7px; }
-.res.warn .res-ico { background: var(--color-warn); }
-.res.bad .res-ico { background: var(--color-error); }
-.res-ico svg { width: 100%; height: 100%; stroke-width: 3; }
+.res-ico { flex: none; width: 32px; height: 32px; color: var(--color-success); }
+.res.warn .res-ico { color: var(--color-warn); }
+.res.bad .res-ico { color: var(--color-error); }
+.res-ico svg { width: 100%; height: 100%; }
 .res-main { flex: 1; min-width: 0; }
 .res-t { font-weight: 700; font-size: 1rem; }
 .res-s { font-size: .85rem; color: var(--color-muted); margin-top: 2px; }

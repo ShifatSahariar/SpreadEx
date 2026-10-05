@@ -74,7 +74,7 @@ def test_the_four_run_styles_and_the_mockup_copy_are_present():
                  "will be replaced with each generated test file", "Test connection",
                  "Runs a quick check with a sample input", "Advanced options",
                  "System ready!", "SpreadEx successfully executed a test input.",
-                 "View details", "Continue to Inputs", "What happens here?", "Tips"):
+                 "View details", "Continue to Inputs", "How it works", "Tips"):
         assert text in JS, text
 
 
@@ -136,6 +136,8 @@ def test_layout_is_two_columns_that_stack_and_dark_mode_uses_tokens():
     assert re.search(r"\.sut\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 320px", CSS)
     assert "@media (max-width: 1080px) { .sut { grid-template-columns: minmax(0, 1fr); } }" in CSS
     sut_css = CSS[CSS.index("/* Step 1: connect"):CSS.index(".note.good {")]
+    for palette in ("#16A34A", "#1687F8", "#9333EA", "#F59E0B", "#64748B"):  # the icon system's tones
+        sut_css = sut_css.replace(palette, "")
     assert not re.search(r"#[0-9a-fA-F]{3,6}\b", sut_css.replace("#fff", "")), "hard-coded colour"
 
 
@@ -145,3 +147,40 @@ def test_css_braces_still_balance():
 
 def test_tabs_and_newlines_separate_arguments_like_spaces():
     assert _node("api.splitCommand('a\\tb\\nc').argv") == ["a", "b", "c"]
+
+
+# ------------------------------------------------------------ icon system
+
+def test_icons_are_vendored_lucide_not_fetched():
+    assert "Lucide (ISC)" in JS and "const BRANDS" in JS
+    assert not re.search(r"(unpkg|jsdelivr|cdnjs)[^\"']*lucide", (STATIC / "index.html").read_text() + JS)
+
+
+def test_icons_use_the_two_pixel_round_stroke_and_no_old_default():
+    i = JS[JS.index("const I = "):JS.index("//: The brand mark")]
+    assert "o.w || 2" in i and "1.8" not in i and 'stroke-linecap="round"' in i
+
+
+def test_the_status_and_help_glyphs_the_system_names_exist():
+    icons = JS[JS.index("const ICONS = {"):JS.index("const BRANDS")]
+    for key in ("info", "success", "alert", "error", "info", "help", "bulb", "external", "copy",
+                "example", "grid", "terminal", "doc", "sliders", "shield", "playOutline"):
+        assert re.search(rf"\n  {key}: I\(", icons), key
+
+
+def test_run_style_cards_use_tones_and_brand_marks():
+    for pair in ('icon: "java", tone: "orange"', 'icon: "python", tone: "blue"',
+                 'icon: "terminal", tone: "green"', 'icon: "grid", tone: "slate"'):
+        assert pair in JS, pair
+    for hexv in ("#16A34A", "#1687F8", "#9333EA", "#F59E0B", "#64748B"):
+        assert hexv in CSS, hexv
+    assert re.search(r"\.tile\s*\{[^}]*width: 44px; height: 44px; border-radius: 12px", CSS)
+
+
+def test_every_icon_the_ui_asks_for_is_defined():
+    icons = JS[JS.index("const ICONS = {"):JS.index("const BRANDS")]
+    defined = set(re.findall(r"\n  (\w+): I\(", icons))
+    used = set(re.findall(r"ICONS\.(\w+)", JS))
+    used |= set(re.findall(r'data-icon="(\w+)"', (STATIC / "index.html").read_text()))
+    used |= set(re.findall(r'icon: "(\w+)"', JS)) - {"java", "python", "node"}
+    assert not used - defined, used - defined
