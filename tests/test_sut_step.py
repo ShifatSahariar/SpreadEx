@@ -184,3 +184,16 @@ def test_every_icon_the_ui_asks_for_is_defined():
     used |= set(re.findall(r'data-icon="(\w+)"', (STATIC / "index.html").read_text()))
     used |= set(re.findall(r'icon: "(\w+)"', JS)) - {"java", "python", "node"}
     assert not used - defined, used - defined
+
+
+# --------------------------------------------------- stale / missing token
+
+def test_a_401_is_flagged_and_rendered_as_recoverable_not_as_a_raw_error():
+    assert "err.unauthorized = r.status === 401" in JS
+    card = JS[JS.index("function failureCard"):JS.index("const esc = s =>")]
+    assert "e.unauthorized || !TOKEN" in card and "spreadex ui" in card and 'role="alert"' in card
+
+
+def test_step_failures_go_through_the_shared_card():
+    assert "el(\"view\").innerHTML = failureCard(e);" in JS
+    assert "holder.innerHTML = failureCard(e)" in JS

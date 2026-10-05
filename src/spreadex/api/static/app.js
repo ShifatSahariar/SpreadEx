@@ -22,8 +22,27 @@ async function api(path, body) {
   }
   const r = await fetch(path, opts);
   const payload = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(payload.error || r.statusText);
+  if (!r.ok) {
+    const err = new Error(payload.error || r.statusText);
+    err.unauthorized = r.status === 401;
+    throw err;
+  }
   return payload;
+}
+// One place decides how a failed request looks. A 401 is not a bug in the step the
+// user clicked: the tab's token is missing, or belongs to a server that has since
+// been restarted (an unconfigured project gets a fresh token on every launch).
+function failureCard(e) {
+  if (e && (e.unauthorized || !TOKEN)) {
+    return `<div class="card" role="alert"><h3>This tab can no longer reach SpreadEx</h3>
+      <p class="why">${TOKEN
+        ? "Its access token is out of date &mdash; most likely <span class=\"mono\">spreadex ui</span> was restarted since this tab was opened."
+        : "It was opened without an access token."}
+        Your work in the terminal is safe. Open the link <span class="mono">spreadex ui</span>
+        printed (it ends in <span class="mono">?token=&hellip;</span>), or run it again to get a fresh tab.</p>
+      <pre>spreadex ui</pre></div>`;
+  }
+  return `<div class="card"><div class="note bad">${esc((e && e.message) || e)}</div></div>`;
 }
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const num = n => (n ?? 0).toLocaleString();
@@ -762,7 +781,7 @@ function renderStep() {
                strategy: stepStrategy, run: stepRun }[step];
   Promise.resolve(fn(() => mine === RENDER)).catch(e => {
     if (mine !== RENDER) return;   // we were superseded; its error is moot
-    el("view").innerHTML = `<div class="card"><div class="note bad">${esc(e.message || e)}</div></div>`;
+    el("view").innerHTML = failureCard(e);
   });
 }
 
@@ -1126,7 +1145,7 @@ async function toggleAssistant() {
   if (!ASSIST.open) { holder.innerHTML = ""; return; }
   if (!ASSIST.providers.length) {
     try { ASSIST.providers = (await api("/api/providers")).providers; }
-    catch (e) { holder.innerHTML = `<div class="card"><div class="note bad">${esc(e.message)}</div></div>`; return; }
+    catch (e) { holder.innerHTML = failureCard(e); return; }
   }
   paintAssistant();
 }
