@@ -78,24 +78,33 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 
 
 /* ------------------------------------------------------- wizard steps
-   One rounded panel holding five steps joined by short coloured links. Every
-   step has its own colour (the same four tones as the Get started cards); the
-   CURRENT step shows it -- outline, badge and wash -- so the highlight shifts
-   colour as you move through the wizard. The others keep a grey badge and
-   show their colour only in the icon tile and the link after them. */
+   One rounded panel holding five steps joined by short links. All five boxes
+   are the same size and the same neutral grey; only the CURRENT step is
+   coloured and a little larger. Each step has its own colour (the same four
+   tones as the Get started cards), so the highlight shifts colour as you move
+   through the wizard. */
 .steps { max-width: var(--content-max); margin-inline: auto; padding: 1rem var(--page-pad) 0; }
-.steps-row { position: relative; display: flex; align-items: stretch; margin: 0; padding: .4rem;
+.steps-row { --link-w: clamp(.5rem, 1.1vw, .9rem);
+  position: relative; display: flex; align-items: stretch; margin: 0; padding: .4rem;
   list-style: none; background: var(--color-surface); border: 1px solid var(--color-border);
   border-radius: 26px; box-shadow: var(--shadow); }
 .step-item { display: flex; align-items: center; flex: 1 1 0; min-width: 0; }
-.step-link { flex: none; width: clamp(.5rem, 1.1vw, .9rem); height: 5px; border-radius: 99px;
-  background: var(--tone); opacity: .85; }
+.step-link { flex: none; width: var(--link-w); height: 5px; border-radius: 99px;
+  background: color-mix(in srgb, var(--color-muted) 32%, var(--color-surface)); }
+/* Each step's width includes the link after it. The last step has no link, so
+   without this it ran a link-width wider than the other four (measured: 248px
+   against 240px) -- which read as "some boxes bigger". It reserves the space. */
+.step-item:last-child::after { content: ""; flex: none; width: var(--link-w); }
 
 .step { position: relative; display: flex; align-items: center; flex: 1; min-width: 0;
   align-self: stretch; padding: .4rem .3rem .4rem .3rem; border: 0; border-radius: 22px;
   background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
-  transition: background .15s; }
-.step[aria-current="step"] { background: color-mix(in srgb, var(--tone) 10%, var(--color-surface)); }
+  transition: background .15s, transform .18s; }
+/* Scaled rather than widened: a transform takes no space, so the other four
+   boxes do not shrink or shift (and their titles do not re-wrap) as the
+   highlight moves. z-index lifts it over the links either side. */
+.step[aria-current="step"] { background: color-mix(in srgb, var(--tone) 10%, var(--color-surface));
+  transform: scale(1.06); z-index: 2; }
 .step:focus-visible { outline: 2px solid var(--tone); outline-offset: 2px; }
 
 /* The badge straddles the card's left edge, as in the design. */
@@ -115,7 +124,9 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   background: color-mix(in srgb, var(--tone) 5%, var(--color-surface)); }
 
 .step-ico { display: grid; place-items: center; flex: none; width: 2rem; height: 2rem;
-  border-radius: 9px; color: var(--tone);
+  border-radius: 9px; color: var(--color-muted);
+  background: color-mix(in srgb, var(--color-muted) 14%, var(--color-surface)); }
+.step[aria-current="step"] .step-ico { color: var(--tone);
   background: color-mix(in srgb, var(--tone) 13%, var(--color-surface)); }
 .step-ico .ico { width: 1.1rem; height: 1.1rem; }
 .step-text { min-width: 0; }
@@ -630,6 +641,7 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 
 /* Respect a reader who has asked for less movement and less noise. */
 @media (prefers-reduced-motion: reduce) {
+  .step { transition: none; }
   .sc-tip { transition: none; transform: none; }
   .dashboard-home::after { display: none; }
   /* Hold the mark at its finished state rather than looping it. */

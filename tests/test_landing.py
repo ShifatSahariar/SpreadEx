@@ -627,12 +627,53 @@ def test_the_current_step_is_marked_for_assistive_technology_with_the_right_valu
     assert '<ol class="steps-row">' in _RENDER and "step-item" in _RENDER
 
 
-def test_a_link_joins_each_pair_of_steps_and_takes_the_earlier_step_s_colour():
-    assert "i < STEPS.length - 1" in _RENDER, "four links between five steps, none after the last"
+def test_a_neutral_link_joins_each_pair_of_steps():
+    """Four links between five steps, none after the last -- and grey. They used
+    to take the earlier step's colour, which made the bar look coloured
+    everywhere; only the current step is meant to be."""
+    assert "i < STEPS.length - 1" in _RENDER
     link = CSS[CSS.index(".step-link {"):]
     link = link[:link.index("}") + 1]
-    assert "background: var(--tone)" in link, link
-    assert 'class="step-item tone-${s.tone}"' in _RENDER, "the link inherits its step's tone"
+    assert "var(--color-muted)" in link and "var(--tone)" not in link, link
+    assert 'class="step-item tone-${s.tone}"' in _RENDER, "the current step still needs its tone"
+
+
+def test_all_five_boxes_are_exactly_the_same_size():
+    """Each step's width includes the link after it, and the last step has none,
+    so it ran a link-width wider than the rest -- measured 248px against 240px,
+    which read as "some boxes bigger". The last step reserves the link's width."""
+    assert "--link-w:" in CSS
+    assert ".step-item:last-child::after { content: \"\"; flex: none; width: var(--link-w); }" in CSS
+    link = CSS[CSS.index(".step-link {"):]
+    assert "width: var(--link-w)" in link[:link.index("}")], "the link and the reserved space must agree"
+    assert ".step-item { display: flex; align-items: center; flex: 1 1 0;" in CSS, (
+        "equal flex bases are what make equal boxes"
+    )
+
+
+def test_only_the_current_step_is_coloured():
+    """Inactive steps are neutral grey -- badge, icon tile and link. Colour is
+    how the bar says where you are, so it cannot also be decoration on the
+    other four."""
+    tile = CSS[CSS.index(".step-ico {"):]
+    tile = tile[:tile.index("}") + 1]
+    assert "var(--tone)" not in tile and "var(--color-muted)" in tile, tile
+    assert '.step[aria-current="step"] .step-ico { color: var(--tone);' in CSS
+    badge = CSS[CSS.index(".step .n {"):]
+    badge = badge[:badge.index("}") + 1]
+    assert "var(--tone)" not in badge and "var(--badge)" not in badge, "inactive badge must be grey"
+
+
+def test_the_current_step_is_a_little_bigger_without_moving_the_others():
+    """A transform takes no layout space, so the other four boxes neither shrink
+    nor shift, and their titles do not re-wrap, as the highlight moves. Widening
+    it instead would have squeezed 'System under test' back onto two lines."""
+    current = CSS[CSS.index('.step[aria-current="step"] {'):]
+    current = current[:current.index("}") + 1]
+    assert "transform: scale(1.06)" in current and "z-index: 2" in current, current
+    assert "width:" not in current and "flex:" not in current, current
+    assert "transition: background .15s, transform .18s" in CSS
+    assert ".step { transition: none; }" in CSS, "and it must hold still for reduced motion"
 
 
 def test_the_current_step_shows_its_own_colour_so_the_highlight_shifts():
@@ -673,3 +714,20 @@ def test_the_step_bar_gives_way_gracefully_when_narrow():
         "a rebuilt row would otherwise snap back to the start on every step"
     )
     assert "prefers-reduced-motion: no-preference" in _RENDER
+
+
+def test_the_current_step_is_recentred_when_the_window_changes_width():
+    """The step has not changed, but where it sits has: a rotated phone, a
+    resized window. Debounced, because dragging an edge fires dozens of events."""
+    assert "function centreCurrentStep()" in APP
+    assert 'addEventListener("resize"' in APP and "clearTimeout(resizeTimer)" in APP
+    assert "setTimeout(centreCurrentStep, 120)" in APP
+
+
+def test_a_hidden_tab_scrolls_instantly_because_smooth_scroll_never_runs_there():
+    """Smooth scrolling is driven by animation frames, which a hidden tab does
+    not run. The scroll silently never happened: scrollLeft stayed 0 while an
+    instant scrollTo to the same target landed immediately."""
+    centre = APP[APP.index("function centreCurrentStep()"):APP.index("let resizeTimer")]
+    assert "!document.hidden" in centre
+    assert "prefers-reduced-motion: no-preference" in centre

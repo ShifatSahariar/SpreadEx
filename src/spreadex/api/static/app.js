@@ -427,17 +427,31 @@ function renderSteps() {
       </button>${i < STEPS.length - 1 ? '<span class="step-link" aria-hidden="true"></span>' : ""}
     </li>`).join("")}</ol>`;
 
-  // When the row is too narrow to show all five it scrolls; keep the current
-  // step in view rather than leaving it off to one side.
   const row = host.querySelector(".steps-row");
   row.scrollLeft = before;
-  const current = row.querySelector('[aria-current="step"]');
-  if (current && row.scrollWidth > row.clientWidth) {
-    const smooth = matchMedia("(prefers-reduced-motion: no-preference)").matches;
-    row.scrollTo({ left: current.offsetLeft - (row.clientWidth - current.offsetWidth) / 2,
-                   behavior: smooth ? "smooth" : "auto" });
-  }
+  centreCurrentStep();
 }
+
+// When the row is too narrow to show all five it scrolls; keep the current step
+// in view rather than leaving it off to one side. Also run when the window
+// changes width -- a rotated phone, a resized window -- because the step has not
+// changed but where it sits has.
+function centreCurrentStep() {
+  const row = document.querySelector("#steps .steps-row");
+  const current = row?.querySelector('[aria-current="step"]');
+  if (!current || row.scrollWidth <= row.clientWidth) return;
+  // Smooth scrolling is driven by animation frames, which a hidden tab does not
+  // run: the scroll would silently never happen. Nobody can see an animation in
+  // a hidden tab anyway, so there it just lands.
+  const smooth = !document.hidden && matchMedia("(prefers-reduced-motion: no-preference)").matches;
+  row.scrollTo({ left: current.offsetLeft - (row.clientWidth - current.offsetWidth) / 2,
+                 behavior: smooth ? "smooth" : "auto" });
+}
+let resizeTimer;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);                // a drag fires dozens; act once it settles
+  resizeTimer = setTimeout(centreCurrentStep, 120);
+});
 
 // ------------------------------------------------------ config helpers
 
