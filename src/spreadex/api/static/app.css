@@ -6,6 +6,7 @@
   --logo-red: #e62c2d; --logo-orange: #ffa721; --logo-green: #7dd63e;
   --color-bg: #f5f7fb; --color-surface: #ffffff; --color-border: #e2e8f0;
   --color-text: #111827; --color-muted: #6b7280;
+  --code-fg: #4a3b32; --code-bg: #fbf8f3; --code-bd: #eadfd2; --code-ph: #b3a597;
   --color-success: #16a34a; --color-success-lt: #f0fdf4; --color-success-bd: #bbf7d0;
   --color-warn: #b45309; --color-warn-lt: #fffbeb; --color-warn-bd: #fde68a;
   --color-error: #dc2626; --color-error-lt: #fef2f2; --color-error-bd: #fecaca;
@@ -23,6 +24,7 @@
     --color-primary-lt: #0f2a1b; --color-primary-bd: #1f5134;
     --color-bg: #0f1115; --color-surface: #171a20; --color-border: #272b33;
     --color-text: #e8eaed; --color-muted: #9aa0a9;
+    --code-fg: #f0e4d3; --code-bg: #1d1a17; --code-bd: #3a322b; --code-ph: #7d7064;
     --color-success: #4ade80; --color-success-lt: #11271a; --color-success-bd: #1f5134;
     --color-warn: #f59e0b; --color-warn-lt: #2a1f08; --color-warn-bd: #4d3a10;
     --color-error: #f87171; --color-error-lt: #2a1314; --color-error-bd: #5a2224;
@@ -35,6 +37,7 @@
     --color-primary-lt: #0f2a1b; --color-primary-bd: #1f5134;
     --color-bg: #0f1115; --color-surface: #171a20; --color-border: #272b33;
     --color-text: #e8eaed; --color-muted: #9aa0a9;
+    --code-fg: #f0e4d3; --code-bg: #1d1a17; --code-bd: #3a322b; --code-ph: #7d7064;
     --color-success: #4ade80; --color-success-lt: #11271a; --color-success-bd: #1f5134;
     --color-warn: #f59e0b; --color-warn-lt: #2a1f08; --color-warn-bd: #4d3a10;
     --color-error: #f87171; --color-error-lt: #2a1314; --color-error-bd: #5a2224;
@@ -307,13 +310,20 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 :root[data-theme="dark"] .tile.big.slate img { filter: brightness(1.6); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tile.big.slate img { filter: brightness(1.6); } }
 .side-card h4 { display: flex; align-items: center; gap: 8px; }
-.side-card h4 svg { width: 18px; height: 18px; color: var(--color-muted); }
+.side-card h4 svg { width: 18px; height: 18px; }
+.h-ico { display: inline-grid; place-items: center; line-height: 0; }
+.h-ico.blue { color: #1687F8; } .h-ico.purple { color: #9333EA; } .h-ico.green { color: #16A34A; }
+/* Tips: a lit bulb -- amber with a soft glow, the one icon allowed to shine. */
+.h-ico.amber { color: #F59E0B; filter: drop-shadow(0 0 5px rgba(245, 158, 11, .55)); }
+.side-card h4 .h-ico svg { color: inherit; }
+.side-hero { padding: 0; overflow: hidden; background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface)); }
+.side-hero svg { display: block; width: 100%; height: auto; }
 .sk-t { font-weight: 600; font-size: .9rem; }
 .sk-d { color: var(--color-muted); font-size: .76rem; line-height: 1.35; }
 .sk-ok { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%;
   background: var(--color-primary); color: #fff; display: none; padding: 3px; }
-.sut-kind.on .sk-ok { display: block; }
-.sk-ok svg { width: 100%; height: 100%; stroke-width: 3.2; }
+.sut-kind.on .sk-ok { display: grid; place-items: center; }
+.sk-ok svg { display: block; width: 100%; height: 100%; stroke-width: 3.2; }
 .sut-lab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .sut-lab label { margin: 0; text-transform: none; letter-spacing: 0; font-size: .95rem;
   font-weight: 600; color: var(--color-text); }
@@ -323,7 +333,15 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .sut-pill { font-size: .75rem; color: var(--color-muted); background: var(--color-bg);
   border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 10px; }
 .sut-pill code { color: var(--color-primary); font-weight: 600; }
-.sut-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88rem; }
+/* Anything the user types as a command or path is code: monospace, a warm off-black /
+   off-white (never pure), and one weight heavier than body text so it reads as input. */
+.sut input.sut-cmd, .sut input#sut-cwd, .sut textarea#sut-env, .sut input#corpus, .sut input.x-cmd,
+.sut .ex-code code, .sut .ex-block code, .sut .res-facts .mono {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 500; color: var(--code-fg); }
+.sut input.sut-cmd, .sut input#sut-cwd, .sut textarea#sut-env, .sut input#corpus { background: var(--code-bg); border-color: var(--code-bd); font-size: .88rem; }
+.sut input.sut-cmd::placeholder, .sut input#sut-cwd::placeholder, .sut textarea#sut-env::placeholder, .sut input#corpus::placeholder { color: var(--code-ph); font-weight: 400; }
+.ex-code { background: var(--code-bg); border-color: var(--code-bd); }
 .sut-extra { display: flex; gap: 8px; margin-top: 8px; }
 .sut-extra .x-name { flex: 0 0 120px; }
 .sut-compare { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline;
@@ -338,7 +356,7 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
   font-size: .9rem; color: var(--color-text); }
 .sut-adv .muted { font-size: .78rem; }
 .sut-adv-body { padding: 4px 16px 16px; border-top: 1px solid var(--color-border); }
-.sut-adv-body textarea { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: .85rem; }
+.sut-adv-body textarea { width: 100%; font-size: .85rem; }
 .sut-check { display: flex !important; align-items: center; gap: 8px; text-transform: none !important;
   letter-spacing: 0 !important; font-size: .88rem !important; color: var(--color-text) !important; margin-top: 14px; }
 .sut-note { display: block; margin-top: 4px; font-size: .74rem; }
@@ -398,8 +416,8 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .inp-g.on { border: 2px solid var(--color-primary); padding: 9px 11px; }
 .inp-ok { display: none; margin-left: auto; width: 20px; height: 20px; border-radius: 50%; padding: 3px;
   background: var(--color-primary); color: #fff; flex: none; }
-.inp-g.on .inp-ok { display: block; }
-.inp-ok svg { width: 100%; height: 100%; stroke-width: 3.2; }
+.inp-g.on .inp-ok { display: grid; place-items: center; }
+.inp-ok svg { display: block; width: 100%; height: 100%; stroke-width: 3.2; }
 .inp-picked { margin-top: 10px; font-size: .8rem; }
 .inp-up { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
 .inp-up input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }

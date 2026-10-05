@@ -793,13 +793,13 @@ function renderStep() {
 // Presets only prefill the command and the example shown on the right; the
 // user's text is never overwritten once they have typed something of their own.
 const SUT_KINDS = [
-  { id: "cli",    t: "Executable",     d: "A compiled program or binary", img: "cli", icon: "terminal", tone: "green",
+  { id: "cli",    t: "Executable",     d: "A command-line program that accepts an input file.", img: "cli", icon: "terminal", tone: "green",
     cmd: "./your-parser {input}" },
-  { id: "jar",    t: "Java / JVM",     d: "JAR, class or JVM-based program", img: "jar", icon: "java", tone: "orange",
+  { id: "jar",    t: "Java / JVM",     d: "Run a JAR or Java class with your JDK.", img: "jar", icon: "java", tone: "orange",
     cmd: "java -jar your-tool.jar {input}" },
-  { id: "script", t: "Script / Runtime", d: "Python, Node.js, Ruby and more", img: "script", icon: "python", tone: "blue",
+  { id: "script", t: "Script / Runtime", d: "Python, Node.js, Ruby, or another interpreter.", img: "script", icon: "python", tone: "blue",
     cmd: "python3 your_parser.py {input}" },
-  { id: "other",  t: "Custom command", d: "Any command that runs your program", img: "other", icon: "grid", tone: "slate",
+  { id: "other",  t: "Custom command", d: "Define the complete execution command.", img: "other", icon: "grid", tone: "slate",
     cmd: "" },
 ];
 
@@ -810,10 +810,24 @@ const SUT_EXAMPLES = [
   { id: "other",  t: "Custom",       code: "./run-my-tool.sh {input}" },
 ];
 
+
+// The terminal-and-document picture above the help column. Decorative; colours that must
+// follow the theme come from tokens, the terminal itself stays dark in both.
+const SUT_ART = `<svg viewBox="0 0 320 170" role="presentation" focusable="false">
+  <path d="M30 96c-10-38 24-70 64-62 34-30 96-24 112 10 40-6 76 24 66 60-8 30-40 46-76 40-40 30-110 26-136-8-20-2-28-16-30-40z" fill="#16A34A" opacity=".12"/>
+  <ellipse cx="226" cy="64" rx="70" ry="46" fill="#1687F8" opacity=".12"/>
+  <rect x="78" y="40" width="150" height="92" rx="10" fill="#0F1F2E"/>
+  <circle cx="92" cy="54" r="3" fill="#F59E0B"/><circle cx="102" cy="54" r="3" fill="#16A34A"/><circle cx="112" cy="54" r="3" fill="#1687F8"/>
+  <path d="M96 82l14 10-14 10" fill="none" stroke="#22C55E" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M120 104h22" stroke="#22C55E" stroke-width="6" stroke-linecap="round"/>
+  <rect x="190" y="84" width="62" height="70" rx="10" fill="var(--color-surface)" stroke="#1687F8" stroke-width="4"/>
+  <path d="M204 108h34M204 122h34M204 136h22" stroke="#1687F8" stroke-width="5" stroke-linecap="round"/>
+</svg>`;
+
 const SUT_TIPS = [
-  "Use the exact command you would type in a terminal.",
-  "Keep {input} where the test file path should go.",
-  "Use absolute paths if the command lives outside this project.",
+  "Use {input} where the test file path should go.",
+  "You can configure advanced options if needed.",
+  "Failure detection and oracles are configured later in Testing strategy.",
 ];
 
 function sutDraft() {
@@ -988,7 +1002,7 @@ function stepSut() {
     <header class="sut-head">
       <span class="sut-badge" aria-hidden="true">1</span>
       <div><h3>Connect your system under test</h3>
-        <p class="why">Tell SpreadEx how to run the program you want to test.</p></div>
+        <p class="why">Tell SpreadEx how to run one test input against your program. We'll verify the command before configuring input generation.</p></div>
     </header>
 
     <section class="sut-sec" aria-labelledby="sut-q">
@@ -1048,19 +1062,20 @@ function stepSut() {
    </div>
 
    <aside class="sut-side" aria-label="Help">
+    <div class="side-card side-hero" aria-hidden="true">${SUT_ART}</div>
     <div class="side-card">
-      <h4>${ICONS.book} How it works</h4>
-      <p>SpreadEx runs your program once for every generated input, then watches how it behaves &mdash; exit code, output and time &mdash; to find the inputs worth a closer look.</p>
+      <h4><span class="h-ico blue">${ICONS.book}</span> What happens here?</h4>
+      <p>Provide the command to run your program with one test input. SpreadEx will run a small test to verify the setup before you configure inputs.</p>
     </div>
     <div class="side-card">
-      <h4>${ICONS.example} Examples</h4>
+      <h4><span class="h-ico purple">${ICONS.example}</span> Examples</h4>
       <div class="ex-tabs" role="tablist">${SUT_EXAMPLES.map(x => `<button type="button" role="tab"
         aria-selected="${x.id === ex.id}" class="${x.id === ex.id ? "on" : ""}" onclick="sutExampleTab('${x.id}')">${x.t}</button>`).join("")}</div>
       <div class="ex-code"><code>${esc(ex.code)}</code>
         <button type="button" class="ex-copy" onclick="copyExample(this)" aria-label="Copy command">${ICONS.copy}</button></div>
     </div>
     <div class="side-card">
-      <h4>${ICONS.bulb} Tips</h4>
+      <h4><span class="h-ico amber">${ICONS.bulb}</span> Tips</h4>
       <ul class="tips-list">${SUT_TIPS.map(t => `<li><span aria-hidden="true">${ICONS.check}</span>${esc(t)}</li>`).join("")}</ul>
     </div>
    </aside>
@@ -1402,25 +1417,25 @@ function paintInputs() {
    </div>
 
    <aside class="sut-side" aria-label="Help">
-    <div class="side-card inp-hero" aria-hidden="true">${INP_ART}</div>
+    <div class="side-card inp-hero side-hero" aria-hidden="true">${INP_ART}</div>
     <div class="side-card">
-      <h4>${ICONS.book} What are input specifications?</h4>
+      <h4><span class="h-ico blue">${ICONS.book}</span> What are input specifications?</h4>
       <p>An input specification tells SpreadEx what valid test inputs for your program look like. It usually consists of a grammar and, optionally, semantic constraints.</p>
     </div>
     <div class="side-card">
-      <h4>${ICONS.example} Example grammars</h4>
+      <h4><span class="h-ico purple">${ICONS.example}</span> Example grammars</h4>
       <div class="ex-tabs" role="tablist">${INP_EXAMPLES.map(x => `<button type="button" role="tab"
         aria-selected="${x.id === ex.id}" class="${x.id === ex.id ? "on" : ""}" onclick="inpExampleTab('${x.id}')">${x.t}</button>`).join("")}</div>
       <div class="ex-code ex-block"><pre><code>${esc(ex.code)}</code></pre>
         <button type="button" class="ex-copy" onclick="copyInpExample(this)" aria-label="Copy example">${ICONS.copy}</button></div>
     </div>
     <div class="side-card">
-      <h4>${ICONS.grid} Supported formats</h4>
+      <h4><span class="h-ico green">${ICONS.grid}</span> Supported formats</h4>
       <p>SpreadEx reads and normalises grammars written as:</p>
       <div class="chips">${INP_FORMATS.map(f => `<span class="chip">${f}</span>`).join("")}</div>
     </div>
     <div class="side-card">
-      <h4>${ICONS.bulb} Tips</h4>
+      <h4><span class="h-ico amber">${ICONS.bulb}</span> Tips</h4>
       <ul class="tips-list">${INP_TIPS.map(t => `<li><span aria-hidden="true">${ICONS.check}</span>${esc(t)}</li>`).join("")}</ul>
     </div>
    </aside>

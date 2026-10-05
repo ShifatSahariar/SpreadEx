@@ -75,7 +75,7 @@ def test_the_four_run_styles_and_the_mockup_copy_are_present():
                  "will be replaced with each generated test file", "Test connection",
                  "Runs a quick check with a sample input", "Advanced options",
                  "System ready!", "SpreadEx successfully executed a test input.",
-                 "View details", "Continue to Inputs", "How it works", "Tips"):
+                 "View details", "Continue to Inputs", "What happens here?", "Tips"):
         assert text in JS, text
 
 
@@ -215,3 +215,26 @@ def test_the_run_style_artwork_ships_and_is_transparent():
 def test_tiles_are_theme_tinted_rounded_squares_with_a_dark_lift_for_slate():
     assert re.search(r"\.tile\.big \{ width: 56px; height: 56px; border-radius: 16px", CSS)
     assert CSS.count('.tile.big.slate img { filter: brightness(1.6)') == 2   # explicit dark + system dark
+
+
+# ------------------------------------------------ polish: tick, code, tips, hero
+
+def test_selected_badges_centre_their_tick_with_grid_not_a_baseline_gap():
+    assert ".sut-kind.on .sk-ok { display: grid; place-items: center; }" in CSS
+    assert ".inp-g.on .inp-ok { display: grid; place-items: center; }" in CSS
+    assert re.search(r"\.sk-ok svg \{ display: block;", CSS)
+
+
+def test_command_fields_are_warm_bolder_code_and_beat_the_global_input_rule():
+    assert "--code-fg: #4a3b32" in CSS and "--code-fg: #f0e4d3" in CSS   # light and dark, neither pure
+    rule = CSS[CSS.index(".sut input.sut-cmd, .sut input#sut-cwd"):]
+    rule = rule[:rule.index("}")]
+    assert "font-weight: 500" in rule and "ui-monospace" in rule and "var(--code-fg)" in rule
+    for pure in ("#000", "#fff", "#ffffff", "#000000"):
+        assert pure not in rule
+
+
+def test_tips_bulb_glows_amber_and_the_terminal_hero_is_present():
+    assert re.search(r"\.h-ico\.amber \{[^}]*#F59E0B[^}]*drop-shadow", CSS)
+    assert 'class="h-ico amber"' in JS
+    assert "const SUT_ART" in JS and "${SUT_ART}" in JS
