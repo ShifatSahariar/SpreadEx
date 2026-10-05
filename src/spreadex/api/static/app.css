@@ -920,3 +920,23 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
     padding-block: 1.5rem; margin-block: -1.5rem; }
   .workflow { width: 100%; min-width: 600px; }
 }
+
+/* Step 2: semantic guidance */
+.sem-card { padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface)); }
+.sem-head { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.sem-head .muted { font-size: .8rem; }
+.sem-card textarea { width: 100%; font-size: .88rem; }
+.sem-file { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 0; font-size: .85rem; }
+.sem-file .linkish { font-size: .82rem; }
+.res-ico-sm { display: inline-grid; width: 20px; height: 20px; color: var(--color-success); }
+.res-ico-sm svg { width: 100%; height: 100%; }
+.sem-note { margin-top: 10px; font-size: .8rem; }
+.sem-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; margin-top: 14px;
+  padding: 12px 14px; border: 1px solid var(--color-border); border-radius: var(--radius); font-size: .82rem;
+  background: var(--color-surface); }
+.sem-sum .muted { display: block; font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+.sem-line { display: flex; gap: 6px; align-items: flex-start; margin-top: 8px; font-size: .76rem; line-height: 1.35; color: var(--color-muted); }
+.sem-line svg { flex: none; width: 14px; height: 14px; margin-top: 1px; }
+.sem-line.ok { color: var(--color-success); } .sem-line.warn { color: var(--color-warn); }

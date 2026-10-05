@@ -75,10 +75,11 @@ class Campaign:
     def run(self, run_id: str | None = None, signal_override: str | None = None,
             jobs: int = 1) -> CampaignResult:
         cfg = self.config
-        run_id = run_id or new_run_id()
         signal_name = signal_override or cfg.signal
 
         with self.store as store:
+            # Only a generated id is made unique; an id the caller chose and reused stays an error.
+            run_id = run_id or store.unique_run_id(new_run_id())
             run_dir = store.start_run(
                 run_id,
                 config_hash=cfg.hash(),
@@ -94,6 +95,7 @@ class Campaign:
                 spreadex_version=__version__,
                 config_hash=cfg.hash(),
                 config=cfg.raw,
+                semantics=cfg.semantics_digest(),
                 seed=cfg.seed,
                 signal=signal_name,
                 started_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),

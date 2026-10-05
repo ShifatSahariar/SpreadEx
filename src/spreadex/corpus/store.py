@@ -192,6 +192,19 @@ class CorpusStore:
         (d / "logs").mkdir(parents=True, exist_ok=True)
         return d
 
+    def unique_run_id(self, base: str) -> str:
+        """`base`, or `base-2`, `base-3`... if a run already has it.
+
+        Ids are timestamps to the second, so two campaigns started in the same second
+        (a CI script, a retry) would otherwise collide on the UNIQUE key.
+        """
+        candidate, n = base, 1
+        while self.conn.execute("SELECT 1 FROM runs WHERE run_id=?", (candidate,)).fetchone() \
+                or (self.runs_dir / candidate).exists():
+            n += 1
+            candidate = f"{base}-{n}"
+        return candidate
+
     def finish_run(self, run_id: str, manifest_hash: str | None = None) -> None:
         self.conn.execute(
             "UPDATE runs SET finished_at=?, manifest_hash=? WHERE run_id=?",

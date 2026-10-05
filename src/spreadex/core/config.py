@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from ..spec.model import Semantics, SemanticsError, digest_semantics, load_semantics
+
 from ..exec.runner import Target, _parse_duration
 
 CONFIG_NAME = "spreadex.yaml"
@@ -42,6 +44,8 @@ class Config:
     #: e.g. ".js". Executed inputs are linked under a name ending in it, because many
     #: systems choose a front end from the extension. Empty keeps the bare hash name.
     input_extension: str = ""
+    #: Generator-independent semantic guidance and constraint files (see spec/).
+    semantics: "Semantics" = field(default_factory=lambda: Semantics())
     raw: dict = field(default_factory=dict)
     #: False for a directory that has no spreadex.yaml yet. The UI serves such a
     #: project so the setup wizard -- whose whole job is to write that file --
@@ -69,6 +73,10 @@ class Config:
     def is_differential(self) -> bool:
         return len(self.targets) > 1
 
+    def semantics_digest(self) -> dict:
+        """File names with content hashes, for the hash and the manifest."""
+        return digest_semantics(self.semantics, self.project_root)
+
     def hash(self) -> str:
         """Stable hash of the semantic configuration, for the manifest."""
         payload = {
@@ -86,6 +94,10 @@ class Config:
                        "execution_s": self.budget.execution_s,
                        "max_inputs": self.budget.max_inputs},
         }
+        # Editing the guidance changes the campaign's identity; only added when present, so
+        # every project without semantics keeps the hash it always had.
+        if self.semantics:
+            payload["semantics"] = self.semantics_digest()
         blob = json.dumps(payload, sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -263,8 +275,16 @@ def load_config(path: Path | None = None) -> Config:
         embedding=raw.get("embedding") or {"model": "tfidf"},
         seed=int(raw.get("seed", 42)),
         input_extension=_input_extension(raw.get("input_extension"), path),
+        semantics=_semantics(raw.get("semantics"), path),
         raw=raw,
     )
+
+
+def _semantics(value, path) -> "Semantics":
+    try:
+        return load_semantics(value, Path(path).parent)
+    except SemanticsError as exc:
+        raise ConfigError(f"{path}: {exc}") from exc
 
 
 def _input_extension(value, path) -> str:

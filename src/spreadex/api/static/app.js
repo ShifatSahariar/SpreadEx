@@ -592,6 +592,31 @@ function inferKind(argv) {
   return /^(\.{1,2}\/|\/)/.test(exe) ? "cli" : "other";
 }
 
+// What a generator can do with the semantic input the user supplied in step 2. Pure and
+// deterministic -- no model, no guess -- so the same inputs always give the same sentence.
+// `g` is a catalog row ({id, name, constraints}); `sem` is the saved semantics block.
+function semanticLine(g, sem, experimental) {
+  const native = (sem && sem.native) || {};
+  const hasGuidance = !!(sem && sem.guidance && sem.guidance.length);
+  const hasStructured = !!(sem && sem.structured);
+  const others = Object.keys(native).filter(id => id !== g.id);
+  if (!hasGuidance && !hasStructured && !Object.keys(native).length) return null;
+  if (native[g.id]) return { tone: "ok", text: `Your ${g.name} constraints are used as written.` };
+  if (!g.constraints) {
+    if (others.length) {
+      return { tone: "warn", text: `You supplied ${others.map(id => id === "isla" ? "ISLa" : id[0].toUpperCase() + id.slice(1)).join(" and ")}-specific constraints; ${g.name} cannot use them. It runs from the grammar alone.` };
+    }
+    return { tone: "muted", text: `Semantic input is not consumed by ${g.name}. It runs from the grammar alone.` };
+  }
+  const parts = [];
+  if (others.length) parts.push(`You supplied ${others.map(id => id === "isla" ? "ISLa" : id[0].toUpperCase() + id.slice(1)).join(" and ")}-specific constraints; ${g.name} cannot use them.`);
+  if (hasGuidance) parts.push(experimental
+    ? "Natural-language guidance is not consumed directly. Use Add constraints to draft them with the experimental assistant, then review."
+    : "Natural-language guidance is not consumed directly, and drafting constraints needs spreadex ui --experimental.");
+  if (hasStructured) parts.push("Structured constraints are stored but not interpreted yet.");
+  return { tone: others.length ? "warn" : "muted", text: parts.join(" ") };
+}
+
 const DURATION = /^\d+(\.\d+)?\s*[smh]?$/i;
 // ---- end command line helpers ----------------------------------------------
 
@@ -645,6 +670,15 @@ function buildYaml() {
   if (c.grammar?.source) lines.push("", "grammar:", `  source: ${c.grammar.source}`);
   if (c.corpus?.path) lines.push("", "corpus:", `  path: ${c.corpus.path}`);
   if (c.input_extension) lines.push("", `input_extension: ${q(c.input_extension)}`);
+  if (c.semantics) {
+    lines.push("", "semantics:");
+    if (c.semantics.guidance?.length) lines.push(`  guidance: [${c.semantics.guidance.map(q).join(", ")}]`);
+    if (c.semantics.structured) lines.push(`  structured: ${q(c.semantics.structured)}`);
+    if (c.semantics.native && Object.keys(c.semantics.native).length) {
+      lines.push("  native:");
+      Object.entries(c.semantics.native).forEach(([gid, p]) => lines.push(`    ${gid}: ${q(p)}`));
+    }
+  }
   if ((c.generation?.mode || "time") === "time" && !c.generation?.count) {
     lines.push("", "generation:", "  mode: time",
                `  per_generator: ${c.generation.per_generator || "30s"}`);
@@ -1264,6 +1298,161 @@ function chooseInpLang(id) {
   el("lang-btn")?.focus();
 }
 
+// ------------------------------------------------ step 2: semantic guidance
+
+function semInit() {
+  const saved = (cfg().semantics) || {};
+  const path = (saved.guidance || [])[0] || "";
+  return { text: path ? ((S.spec?.texts || {})[path] || "") : "", path, editing: false, busy: "", msg: "",
+           warnings: [], source: "", original: null, advancedOpen: !!(saved.structured || Object.keys(saved.native || {}).length) };
+}
+
+function semSaved() { return cfg().semantics || {}; }
+function setSemantics(next) {
+  const clean = {};
+  if (next.guidance && next.guidance.length) clean.guidance = next.guidance;
+  if (next.structured) clean.structured = next.structured;
+  if (next.native && Object.keys(next.native).length) clean.native = next.native;
+  S.config.semantics = Object.keys(clean).length ? clean : undefined;
+}
+
+function b64(buffer) {
+  let bin = ""; const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+function stashSem() {
+  const d = inpState().sem;
+  if (el("sem-text")) d.text = el("sem-text").value;
+  return d;
+}
+
+function semWrite() { const d = stashSem(); d.editing = !d.editing; d.msg = ""; paintInputs(); if (d.editing) el("sem-text")?.focus(); }
+
+async function semUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const d = stashSem();
+  d.busy = `Reading ${file.name}…`; d.msg = ""; d.warnings = []; paintInputs();
+  let res;
+  try {
+    const data = b64(await file.arrayBuffer());
+    res = await api("/api/spec/extract", { name: file.name, data });
+    if (res.ok) d.original = /\.(pdf|docx)$/i.test(file.name) ? { name: file.name, data } : null;
+  } catch (e) { res = { ok: false, error: e.message }; }
+  d.busy = "";
+  if (!res.ok) { d.msg = res.error; paintInputs(); return; }
+  d.text = res.text; d.warnings = res.warnings || []; d.source = `${file.name} · ${num(res.chars)} characters${res.pages ? ` · ${res.pages} pages` : ""}`;
+  d.editing = true; d.name = file.name.replace(/\.[^.]+$/, "") + ".md";
+  paintInputs();
+}
+
+async function semSave() {
+  const d = stashSem();
+  d.busy = "Saving…"; d.msg = ""; paintInputs();
+  let res;
+  try { res = await api("/api/spec/save", { kind: "guidance", name: d.name || "semantics.md", text: d.text, original: d.original }); }
+  catch (e) { res = { ok: false, error: e.message }; }
+  d.busy = "";
+  if (!res.ok) { d.msg = res.error; paintInputs(); return; }
+  d.path = res.written; d.editing = false; d.original = null; d.warnings = []; d.source = "";
+  setSemantics({ ...semSaved(), guidance: [res.written] });
+  paintInputs();
+}
+
+function semRemove() {
+  const d = stashSem();
+  d.path = ""; d.text = ""; d.editing = false;
+  setSemantics({ ...semSaved(), guidance: [] });
+  paintInputs();
+}
+
+async function semFileSlot(input, kind) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const d = stashSem();
+  if (file.size > 1_000_000) { d.msg = "That file is over 1 MB; keep rules short and focused."; paintInputs(); return; }
+  let res;
+  try { res = await api("/api/spec/save", { kind, name: file.name, text: await file.text() }); }
+  catch (e) { res = { ok: false, error: e.message }; }
+  if (!res.ok) { d.msg = res.error; paintInputs(); return; }
+  d.msg = "";
+  const cur = semSaved();
+  if (kind === "structured") setSemantics({ ...cur, structured: res.written });
+  else setSemantics({ ...cur, native: { ...(cur.native || {}), [kind.split(":")[1]]: res.written } });
+  paintInputs();
+}
+
+function semDropSlot(kind) {
+  stashSem();
+  const cur = semSaved();
+  if (kind === "structured") setSemantics({ ...cur, structured: "" });
+  else { const n = { ...(cur.native || {}) }; delete n[kind.split(":")[1]]; setSemantics({ ...cur, native: n }); }
+  paintInputs();
+}
+function toggleSemAdvanced(open) { inpState().sem.advancedOpen = open; }
+
+function semanticSection() {
+  const d = inpState().sem, saved = semSaved();
+  const docs = S.spec?.docs || { pdf: true, docx: true };
+  const missing = [!docs.pdf && "PDF", !docs.docx && "DOCX"].filter(Boolean);
+  const capable = (S.generators || []).filter(g => g.constraints && ["fandango", "isla"].includes(g.id));
+  const nativeRows = Object.entries(saved.native || {}).map(([gid, path]) => `<div class="sem-file">
+    <span class="mono">${esc(path)}</span><span class="muted">${esc(gid)}, used as written</span>
+    <button type="button" class="linkish" onclick="semDropSlot('native:${esc(gid)}')">Remove</button></div>`).join("");
+  return `<section class="sut-sec sem" aria-labelledby="sem-h">
+    <h4 id="sem-h"><span class="num" aria-hidden="true">3</span> Semantic guidance <span class="muted">(optional)</span>
+      ${hint("hint-sem", "Rules a grammar cannot say, such as a variable being declared before use. Written once here; step 3 shows what each generator can do with it.")}</h4>
+    <p class="muted inp-sub">Describe rules that go beyond syntax. Plain language is fine.</p>
+    <div class="sem-card">
+      <div class="sem-head"><span class="tile green" aria-hidden="true">${ICONS.doc}</span>
+        <div><strong>Natural language</strong> <span class="tag ok">Recommended</span>
+          <div class="muted">Write the rules, or upload documentation that states them.</div></div></div>
+      ${d.path && !d.editing ? `<div class="sem-file"><span class="res-ico-sm" aria-hidden="true">${ICONS.success}</span>
+        <span class="mono">${esc(d.path)}</span><span class="muted">${num(d.text.length)} characters</span>
+        <button type="button" class="linkish" onclick="semWrite()">Edit</button>
+        <button type="button" class="linkish" onclick="semRemove()">Remove</button></div>` : ""}
+      ${d.editing ? `<label for="sem-text">Guidance${d.source ? ` <span class="muted">from ${esc(d.source)}</span>` : ""}</label>
+        <textarea id="sem-text" rows="8" spellcheck="true" placeholder="A break statement can only appear inside a loop or switch.&#10;A variable must be declared before it is used.">${esc(d.text)}</textarea>
+        ${(d.warnings || []).map(w => `<div class="inp-guide">${ICONS.alert}<div>${esc(w)}</div></div>`).join("")}
+        <div class="actions"><button type="button" class="primary" onclick="semSave()" ${d.busy ? "disabled" : ""}>Save guidance</button>
+          <button type="button" class="ghost" onclick="semWrite()">Cancel</button></div>` : `
+      <div class="inp-up">
+        <button type="button" class="btn-like" onclick="semWrite()">${ICONS.edit} Write guidance</button>
+        <label class="btn-like" for="sem-file">${ICONS.upload} Upload document</label>
+        <input id="sem-file" type="file" accept=".txt,.md,.pdf,.docx" onchange="semUpload(this)">
+        <span class="chips"><span class="chip">.txt</span><span class="chip">.md</span><span class="chip">.pdf</span><span class="chip">.docx</span></span>
+      </div>`}
+      ${missing.length && !d.editing ? `<div class="muted sem-note">Reading ${missing.join(" and ")} needs <span class="mono">pip install 'spreadex[docs]'</span>. .txt and .md work now.</div>` : ""}
+      ${d.busy ? `<div class="muted sem-note" role="status"><span class="spinner"></span> ${esc(d.busy)}</div>` : ""}
+      ${d.msg ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-s">${esc(d.msg)}</div></div></div>` : ""}
+    </div>
+    <details class="sut-adv" ${d.advancedOpen ? "open" : ""} ontoggle="toggleSemAdvanced(this.open)">
+      <summary><span><strong>Advanced</strong></span><span class="muted">Structured constraints and generator-specific specifications</span></summary>
+      <div class="sut-adv-body">
+        <label>Structured constraints <span class="tag warn">reserved</span></label>
+        <p class="muted">A YAML or JSON file. Stored and recorded with each run, but not interpreted by any generator yet.</p>
+        ${saved.structured ? `<div class="sem-file"><span class="mono">${esc(saved.structured)}</span>
+          <button type="button" class="linkish" onclick="semDropSlot('structured')">Remove</button></div>`
+          : `<label class="btn-like" for="sem-struct">${ICONS.upload} Choose a file</label><input id="sem-struct" type="file" accept=".yaml,.yml,.json" class="visually-hidden" onchange="semFileSlot(this, 'structured')">`}
+        <label>Generator-specific specification</label>
+        <p class="muted">A constraints file written in a generator's own language. It goes to that generator unchanged; SpreadEx does not convert it.</p>
+        ${nativeRows}
+        ${capable.length ? capable.filter(g => !(saved.native || {})[g.id]).map(g => `<label class="btn-like" for="sem-nat-${g.id}">${ICONS.upload} ${esc(g.name)} constraints</label>
+          <input id="sem-nat-${g.id}" type="file" class="visually-hidden" onchange="semFileSlot(this, 'native:${g.id}')">`).join(" ")
+          : `<div class="muted">No installed generator takes its own constraints.</div>`}
+      </div>
+    </details>
+    <div class="sem-sum" aria-label="Input specification summary">
+      <div><span class="muted">Language</span> ${esc(langById(inpState().lang).t)}</div>
+      <div><span class="muted">Grammar</span> ${inpState().picked ? "✓ " + esc(inpState().picked) : (inpState().mode === "none" ? "none (inputs folder)" : "not chosen")}</div>
+      <div><span class="muted">Semantic guidance</span> ${saved.guidance?.length ? "✓ " + esc(saved.guidance[0]) : "none"}</div>
+      <div><span class="muted">Native specs</span> ${Object.keys(saved.native || {}).length ? esc(Object.keys(saved.native).join(", ")) : "none"}</div>
+    </div>
+  </section>`;
+}
+
 function inpState() {
   if (S.inp) return S.inp;
   const c = cfg();
@@ -1279,12 +1468,14 @@ function inpState() {
     analysis: null, details: false, busy: "", msg: "",
     exampleTab: "bnf",
     constraintsOpen: false,
+    sem: semInit(),
   };
   return S.inp;
 }
 
 function stashInp() {
   const d = inpState();
+  if (el("sem-text")) d.sem.text = el("sem-text").value;
   if (el("inp-ext")) d.ext = el("inp-ext").value.trim();
   if (el("corpus")) d.corpus = el("corpus").value.trim();
   if (el("inp-project") && el("inp-project").value) d.picked = el("inp-project").value;
@@ -1357,7 +1548,6 @@ async function analyseGrammar() {
 }
 
 function toggleInpDetails() { stashInp().details = !inpState().details; paintInputs(); }
-function toggleInpConstraints(open) { inpState().constraintsOpen = open; }
 
 function inpAnalysis() {
   const d = inpState(), g = d.analysis;
@@ -1513,13 +1703,7 @@ function paintInputs() {
       ${inpAnalysis() || `<div class="muted inp-empty">Choose or add a grammar above to see its analysis.</div>`}
     </section>`}
 
-    <details class="sut-adv" ${d.constraintsOpen ? "open" : ""} ontoggle="toggleInpConstraints(this.open)">
-      <summary><span><strong>Semantic constraints</strong> (optional)</span>
-        <span class="muted">Rules a grammar alone cannot say, such as &ldquo;every variable is declared before use&rdquo;.</span></summary>
-      <div class="sut-adv-body"><p class="muted">Constraints live in the grammar itself: Fandango and ISLa grammars can
-        carry them, and SpreadEx passes them through to those two generators. There is nothing to configure
-        here; the other generators ignore constraints. ${S.project?.experimental ? "" : "A model-assisted draft is available with <span class=\"mono\">spreadex ui --experimental</span>."}</p></div>
-    </details>
+    ${semanticSection()}
 
     <div id="err"></div>
     <div class="actions inp-actions">
@@ -1558,11 +1742,14 @@ function paintInputs() {
 
 async function stepGrammar(current = () => true) {
   el("view").innerHTML = `<div class="card"><div class="empty">Looking for grammars…</div></div>`;
-  const [{ grammars }, bundled] = await Promise.all([api("/api/files"), api("/api/grammars/bundled")]);
+  const [{ grammars }, bundled, spec, gens] = await Promise.all([api("/api/files"), api("/api/grammars/bundled"), api("/api/spec"), api("/api/generators")]);
   if (!current()) return;   // the user moved on while this was loading
   S.grammars = grammars;
   S.bundled = bundled.grammars;
+  S.spec = spec;
+  S.generators = gens.generators;
   const d = inpState();
+  if (!d.sem.text && d.sem.path) d.sem.text = (spec.texts || {})[d.sem.path] || "";
   // The assistant (and a returning user) can change the config under us.
   if (cfg().grammar?.source && cfg().grammar.source !== d.picked) { d.picked = cfg().grammar.source; d.mode = "provide"; }
   paintInputs();
@@ -1770,6 +1957,8 @@ function paintGenerators() {
           ${g.installed ? "" : `<div class="actions" style="margin-top:9px">
             <button class="ghost small" onclick="event.stopPropagation();installGen('${g.id}')">Install</button></div>`}
           ${g.notes ? `<div class="meta" style="margin-top:7px">${esc(g.notes)}</div>` : ""}
+          ${(() => { const l = semanticLine(g, cfg().semantics, !!S.project?.experimental);
+            return l ? `<div class="sem-line ${l.tone}">${ICONS[l.tone === "ok" ? "success" : l.tone === "warn" ? "alert" : "info"]}<span>${esc(l.text)}</span></div>` : ""; })()}
         </div>`).join("")}
     </div>
     <div id="joblog"></div>

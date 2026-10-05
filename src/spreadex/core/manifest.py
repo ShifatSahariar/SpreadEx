@@ -31,6 +31,8 @@ class Manifest:
     targets: list[dict[str, Any]] = field(default_factory=list)
     effective: dict[str, Any] = field(default_factory=dict)  # post-CLI-override values
     corpus: dict[str, Any] = field(default_factory=dict)
+    #: Semantic guidance / constraint files with the hash of their content (provenance only).
+    semantics: dict[str, Any] = field(default_factory=dict)
     environment: dict[str, Any] = field(default_factory=dict)
     results: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
@@ -40,6 +42,8 @@ class Manifest:
         """Hash of everything that determines the run, excluding its results."""
         payload = {k: v for k, v in asdict(self).items()
                    if k not in ("results", "started_at", "finished_at", "environment")}
+        if not payload.get("semantics"):
+            payload.pop("semantics", None)   # manifests from before this field hash as they always did
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
     def write(self, path: Path) -> Path:

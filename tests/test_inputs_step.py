@@ -115,7 +115,7 @@ def test_the_mockup_copy_and_four_modes_are_present():
     for t in ("Define the input specification", "Input language", "File extension",
               "How should SpreadEx understand your input language?", "SpreadEx grammar",
               "Provide grammar", "Import grammar", "No grammar", "Grammar analysis",
-              "Grammar ready!", "Start symbol", "Productions", "Alternatives", "Semantic constraints",
+              "Grammar ready!", "Start symbol", "Productions", "Alternatives", "Semantic guidance",
               "Back to System under test", "Continue to Generators", "What are input specifications?",
               "Example grammars", "Supported formats", "Tips"):
         assert t in JS, t
@@ -280,3 +280,39 @@ def test_the_hero_picture_has_the_same_box_on_both_steps_and_names_the_language(
     assert JS.count('viewBox="0 0 320 170"') >= 2
     assert re.search(r"\.side-hero svg \{[^}]*aspect-ratio: 320 / 170", CSS)
     assert "LANG_ABBR[id]" in JS and "inpArt(d.lang)" in JS
+
+
+# ------------------------------------------- back-to-back runs must not collide
+
+def test_two_campaigns_started_in_the_same_second_get_distinct_run_ids(tmp_path, monkeypatch):
+    """Run ids are timestamped to the second; a script that runs twice quickly (CI, the replay
+    test) used to die with `UNIQUE constraint failed: runs.run_id`."""
+    from spreadex.core import campaign as camp
+
+    (tmp_path / "seeds").mkdir()
+    (tmp_path / "seeds" / "a").write_text("one")
+    (tmp_path / "spreadex.yaml").write_text(
+        f"sut:\n  command: [{json.dumps(sys.executable)}, -c, 'pass']\n"
+        "oracle:\n  type: crash\ngenerators: []\ncorpus:\n  path: seeds\n"
+        "budget: {generation: 5s, execution: 10s}\n")
+    monkeypatch.setattr(camp, "new_run_id", lambda: "2026-01-01T00-00-00Z")
+    cfg = load_config(tmp_path / "spreadex.yaml")
+    a = camp.Campaign(cfg, log=lambda *_: None).run()
+    b = camp.Campaign(cfg, log=lambda *_: None).run()
+    assert a.run_id != b.run_id and b.run_id.startswith("2026-01-01T00-00-00Z")
+    assert a.run_dir != b.run_dir
+
+
+def test_an_explicit_run_id_that_already_exists_is_still_an_error(tmp_path):
+    from spreadex.core.campaign import Campaign
+
+    (tmp_path / "seeds").mkdir()
+    (tmp_path / "seeds" / "a").write_text("one")
+    (tmp_path / "spreadex.yaml").write_text(
+        f"sut:\n  command: [{json.dumps(sys.executable)}, -c, 'pass']\n"
+        "oracle:\n  type: crash\ngenerators: []\ncorpus:\n  path: seeds\n"
+        "budget: {generation: 5s, execution: 10s}\n")
+    cfg = load_config(tmp_path / "spreadex.yaml")
+    Campaign(cfg, log=lambda *_: None).run(run_id="mine")
+    with pytest.raises(Exception):
+        Campaign(cfg, log=lambda *_: None).run(run_id="mine")

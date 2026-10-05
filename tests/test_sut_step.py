@@ -27,7 +27,7 @@ def _node(expr: str):
     if not node:
         pytest.skip("node is not installed")
     script = _helpers() + (
-        "\nconst api={splitCommand,joinCommand,parseEnv,envToText,inferKind,DURATION};"
+        "\nconst api={splitCommand,joinCommand,parseEnv,envToText,inferKind,DURATION,semanticLine};"
         f"\nprocess.stdout.write(JSON.stringify({expr}));")
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr
@@ -238,3 +238,71 @@ def test_tips_bulb_glows_amber_and_the_terminal_hero_is_present():
     assert re.search(r"\.h-ico\.amber \{[^}]*#F59E0B[^}]*drop-shadow", CSS)
     assert 'class="h-ico amber"' in JS
     assert "const SUT_ART" in JS and "${SUT_ART}" in JS
+
+
+# ------------------------------------------- semantic guidance: UI + step 3 rules
+
+FAN = '{"id":"fandango","name":"Fandango","constraints":true}'
+ISLA = '{"id":"isla","name":"ISLa","constraints":true}'
+GRM = '{"id":"grammarinator","name":"Grammarinator","constraints":false}'
+
+
+def _line(g, sem, exp="false"):
+    return _node(f"api.semanticLine({g},{sem},{exp})")
+
+
+def test_nothing_is_said_when_no_semantics_were_supplied():
+    assert _line(FAN, "{}") is None and _line(FAN, "undefined") is None
+
+
+def test_native_constraints_are_used_as_written_by_their_own_generator():
+    r = _line(FAN, '{"native":{"fandango":"spec/c.fan"}}')
+    assert r["tone"] == "ok" and "used as written" in r["text"]
+
+
+def test_natural_language_is_not_claimed_to_be_consumed():
+    r = _line(FAN, '{"guidance":["spec/s.md"]}')
+    assert r["tone"] == "muted" and "not consumed directly" in r["text"]
+    assert "--experimental" in r["text"]                                   # no assistant -> says how to get it
+    assert "experimental assistant" in _line(FAN, '{"guidance":["spec/s.md"]}', "true")["text"]
+
+
+def test_a_generator_without_constraint_support_runs_from_the_grammar_alone():
+    r = _line(GRM, '{"guidance":["spec/s.md"]}')
+    assert r["tone"] == "muted" and "runs from the grammar alone" in r["text"]
+
+
+def test_constraints_written_for_a_different_generator_are_flagged_not_converted():
+    r = _line(GRM, '{"native":{"fandango":"spec/c.fan"}}')
+    assert r["tone"] == "warn" and "Fandango-specific" in r["text"] and "cannot use them" in r["text"]
+    r2 = _line(FAN, '{"native":{"isla":"spec/c.isla"}}')
+    assert r2["tone"] == "warn" and "ISLa-specific" in r2["text"]
+
+
+def test_structured_constraints_are_labelled_stored_not_interpreted():
+    assert "stored but not interpreted" in _line(FAN, '{"structured":"spec/c.yaml"}')["text"]
+
+
+def test_step_2_has_the_semantic_section_the_design_asked_for():
+    for t in ("Semantic guidance", "Natural language", "Recommended", "Write guidance", "Upload document",
+              "Advanced", "Structured constraints", "Generator-specific specification",
+              "Save guidance", ".pdf", ".docx", "spreadex[docs]"):
+        assert t in JS, t
+    assert "reserved" in JS and "does not convert it" in JS
+
+
+def test_no_invented_confidence_number_or_translation_claim():
+    shown = "\n".join(l for l in JS.splitlines() if not l.strip().startswith("//"))
+    assert "confidence" not in shown.lower()
+    assert "automatically convert" not in shown.lower()
+
+
+def test_the_yaml_carries_the_semantics_block_and_edits_survive_rerender():
+    y = JS[JS.index("function buildYaml"):JS.index("async function saveConfig")]
+    assert '"semantics:"' in y and "guidance: [" in y and "native:" in y and "structured:" in y
+    assert 'if (el("sem-text")) d.sem.text = el("sem-text").value' in JS
+
+
+def test_step_3_cards_show_the_rule_line_from_the_pure_function():
+    g = JS[JS.index("function paintGenerators"):JS.index("// ---", JS.index("function paintGenerators"))]
+    assert "semanticLine(g, cfg().semantics" in g and "sem-line" in g

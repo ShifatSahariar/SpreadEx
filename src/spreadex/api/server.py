@@ -130,6 +130,18 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
+        if length > MAX_BODY:
+            # Discard (never store) what was sent, so the client sees the 413 instead of a
+            # broken pipe; give up and close if it is absurdly large.
+            left = min(length, MAX_DRAIN)
+            while left > 0:
+                chunk = self.rfile.read(min(65536, left))
+                if not chunk:
+                    break
+                left -= len(chunk)
+            self.close_connection = True
+            self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "that request is too large")
+            return
         raw = self.rfile.read(length) if length else b""
 
         if self._reject_non_local():
@@ -187,6 +199,12 @@ class _Handler(BaseHTTPRequestHandler):
                             "restart with `spreadex ui --experimental` to enable it")
                 return
             self._json(setup.assist(self.config, body))
+            return
+        if route == "/api/spec/extract":
+            self._json(setup.extract_document(self.config, body))
+            return
+        if route == "/api/spec/save":
+            self._json(setup.save_spec(self.config, body))
             return
         if route == "/api/grammar/save":
             self._json(setup.save_grammar(self.config, body))
@@ -261,6 +279,10 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             self._json(payload)
             return
+        if route == "/api/spec":
+            from . import setup
+            self._json(setup.read_spec(self.config))
+            return
         if route == "/api/grammars/bundled":
             from . import setup
             self._json(setup.bundled_grammars())
@@ -327,6 +349,9 @@ def _emit(line: str = "") -> None:
 
 
 TOKEN_FILE = "ui-token"
+#: Uploads travel as base64 JSON; 5 MB of document is ~6.7 MB on the wire.
+MAX_BODY = 12_000_000
+MAX_DRAIN = 64_000_000
 
 
 def project_token(config, rotate: bool = False) -> str:

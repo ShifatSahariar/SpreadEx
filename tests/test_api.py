@@ -869,3 +869,22 @@ def test_the_banner_prints_the_tokenised_link_not_just_the_bare_address(tmp_path
         if any("?token=" in l for l in lines): break
         time.sleep(0.1)
     assert any(re.search(r"http://127\.0\.0\.1:\d+/\?token=\S+", l) for l in lines), lines
+
+
+def test_spec_routes_need_the_token_and_are_refused_when_read_only(served, read_only_server):
+    base, token, _ = served
+    with pytest.raises(HTTPError) as e:
+        get(base + "/api/spec")
+    assert e.value.code == 401
+    status, body = get(base + "/api/spec", token)
+    assert status == 200 and "docs" in body
+    ro_base, ro_token = read_only_server
+    status, payload = post(ro_base + "/api/spec/save", {"kind": "guidance", "text": "x"}, ro_token)
+    assert status == 403
+
+
+def test_an_oversized_request_is_refused_before_it_is_read(served):
+    base, token, _ = served
+    status, payload = post(base + "/api/spec/extract",
+                           {"name": "a.txt", "data": "A" * 13_000_000}, token)
+    assert status == 413

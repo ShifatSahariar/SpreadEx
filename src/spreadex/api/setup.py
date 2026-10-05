@@ -327,6 +327,107 @@ def save_grammar(config, body: dict) -> dict[str, Any]:
     return {"ok": True, "written": str(target.relative_to(root))}
 
 
+# ------------------------------------------------------ semantic guidance (step 2)
+
+def _spec_target(config, rel: str):
+    """Resolve a path under the project and refuse anything that leaves it."""
+    root = config.project_root.resolve()
+    target = (root / rel).resolve()
+    if root not in target.parents:
+        return None
+    return target
+
+
+def read_spec(config) -> dict[str, Any]:
+    """What is configured, with enough text to show, and what this install can read."""
+    from ..spec import docs_support
+
+    sem = config.semantics
+    texts = {}
+    for rel in sem.guidance:
+        try:
+            texts[rel] = (config.project_root / rel).read_text(errors="replace")[:20000]
+        except OSError:
+            texts[rel] = ""
+    return {"semantics": sem.as_dict(), "texts": texts, "docs": docs_support(),
+            "formats": [".txt", ".md", ".pdf", ".docx"]}
+
+
+def extract_document(config, body: dict) -> dict[str, Any]:
+    """Read an uploaded document into text for the user to review. Writes nothing."""
+    import base64
+    import binascii
+
+    from ..spec import SpecError, extract_text
+
+    name = str(body.get("name") or "")
+    try:
+        data = base64.b64decode(body.get("data") or "", validate=True)
+    except (binascii.Error, ValueError):
+        return {"ok": False, "error": "that upload could not be decoded"}
+    try:
+        return {"ok": True, **extract_text(name, data).as_dict()}
+    except SpecError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def save_spec(config, body: dict) -> dict[str, Any]:
+    """Write reviewed text (and optionally the original document) under spec/.
+
+    kind = guidance | structured | native:<generator>. The server never edits
+    spreadex.yaml here; the wizard records the path when the user saves the config.
+    """
+    import base64
+    import binascii
+
+    from ..spec import GUIDANCE_SUFFIXES, NATIVE_GENERATORS, SPEC_DIR, safe_spec_name
+    from ..spec.model import MAX_SPEC_BYTES
+
+    kind = str(body.get("kind") or "guidance")
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return {"ok": False, "error": "there is nothing to save yet; write or upload something first"}
+    if len(text.encode()) > MAX_SPEC_BYTES:
+        return {"ok": False, "error": f"that is over {MAX_SPEC_BYTES // 1000} KB; keep rules short and focused"}
+
+    if kind == "guidance":
+        name = safe_spec_name(body.get("name") or "", "semantics.md")
+        if not name.lower().endswith(GUIDANCE_SUFFIXES):
+            name += ".md"
+    elif kind == "structured":
+        name = safe_spec_name(body.get("name") or "", "constraints.yaml")
+        if not name.lower().endswith((".yaml", ".yml", ".json")):
+            name += ".yaml"
+        import yaml
+        try:
+            yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            return {"ok": False, "error": f"that is not valid YAML/JSON: {exc}"}
+    elif kind.startswith("native:") and kind.split(":", 1)[1] in NATIVE_GENERATORS:
+        gid = kind.split(":", 1)[1]
+        name = safe_spec_name(body.get("name") or "", f"constraints.{'fan' if gid == 'fandango' else 'isla'}")
+    else:
+        return {"ok": False, "error": f"unknown kind {kind!r}"}
+
+    rel = f"{SPEC_DIR}/{name}"
+    target = _spec_target(config, rel)
+    if target is None:
+        return {"ok": False, "error": "the specification must be written inside this project"}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+
+    original = body.get("original")
+    if isinstance(original, dict) and original.get("data"):
+        try:
+            blob = base64.b64decode(original["data"], validate=True)
+        except (binascii.Error, ValueError):
+            blob = b""
+        oname = safe_spec_name(original.get("name") or "", "")
+        if blob and oname and len(blob) <= 5_000_000 and oname != name:
+            (target.parent / oname).write_bytes(blob)
+    return {"ok": True, "written": rel}
+
+
 # ------------------------------------------------------- command verification
 
 #: A ceiling on what the connection test may ask for, whatever the config says.

@@ -99,6 +99,26 @@ def grammar_for(config, generator_id: str, derived: dict[str, Path] | None = Non
     return (config.project_root / source).resolve()
 
 
+def _apply_native_constraints(native: dict, written: dict, log) -> None:
+    """Hand a generator the constraint file the user wrote for IT, exactly as written.
+
+    No translation: a Fandango file goes to Fandango and an ISLa file to ISLa. Anything
+    else the user described stays guidance and is not silently turned into either.
+    """
+    import shutil
+
+    fan = native.get("fandango")
+    if fan and "fandango" in written:
+        target = written["fandango"]
+        target.write_text(target.read_text().rstrip() + f"\n\n# --- constraints from {fan.name} (used as written)\n"
+                          + fan.read_text().strip() + "\n")
+        log(f"  constraints: Fandango uses {fan.name} as written")
+    isla = native.get("isla")
+    if isla and "isla" in written:
+        shutil.copyfile(isla, written["isla"].with_suffix(".isla"))
+        log(f"  constraints: ISLa uses {isla.name} as written")
+
+
 def derive_grammars(config, generators: list[str], log=print) -> dict[str, Path]:
     """Adapt `grammar.source` into each generator's dialect, cached by content.
 
@@ -123,7 +143,11 @@ def derive_grammars(config, generators: list[str], log=print) -> dict[str, Path]
             f"  Fix: correct `grammar.source` in spreadex.yaml."
         )
 
-    digest = hashlib.sha256(source_path.read_bytes()).hexdigest()[:12]
+    native = {gid: (config.project_root / rel) for gid, rel in config.semantics.native.items()}
+    h = hashlib.sha256(source_path.read_bytes())
+    for gid in sorted(native):                      # editing a native spec must not hit a stale cache
+        h.update(gid.encode() + native[gid].read_bytes())
+    digest = h.hexdigest()[:12]
     out_dir = config.state_dir / "cache" / "grammars" / digest
     try:
         result = adapt(source_path, needed, out_dir, start=g.get("start"))
@@ -136,6 +160,8 @@ def derive_grammars(config, generators: list[str], log=print) -> dict[str, Path]
             f"{source_path.name} has grammar errors, so no dialects were derived:\n{detail}\n"
             f"  Check it with: spreadex grammar check {source}"
         )
+
+    _apply_native_constraints(native, result.written, log)
 
     if result.written:
         log(f"  grammar: derived {len(result.written)} dialect(s) from {source_path.name}")
