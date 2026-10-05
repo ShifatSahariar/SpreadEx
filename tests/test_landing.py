@@ -645,16 +645,18 @@ def test_the_current_step_is_marked_for_assistive_technology_with_the_right_valu
     assert '<ol class="steps-row">' in _RENDER and "step-item" in _RENDER
 
 
-def test_a_neutral_link_joins_each_pair_of_steps():
-    """Four links between five steps, none after the last -- and grey. They used
-    to take the earlier step's colour, which made the bar look coloured
-    everywhere; only the current step is meant to be."""
+def test_a_dash_joins_each_pair_of_steps_grey_until_the_step_before_it_is_done():
+    """Four dashes between five steps, none after the last. Grey by default; green once the step
+    before it is finished -- the green is the brand green, not the step's own tone."""
     assert "i < STEPS.length - 1" in _RENDER
     link = CSS[CSS.index(".step-link {"):]
     link = link[:link.index("}") + 1]
     assert "var(--color-muted)" in link and "var(--tone)" not in link, link
-    assert 'class="step-item tone-${s.tone}"' in _RENDER, "the current step still needs its tone"
-
+    on = CSS[CSS.index(".step-link.on {"):]
+    on = on[:on.index("}") + 1]
+    assert "var(--color-primary)" in on and "var(--tone)" not in on
+    assert '${done[i] ? "on" : ""}' in _RENDER
+    assert 'class="step-item tone-${s.tone}' in _RENDER, "every step still needs its tone"
 
 def test_all_five_boxes_are_exactly_the_same_size():
     """Each step's width includes the link after it, and the last step has none,
@@ -669,43 +671,35 @@ def test_all_five_boxes_are_exactly_the_same_size():
     )
 
 
-def test_only_the_current_step_is_coloured():
-    """Inactive steps are neutral grey -- badge, icon tile and link. Colour is
-    how the bar says where you are, so it cannot also be decoration on the
-    other four."""
+def test_every_icon_tile_carries_its_tone_but_the_number_is_grey_until_done_or_current():
+    """The design tints all five tiles; colour on the NUMBER is what says progress."""
     tile = CSS[CSS.index(".step-ico {"):]
     tile = tile[:tile.index("}") + 1]
-    assert "var(--tone)" not in tile and "var(--color-muted)" in tile, tile
-    assert '.step[aria-current="step"] .step-ico { color: var(--tone);' in CSS
+    assert "color: var(--tone)" in tile and "color-mix(in srgb, var(--tone)" in tile, tile
     badge = CSS[CSS.index(".step .n {"):]
     badge = badge[:badge.index("}") + 1]
-    assert "var(--tone)" not in badge and "var(--badge)" not in badge, "inactive badge must be grey"
+    assert "var(--tone)" not in badge, "a future step's number must be grey"
+    lit = CSS[CSS.index(".step-item.done .n, .step[aria-current=\"step\"] .n {"):]
+    lit = lit[:lit.index("}") + 1]
+    assert "var(--tone)" in lit
 
-
-def test_the_current_step_is_a_little_bigger_without_moving_the_others():
-    """A transform takes no layout space, so the other four boxes neither shrink
-    nor shift, and their titles do not re-wrap, as the highlight moves. Widening
-    it instead would have squeezed 'System under test' back onto two lines."""
+def test_the_current_step_is_outlined_and_a_little_bigger_without_moving_the_others():
+    """A transform takes no layout space, so the other four neither shrink nor shift."""
     current = CSS[CSS.index('.step[aria-current="step"] {'):]
     current = current[:current.index("}") + 1]
-    assert "transform: scale(1.06)" in current and "z-index: 2" in current, current
+    assert "transform: scale(1.04)" in current and "z-index: 2" in current, current
+    assert "inset 0 0 0 1.5px var(--tone)" in current, "the outline is the step's own colour"
     assert "width:" not in current and "flex:" not in current, current
     assert "transition: background .15s, transform .18s" in CSS
     assert ".step { transition: none; }" in CSS, "and it must hold still for reduced motion"
 
-
 def test_the_current_step_shows_its_own_colour_so_the_highlight_shifts():
-    """Not one fixed green: outline, badge and wash all read the step's tone, so
-    stepping from 1 to 2 turns the highlight from green to blue."""
+    """Outline, wash and number all read the step's tone, so stepping 1 -> 2 turns green into blue."""
     steps = CSS[CSS.index("/* ------------------------------------------------------- wizard steps"):]
     steps = steps[:steps.index("main {")] if "main {" in steps else steps
-    assert 'color-mix(in srgb, var(--tone) 10%, var(--color-surface))' in steps
-    assert '.step[aria-current="step"] .step-card { border-color: var(--tone);' in steps
-    assert '.step[aria-current="step"] .n { background: var(--badge); color: #fff;' in steps
-    assert "#16a34a" not in steps and "var(--color-primary)" not in steps, (
-        "a hard-coded green would stop the highlight shifting colour"
-    )
-
+    assert 'color-mix(in srgb, var(--tone) 9%, var(--color-surface))' in steps
+    assert "box-shadow: inset 0 0 0 1.5px var(--tone)" in steps
+    assert "#16a34a" not in steps.lower(), "a hard-coded green would stop the highlight shifting colour"
 
 def test_the_steps_and_the_cards_share_one_set_of_colours():
     """Defined once. Two copies of the same four tones is how two parts of one
@@ -752,18 +746,21 @@ def test_a_hidden_tab_scrolls_instantly_because_smooth_scroll_never_runs_there()
     assert "prefers-reduced-motion: no-preference" in centre
 
 
-def test_every_step_reserves_two_lines_of_subtext_so_the_boxes_look_alike():
-    """Left to wrap naturally the five subtexts came out 1, 2, 2, 2 and 1 lines
-    -- identical boxes holding text blocks of different heights, which is what
-    looked 'off'. Two lines are reserved whether or not the text needs them."""
-    sub = CSS[CSS.index(".step .d {"):]
-    sub = sub[:sub.index("}") + 1]
-    assert "line-height: 1.3" in sub and "min-height: 2.6em" in sub, sub
-    # 2.6em is exactly two lines of a 1.3 line-height; if one changes, so must the other.
-    height, lines = float(sub.split("min-height:")[1].split("em")[0]), 2
-    line = float(sub.split("line-height:")[1].split(";")[0])
-    assert abs(height - lines * line) < 1e-9, (height, lines, line)
-
+def test_finished_steps_get_a_check_and_the_copy_matches_the_design():
+    """Done = before the current step AND its data exists, so skipping ahead past an empty step
+    does not paint it as complete."""
+    for line in ("How to run your program.", "What does it accept?", "Choose who writes inputs.",
+                 "What counts as a failure?", "Review and launch."):
+        assert line in APP, line
+    done = APP[APP.index("function stepDone"):APP.index("function renderSteps")]
+    assert "i < cur && stepDone(s.id)" in _RENDER
+    for sid in ("sut", "grammar", "generators", "strategy"):
+        assert f'id === "{sid}"' in done, sid
+    assert 'id === "run"' not in done, "the last step is never 'done' before it is run"
+    assert "step-ok" in _RENDER and "completed" in _RENDER, "the check needs a text alternative"
+    assert _re.search(r"\.step-ok \{[^}]*background: var\(--color-primary\)", CSS)
+    # text is centred against the tile, and boxes stay equal through flex bases rather than text height
+    assert "align-items: center" in CSS[CSS.index(".step {"):CSS.index(".step:hover")]
 
 def test_the_step_text_is_a_point_smaller_so_the_longest_title_has_room():
     """13.8px -> 12.5px for titles and 12.2px -> 11.5px for subtexts. At the old

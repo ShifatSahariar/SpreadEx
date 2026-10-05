@@ -61,11 +61,11 @@ function toggleTheme() {
 const STEPS = [
   // `icon` is a NAME looked up in ICONS at render time: ICONS is declared
   // further down, and reading it from here would hit the temporal dead zone.
-  { id: "sut",        n: 1, tone: "green",  icon: "terminal",    t: "System under test", d: "The command to run." },
-  { id: "grammar",    n: 2, tone: "blue",   icon: "doc",         t: "Inputs",            d: "Where they come from." },
-  { id: "generators", n: 3, tone: "purple", icon: "sliders",     t: "Generators",        d: "Who writes the inputs." },
-  { id: "strategy",   n: 4, tone: "orange", icon: "shield",      t: "Testing strategy",  d: "What counts as a failure." },
-  { id: "run",        n: 5, tone: "blue",   icon: "playOutline", t: "Budget & run",      d: "Review, then launch." },
+  { id: "sut",        n: 1, tone: "green",  icon: "terminal",    t: "System under test", d: "How to run your program." },
+  { id: "grammar",    n: 2, tone: "blue",   icon: "doc",         t: "Inputs",            d: "What does it accept?" },
+  { id: "generators", n: 3, tone: "purple", icon: "sliders",     t: "Generators",        d: "Choose who writes inputs." },
+  { id: "strategy",   n: 4, tone: "orange", icon: "shield",      t: "Testing strategy",  d: "What counts as a failure?" },
+  { id: "run",        n: 5, tone: "blue",   icon: "playOutline", t: "Budget & run",      d: "Review and launch." },
 ];
 
 const S = {
@@ -482,22 +482,35 @@ function showDemoHint() {
 }
 
 
+// A step shows its check only when it comes before the one you are on AND the thing it asks for
+// exists -- so jumping ahead with an empty step 1 does not paint it as done.
+function stepDone(id) {
+  const c = cfg();
+  if (id === "sut") return targets().some(t => (t.command || []).length);
+  if (id === "grammar") return !!(c.grammar?.source || c.corpus?.path);
+  if (id === "generators") return !!((c.generators || []).length || c.corpus?.path);
+  if (id === "strategy") return !!c.oracle;
+  return false;
+}
+
 function renderSteps() {
   const host = el("steps");
   // The row is rebuilt on every step change, which would snap a scrolled row
   // back to the start; carry its position across.
   const before = host.querySelector(".steps-row")?.scrollLeft || 0;
+  const cur = STEPS.findIndex(s => s.id === S.step);
+  const done = STEPS.map((s, i) => i < cur && stepDone(s.id));
 
   host.innerHTML = `<ol class="steps-row">${STEPS.map((s, i) => `
-    <li class="step-item tone-${s.tone}">
+    <li class="step-item tone-${s.tone} ${done[i] ? "done" : ""}">
       <button type="button" class="step" onclick="gotoStep('${s.id}')"
               ${s.id === S.step ? 'aria-current="step"' : ""}>
         <span class="n">${s.n}</span>
-        <span class="step-card">
-          <span class="step-ico">${ICONS[s.icon]}</span>
-          <span class="step-text"><span class="t">${esc(s.t)}</span><span class="d">${esc(s.d)}</span></span>
-        </span>
-      </button>${i < STEPS.length - 1 ? '<span class="step-link" aria-hidden="true"></span>' : ""}
+        <span class="step-ico">${ICONS[s.icon]}</span>
+        <span class="step-text"><span class="t">${esc(s.t)}${done[i]
+          ? `<span class="step-ok">${ICONS.check}<span class="visually-hidden">completed</span></span>` : ""}</span>
+          <span class="d">${esc(s.d)}</span></span>
+      </button>${i < STEPS.length - 1 ? `<span class="step-link ${done[i] ? "on" : ""}" aria-hidden="true"></span>` : ""}
     </li>`).join("")}</ol>`;
 
   const row = host.querySelector(".steps-row");
