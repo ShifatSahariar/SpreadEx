@@ -418,13 +418,11 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
     plain = f"http://{shown_host}:{actual_port}"
     url = f"{plain}/?token={token}"
     log(f"\nSpreadEx UI for {config.project_root}\n")
-    # Lead with the address someone can bookmark and retype. The token is an
-    # implementation detail of this session, and printing it as if it were part
-    # of the address teaches people to paste a credential around.
-    log(f"  Workbench:  {plain}\n")
-    if not open_browser:
-        # Nothing is going to hand the browser the token, so the user has to.
-        log(f"  Open this once to authorise the tab:\n  {url}\n")
+    # Print the link that works. Leading with the bare address looked tidier but
+    # sent people to a URL that cannot authorise a tab: opening it in a tab that
+    # still holds the token of a previous launch gives "token out of date".
+    log(f"  Open this link (it carries this session's access token):\n  {url}\n")
+    log(f"  Bare address {plain} only works in a tab that was already opened from this link.\n")
     if config.configured:
         log("  Same address every time, so it is worth bookmarking.")
         log("  Rotate the token with --new-token if you ever need to.")

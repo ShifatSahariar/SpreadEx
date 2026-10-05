@@ -5,6 +5,7 @@ are tested as carefully as the data.
 """
 
 import json
+import re
 import os
 import threading
 from http.server import ThreadingHTTPServer
@@ -853,3 +854,18 @@ def test_probe_does_not_show_an_error_line_as_a_runtime(empty_project, monkeypat
     monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
     _, body = post(f"{base}/api/probe", {"command": ["faketool"]}, token=token)
     assert body["runtime"] is None, body["runtime"]
+
+
+def test_the_banner_prints_the_tokenised_link_not_just_the_bare_address(tmp_path):
+    from spreadex.api.server import serve
+    from spreadex.core.config import Config
+    lines = []
+    cfg = Config.unconfigured(tmp_path)
+    import threading
+    t = threading.Thread(target=lambda: serve(cfg, port=0, open_browser=False, log=lines.append), daemon=True)
+    t.start()
+    import time
+    for _ in range(50):
+        if any("?token=" in l for l in lines): break
+        time.sleep(0.1)
+    assert any(re.search(r"http://127\.0\.0\.1:\d+/\?token=\S+", l) for l in lines), lines
