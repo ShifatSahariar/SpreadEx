@@ -663,6 +663,34 @@ const STRATEGY_PRESETS = {
   custom:      { t: "Custom", d: "Start from scratch",
                  st: { rej: false, rejPats: [], codes: "", sig: false, sigPats: [], diff: false } },
 };
+
+// "5", "5s", "2m", "1.5h" -> seconds, or null. Mirrors the server's duration parser.
+function durationSeconds(text) {
+  const m = /^(\d+(?:\.\d+)?)\s*([smh]?)$/i.exec(String(text || "").trim());
+  if (!m) return null;
+  return Number(m[1]) * ({ "": 1, s: 1, m: 60, h: 3600 }[m[2].toLowerCase()]);
+}
+const RECOMMENDED_TIMEOUT = "5s";
+
+// Look at how the system answered a deliberately invalid input and propose what to record. Pure and
+// deterministic -- no model. The pattern is the start of the diagnostic up to the first quote or
+// digit (the parts that change from input to input), regex-escaped and anchored, and the user can
+// edit it before it is saved. Returns null when there is nothing that looks like a refusal.
+function suggestRejection(probe) {
+  if (!probe || !probe.ok || probe.timed_out || probe.signal) return null;
+  if (probe.exit_code === 0 || probe.exit_code === null || probe.exit_code === undefined) return null;
+  const first = t => String(t || "").split(/\r?\n/).map(l => l.trim()).find(Boolean) || "";
+  const line = first(probe.stderr) || first(probe.stdout);
+  let pattern = "";
+  if (line) {
+    let cut = line.search(/["'\d]/);
+    let prefix = cut >= 0 ? line.slice(0, cut) : line;
+    if (cut < 0 && prefix.includes(":")) prefix = prefix.slice(0, prefix.indexOf(":"));
+    if (prefix.trim().length < 3) prefix = line.slice(0, 40);
+    pattern = "^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return { exitCode: probe.exit_code, line, pattern };
+}
 // ---- end testing strategy ------------------------------------------------------
 
 const DURATION = /^\d+(\.\d+)?\s*[smh]?$/i;
@@ -778,6 +806,7 @@ function stratState() {
     sig: !!(o.crash_patterns || []).length, sigPats: [...(o.crash_patterns || [])],
     diff: o.type === "differential",
     open: {}, menu: false, undo: null, note: "",
+    probeText: "@@ not valid @@", probe: null, probing: false, suggestion: null, suggestionDone: false,
     tip: (() => { try { return sessionStorage.getItem("spreadex-tip4") !== "1"; } catch (e) { return true; } })(),
   };
   return S.strat;
@@ -829,6 +858,73 @@ function stratUndo() { const st = stratState(); if (!st.undo) return; Object.ass
 function stratMenu(open) { const st = readStrat(); st.menu = open === undefined ? !st.menu : open; syncStrat(); stepStrategy(); }
 function stratDismissTip() { stratState().tip = false; try { sessionStorage.setItem("spreadex-tip4", "1"); } catch (e) { /* fine */ } stepStrategy(); }
 
+
+// The timeout lives in System under test; this edits the same value from where it matters most.
+// Both the saved config and step 1's draft are updated, or going back and pressing Continue there
+// would put the old value back.
+function stratSetTimeout(value) {
+  const v = String(value).trim();
+  const secs = durationSeconds(v);
+  if (secs === null || secs <= 0) return false;
+  S.config.sut = { ...sut(), timeout: v };
+  if (S.draft) S.draft.timeout = v;
+  return true;
+}
+function stratTimeoutInput(input) {
+  const ok = stratSetTimeout(input.value);
+  input.setAttribute("aria-invalid", String(!ok));
+  const w = input.closest(".tfield")?.querySelector(".pat-warn");
+  if (w) w.textContent = ok ? "" : "Use a number with an optional unit: 5, 5s, 2m or 1h.";
+  const badge = input.closest(".tfield")?.querySelector(".t-state");
+  if (badge && ok) badge.innerHTML = timeoutState(input.value);
+}
+function timeoutState(v) {
+  return durationSeconds(v) === durationSeconds(RECOMMENDED_TIMEOUT)
+    ? `<span class="tag ok">Recommended</span>`
+    : `<span class="tag">Changed</span> <button type="button" class="linkish" onclick="stratResetTimeout()">Reset to recommended</button>`;
+}
+function stratResetTimeout() { readStrat(); stratSetTimeout(RECOMMENDED_TIMEOUT); stepStrategy(); }
+
+// How does YOUR system refuse input? Run it once on something invalid and show what came back,
+// instead of asking the user to know an exit code and a regex.
+async function stratObserve() {
+  const st = readStrat(), t = targets()[0];
+  if (!t || !(t.command || []).length) { st.probe = { ok: false, error: "Set the command in System under test first." }; return stepStrategy(); }
+  const text = el("probe-text") ? el("probe-text").value : st.probeText;
+  st.probeText = text; st.probing = true; st.suggestion = null; st.suggestionDone = false; stepStrategy();
+  const s0 = sut();
+  const body = { command: t.command, sample: text || "@@ not valid @@", input_mode: s0.input_mode || "file", timeout: s0.timeout || "5s" };
+  if (t.cwd) body.cwd = t.cwd;
+  if (t.env && Object.keys(t.env).length) body.env = t.env;
+  try { st.probe = await api("/api/probe", body); } catch (e) { st.probe = { ok: false, error: String(e.message || e) }; }
+  st.probing = false; st.suggestion = suggestRejection(st.probe); stepStrategy();
+}
+function stratAcceptSuggestion() {
+  const st = readStrat(), sg = st.suggestion;
+  if (!sg) return;
+  const codes = parseExitCodes(st.codes);
+  if (!codes.includes(sg.exitCode)) codes.push(sg.exitCode);
+  st.codes = codes.join(", ");
+  if (sg.pattern && !cleanPatterns(st.rejPats).includes(sg.pattern)) {
+    st.rejPats = cleanPatterns(st.rejPats); st.rejPats.push(sg.pattern);
+  }
+  st.rej = true; st.open.rej = true; st.suggestionDone = true;
+  st.note = "Added as an expected rejection. Check the pattern below and edit it if it is too broad."; 
+  syncStrat(); stepStrategy();
+}
+function stratDeclineSuggestion() { const st = readStrat(); st.suggestion = null; st.suggestionDone = true; syncStrat(); stepStrategy(); }
+
+// The order SpreadEx applies, shown so nobody wonders. It is not configurable: reordering it would
+// change what a verdict means and make two campaigns incomparable.
+const CLASSIFY_ORDER = [
+  ["No answer in time", "reported as a timeout"],
+  ["Killed by a signal", "reported as a crash, whatever the exit code says"],
+  ["Output matches a failure message", "reported as a crash (checked before any rejection rule)"],
+  ["Exit code is an expected exit code", "fine, nothing to report"],
+  ["Output matches an expected rejection message", "a normal refusal of the input"],
+  ["Anything else that exits non-zero", "reported as a crash"],
+];
+
 // JavaScript's regex dialect is close to Python's but not the same, so this is a hint: the server
 // compiles every pattern with Python's engine when the config is saved, and has the last word.
 function patternHint(p) {
@@ -876,19 +972,45 @@ function stratChips(c) {
 }
 function stratGoAddReference() { stashStrat(); const d = sutDraft(); if (!d.extra.length) d.extra.push({ name: "sut2", command: "" }); gotoStep("sut"); }
 
+
+function observerBlock() {
+  const st = stratState(), p = st.probe, sg = st.suggestion;
+  const out = !p ? "" : !p.ok ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-s">${esc(p.error)}</div></div></div>`
+    : `<div class="obs-seen"><div><span class="muted">Exit code</span> <span class="mono">${p.timed_out ? "no answer" : esc(String(p.exit_code))}</span></div>
+        ${(p.stderr || "").trim() ? `<div><span class="muted">stderr</span> <span class="mono">${esc((p.stderr || "").trim().split(/\r?\n/)[0])}</span></div>` : ""}
+        ${(p.stdout || "").trim() ? `<div><span class="muted">stdout</span> <span class="mono">${esc((p.stdout || "").trim().split(/\r?\n/)[0])}</span></div>` : ""}</div>`;
+  const ask = sg && !st.suggestionDone ? `<div class="obs-ask"><strong>Does this represent a normal input rejection?</strong>
+      <div class="muted">${sg.pattern ? `It would add exit code <span class="mono">${esc(String(sg.exitCode))}</span> and the pattern <span class="mono">${esc(sg.pattern)}</span>.` : `It would add exit code <span class="mono">${esc(String(sg.exitCode))}</span>.`}</div>
+      <div class="actions"><button type="button" class="primary small" onclick="stratAcceptSuggestion()">Yes, add as expected rejection</button>
+        <button type="button" class="ghost small" onclick="stratDeclineSuggestion()">No</button></div></div>`
+    : (p && p.ok && !sg && !st.probing ? `<p class="muted">That did not look like a refusal (it exited 0, hung, or was killed), so nothing is suggested.</p>` : "");
+  return `<div class="observe"><label for="probe-text">See how your system refuses invalid input ${hint("hint-obs", "SpreadEx runs your command once on the text below and shows what came back, so you can say whether that is a normal refusal. Nothing is added unless you say yes.")}</label>
+    <div class="tline"><input id="probe-text" type="text" class="sut-cmd" value="${esc(st.probeText)}" spellcheck="false">
+      <button type="button" class="ghost small" onclick="stratObserve()" ${st.probing ? "disabled" : ""}>${st.probing ? "Running…" : "Run once"}</button></div>
+    ${out}${ask}</div>`;
+}
+
 function stratDetail(c) {
   const st = stratState();
-  if (c.id === "crash") return `<p class="muted">An input that gets no answer in <strong>${esc(sut().timeout || "5s")}</strong> is reported as a timeout.
-      The limit is set in <button type="button" class="linkish" onclick="stashStrat(); gotoStep('sut')">System under test</button>.</p>
-      <p class="muted">A non-zero exit counts as a crash unless you say it is expected, using Expected rejections.</p>`;
-  if (c.id === "rej") return `<label for="exit-codes">Exit codes that are not failures</label>
+  if (c.id === "crash") {
+    const tv = sut().timeout || RECOMMENDED_TIMEOUT;
+    return `<div class="tfield"><label for="timeout-4">Per-input timeout ${hint("hint-timeout", "SpreadEx recommends 5 seconds. A compiler may need 30; a tiny parser may be fine with 1.")}</label>
+      <div class="tline"><input id="timeout-4" type="text" class="sut-cmd" value="${esc(tv)}" spellcheck="false" oninput="stratTimeoutInput(this)" aria-describedby="t-help">
+        <span class="t-state">${timeoutState(tv)}</span></div>
+      <p id="t-help" class="muted">Inputs running longer than this are reported as timeouts.</p>
+      <span class="pat-warn warn" role="status"></span></div>
+      <p class="muted">A non-zero exit counts as a crash unless you list it as expected under Expected rejections.</p>`;
+  }
+  if (c.id === "rej") return `${observerBlock()}
+      <label for="exit-codes">Expected exit codes</label>
+      <p class="muted">A run that ends with one of these is treated as normal. Separate several with commas.</p>
       <input id="exit-codes" type="text" class="sut-cmd" placeholder="0, 1" value="${esc(st.codes)}" spellcheck="false">
-      <label>Messages that mean &ldquo;I rejected this&rdquo;</label>
-      <p class="muted">Matched against the output as regular expressions, ignoring case. Copy a real error message from your system.</p>
+      <label>Expected rejection messages</label>
+      <p class="muted">Matching diagnostics are treated as a normal input rejection rather than a crash. Regular expressions, ignoring case.</p>
       ${patRows("rejPats", "SyntaxError")}
       <button type="button" class="ghost small" onclick="stratAddPattern('rejPats')">${ICONS.plus} Add another message</button>`;
-  if (c.id === "sig") return `<label>Messages that always mean a real failure</label>
-      <p class="muted">Checked <em>before</em> the rejection messages, so a broad rejection rule cannot hide a genuine bug.</p>
+  if (c.id === "sig") return `<label>Failure messages</label>
+      <p class="muted">Output matching one of these is always reported as a failure, even if the exit code looks fine. Checked before any rejection rule, so a broad one cannot hide a bug.</p>
       ${patRows("sigPats", "Segmentation fault")}
       <button type="button" class="ghost small" onclick="stratAddPattern('sigPats')">${ICONS.plus} Add another message</button>`;
   return targets().length > 1
@@ -946,6 +1068,13 @@ function stepStrategy() {
       </div>
     </section>
 
+    <details class="sut-adv">
+      <summary><span><strong>How SpreadEx classifies a result</strong></span><span class="muted">The order is fixed by SpreadEx so results stay comparable</span></summary>
+      <div class="sut-adv-body"><ol class="classify">${CLASSIFY_ORDER.map(([a, b]) => `<li><strong>${esc(a)}</strong> <span class="muted">&rarr; ${esc(b)}</span></li>`).join("")}</ol>
+        <p class="muted">With two or more implementations, each is judged this way first; then a difference between them is a divergence.
+          Everything on this page is saved to <span class="mono">spreadex.yaml</span>, which you can also edit by hand.</p></div>
+    </details>
+
     <div id="err"></div>
     <div class="actions inp-actions">
       <button type="button" class="ghost" onclick="stashStrat(); gotoStep('generators')">${ICONS.back} Back to Generators</button>
@@ -974,6 +1103,11 @@ function stepStrategy() {
 
 function commitStrategy() {
   const st = stashStrat();
+  if (el("timeout-4") && durationSeconds(el("timeout-4").value) === null) {
+    st.open.crash = true; stepStrategy();
+    el("err").innerHTML = `<div class="note bad" role="alert">The timeout is not a duration. Use a number with an optional unit: 5, 5s, 2m or 1h.</div>`;
+    return;
+  }
   if (st.rej && !cleanPatterns(st.rejPats).length && !parseExitCodes(st.codes).length) {
     st.open.rej = true; stepStrategy();
     el("err").innerHTML = `<div class="note bad" role="alert">Expected rejections is on but nothing is set up. Add a message your system prints

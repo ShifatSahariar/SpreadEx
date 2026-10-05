@@ -1111,3 +1111,18 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .preset svg { width: 16px; height: 16px; color: var(--color-muted); flex: none; }
 .preset strong { display: block; font-size: .86rem; }
 @media (max-width: 720px) { .schips { margin-left: 0; width: 100%; } .sut-head .preset-pick { margin-left: 0; } }
+.tfield .tline, .observe .tline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.tfield .tline .sut-cmd { width: 8rem; flex: none; }
+.observe .tline .sut-cmd { flex: 1; width: auto; min-width: 12rem; }
+.t-state { display: inline-flex; align-items: center; gap: 8px; font-size: .8rem; }
+.observe { margin: 0 0 6px; padding: 12px 14px; border: 1px dashed var(--color-border); border-radius: var(--radius); }
+.observe label { margin-top: 0; }
+.obs-seen { display: grid; gap: 4px; margin-top: 10px; padding: 10px 12px; font-size: .82rem; border-radius: 8px;
+  background: color-mix(in srgb, var(--color-text) 5%, var(--color-surface)); }
+.obs-seen .muted { display: inline-block; min-width: 4.5rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+.obs-seen .mono { color: var(--code-fg); font-weight: 500; overflow-wrap: anywhere; }
+.obs-ask { margin-top: 10px; padding: 12px; border-radius: 8px; font-size: .85rem;
+  border: 1px solid color-mix(in srgb, #F59E0B 45%, var(--color-border)); background: color-mix(in srgb, #F59E0B 7%, var(--color-surface)); }
+.obs-ask .muted { margin: 4px 0 8px; font-size: .8rem; } .obs-ask .mono { color: var(--code-fg); font-weight: 500; }
+.primary.small { padding: 6px 12px; font-size: .82rem; }
+.classify { margin: 0 0 8px; padding-left: 1.2rem; display: grid; gap: 6px; font-size: .85rem; }

@@ -153,3 +153,91 @@ def test_the_tip_can_be_dismissed_and_stays_dismissed_for_the_session():
 def test_the_semantic_tone_classes_do_not_collide_with_the_shared_step_and_card_tones():
     for tone in ("green", "blue", "purple"):
         assert f".tone-{tone} {{" in CSS and CSS.count(f".tone-{tone} {{") == 1
+
+
+# --------------------------------------------- recommended timeout + suggestions
+
+def test_durations_parse_like_the_server_does():
+    out = _node("['5','5s','2m','1.5h',' 10 s ','soon','','-1'].map(d=>api.durationSeconds(d))")
+    assert out == [5, 5, 120, 5400, 10, None, None, None]   # '10 s' is accepted by the server too
+
+
+def _suggest(probe):
+    return _node(f"api.suggestRejection({json.dumps(probe)})")
+
+
+def test_a_rhino_style_refusal_suggests_exit_3_and_the_js_prefix():
+    r = _suggest({"ok": True, "exit_code": 3, "timed_out": False, "signal": None, "stdout": "",
+                  "stderr": 'js: "test.js", line 1: syntax error\n'})
+    assert r["exitCode"] == 3 and r["pattern"] == "^js: " and "syntax error" in r["line"]
+
+
+def test_a_named_exception_suggests_the_exception_name_escaped_and_anchored():
+    r = _suggest({"ok": True, "exit_code": 1, "stderr": "SyntaxError: Unexpected token ;\n", "stdout": ""})
+    assert r["pattern"] == "^SyntaxError"
+    r2 = _suggest({"ok": True, "exit_code": 2, "stderr": "Traceback (most recent call last):\n", "stdout": ""})
+    assert r2["pattern"] == r"^Traceback \(most recent call last\)"
+
+
+def test_a_suggested_pattern_is_a_valid_regex_that_matches_its_own_line():
+    import re as _re
+    for line in ('js: "t.js", line 1: syntax error', "SyntaxError: Unexpected token", "error[E0308]: mismatched types",
+                 "parse error near ( at 4", "FATAL: bad input"):
+        r = _suggest({"ok": True, "exit_code": 1, "stderr": line, "stdout": ""})
+        assert _re.search(r["pattern"], line, _re.IGNORECASE | _re.MULTILINE), (line, r["pattern"])
+
+
+@pytest.mark.parametrize("probe", [
+    {"ok": True, "exit_code": 0, "stderr": "", "stdout": "fine"},          # it accepted the input
+    {"ok": True, "exit_code": 1, "timed_out": True, "stderr": "x"},         # a hang is not a refusal
+    {"ok": True, "exit_code": None, "signal": 11, "stderr": "segv"},        # a signal is never a refusal
+    {"ok": False, "error": "not found"},
+    None,
+])
+def test_nothing_is_suggested_when_it_did_not_look_like_a_refusal(probe):
+    assert _suggest(probe) is None
+
+
+def test_a_refusal_with_no_output_still_suggests_the_exit_code_only():
+    r = _suggest({"ok": True, "exit_code": 4, "stderr": "", "stdout": ""})
+    assert r["exitCode"] == 4 and r["pattern"] == ""
+
+
+def test_the_timeout_is_editable_here_recommended_badged_and_resettable():
+    for t in ("Per-input timeout", "Recommended", "Reset to recommended", "reported as timeouts"):
+        assert t in JS, t
+    assert 'RECOMMENDED_TIMEOUT = "5s"' in JS
+    body = JS[JS.index("function stratSetTimeout"):]
+    body = body[:body.index("\n}\n")]
+    assert "S.config.sut" in body and "S.draft" in body, "step 1's draft must stay in step with this edit"
+
+
+def test_labels_say_what_happens_not_just_what_the_setting_is_called():
+    for t in ("Inputs running longer than this", "treated as a normal input rejection rather than a crash",
+              "is treated as normal", "is always reported as a failure"):
+        assert t in JS, t
+
+
+def test_the_classification_order_is_shown_read_only_and_matches_the_engine():
+    assert "How SpreadEx classifies a result" in JS and "fixed by SpreadEx" in JS
+    order = JS[JS.index("const CLASSIFY_ORDER"):][:1500]
+    engine = (ROOT / "src/spreadex/exec/oracle.py").read_text()
+    # the page lists the steps in the order CrashOracle.judge performs them
+    idx = [engine.index(k) for k in ("obs.timed_out", "obs.signal is not None", "looks_like_crash(",
+                                     "obs.exit_code in self.expected_exit_codes", "looks_like_rejection(")]
+    assert idx == sorted(idx)
+    pos = [order.index(k) for k in ("No answer in time", "Killed by a signal", "failure message",
+                                    "expected exit code", "expected rejection message", "Anything else")]
+    assert pos == sorted(pos)
+
+
+def test_the_observer_runs_the_first_target_and_cannot_add_without_the_user_saying_yes():
+    o = JS[JS.index("async function stratObserve"):]
+    o = o[:o.index("\n}\n")]
+    assert '"/api/probe"' in o and "targets()[0]" in o
+    acc = JS[JS.index("function stratAcceptSuggestion"):]
+    acc = acc[:acc.index("\n}\n")]
+    assert "st.rej = true" in acc, "accepting turns the check on"
+    assert "!codes.includes(sg.exitCode)" in acc, "an exit code is never added twice"
+    assert "!cleanPatterns(st.rejPats).includes(sg.pattern)" in acc, "nor is a pattern"
+    assert "onclick=\"stratAcceptSuggestion()\"" in JS and "Yes, add as expected rejection" in JS
