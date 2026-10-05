@@ -290,7 +290,7 @@ def test_the_review_screen_names_what_will_be_downloaded_and_run_asks_to_install
 
 # Checked against Crossref on 2026-10-06. Pinned so an edit cannot drift from the source silently.
 VERIFIED = {"grammarinator": ("A-TEST", 2018), "fandango": ("ISSTA", 2025), "isla": ("ESEC/FSE", 2022)}
-VERIFIED_UPCOMING = {"nautilus": ("NDSS", 2019), "fuzz4all": ("ICSE", 2024), "clusgram": ("ICST", 2026)}
+VERIFIED_UPCOMING = {"nautilus": ("NDSS", 2019), "fuzz4all": ("ICSE", 2024)}
 
 
 def test_every_catalog_generator_says_where_it_was_published_or_what_it_is():
@@ -318,6 +318,7 @@ def test_the_api_carries_the_reference_for_real_and_upcoming_generators(tmp_path
     soon = {u["id"]: u["reference"] for u in r["upcoming"]}
     for gid, (venue, year) in VERIFIED_UPCOMING.items():
         assert (soon[gid]["venue"], soon[gid]["year"]) == (venue, year), gid
+    assert soon["clusgram"] == {"kind": "\u2014"}, "ClusGram is under review: a dash, no venue or year"
     assert "venue" not in soon["dharma"], "Dharma has no paper"
     assert soon["dharma"]["kind"] == "Mozilla's grammar fuzzer"
 
@@ -343,3 +344,9 @@ def test_no_generator_carries_an_our_tool_badge():
     r = setup.generator_status(Config.unconfigured(Path(".")))
     assert not any("ours" in u for u in r["upcoming"])
     assert "Our tool" not in JS and "u.ours" not in JS
+
+
+def test_a_dash_reference_has_no_tooltip_because_there_is_no_citation():
+    ref = JS[JS.index("function refLine"):JS.index("function genState")]
+    assert "(r.authors || r.title)" in ref and "const tip" in ref
+    assert 'class="gref"${tip}' in ref, "the tooltip attribute is only added when there is a citation"

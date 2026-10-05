@@ -1978,7 +1978,9 @@ function refTitle(r) {
 }
 function refLine(r) {
   const t = refLabel(r);
-  return t ? `<span class="gref" title="${esc(refTitle(r))}">${ICONS.book}<span>${esc(t)}</span></span>` : "";
+    // A bare dash has no citation behind it, so it gets no tooltip.
+  const tip = (r.authors || r.title) ? ` title="${esc(refTitle(r))}"` : "";
+  return t ? `<span class="gref"${tip}>${ICONS.book}<span>${esc(t)}</span></span>` : "";
 }
 
 function genState() {

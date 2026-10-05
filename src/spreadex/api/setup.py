@@ -113,11 +113,11 @@ GENERATOR_FAMILIES = [
     {"id": "llm-based", "label": "LLM-based"},
 ]
 
-# `reference` entries were checked against Crossref on 2026-10-06. ClusGram is this project's own
-# ICST 2026 paper: venue and year only, because its title is not recorded here.
+# `reference` entries were checked against Crossref on 2026-10-06. ClusGram's paper is under review,
+# so it shows a dash until there is a venue and year to give.
 UPCOMING_GENERATORS = [
     {"id": "clusgram", "name": "ClusGram", "family": "coverage-guided",
-     "reference": {"venue": "ICST", "year": 2026, "authors": "", "title": ""},
+     "reference": {"kind": "\u2014"},
      "summary": "Rule-coverage-driven generation for diverse inputs."},
     {"id": "nautilus", "name": "Nautilus", "family": "coverage-guided",
      "reference": {"venue": "NDSS", "year": 2019, "authors": "Aschermann et al.",
