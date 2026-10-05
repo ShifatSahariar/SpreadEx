@@ -117,7 +117,8 @@ def test_the_filter_offers_every_family_and_applies_to_both_sections():
 
 def test_upcoming_generators_can_never_be_selected():
     u = JS[JS.index("function upcomingCard"):JS.index("function setGenFilter")]
-    assert "<input" not in u and "onclick" not in u and 'aria-disabled="true"' in u and "Coming soon" in u
+    assert "<input" not in u and "onclick" not in u and 'aria-disabled="true"' in u
+    assert "gcheck" not in u, "a coming-soon card must not show a checkbox that looks tickable"
 
 
 def test_only_constraint_capable_generators_get_a_choice_and_it_is_only_saved_when_real():
@@ -167,3 +168,116 @@ def test_fuzz4all_is_listed_inactive_in_the_llm_family_and_cannot_be_run():
     assert f["name"] == "Fuzz4All" and f["family"] == "llm-based"
     assert "fuzz4all" not in {g["id"] for g in r["generators"]}
     assert "LLM generator" not in JS and 'fuzz4all: "gen-llm.png"' in JS
+
+
+# ------------------------------------------------ install later, on the run
+
+class _FakeMgr:
+    """Stands in for GeneratorManager: records installs, never touches the network."""
+    installed_ids = {"fuzzingbook"}
+    log: list = []
+    fail = None
+
+    def __init__(self, *a, **k):
+        self.catalog = {"fandango": _G("Fandango"), "fuzzingbook": _G("FuzzingBook"), "isla": _G("ISLa")}
+
+    def get(self, gid):
+        return self.catalog[gid]
+
+    def status(self, gid):
+        return type("S", (), {"installed": gid in self.installed_ids})()
+
+    def install(self, gid, log=print, upgrade=False):
+        type(self).log.append(("install", gid))
+        if type(self).fail == gid:
+            raise RuntimeError(f"no network to fetch {gid}")
+        self.installed_ids = type(self).installed_ids = type(self).installed_ids | {gid}
+
+
+class _G:
+    def __init__(self, name):
+        self.name = name
+
+
+def _server(tmp_path, gens):
+    from spreadex.api.jobs import JobRunner
+    (tmp_path / "seeds").mkdir(exist_ok=True)
+    (tmp_path / "seeds" / "a").write_text("x")
+    cfg = _project(tmp_path, f"generators: [{', '.join(gens)}]\ncorpus:\n  path: seeds\n"
+                             "budget: {generation: 5s, execution: 5s}\n")
+    return type("Srv", (), {"spreadex_config": cfg, "spreadex_jobs": JobRunner()})()
+
+
+def _go(monkeypatch, tmp_path, gens, body, installed=("fuzzingbook",), fail=None):
+    from spreadex.core import campaign as camp
+    _FakeMgr.installed_ids, _FakeMgr.log, _FakeMgr.fail = set(installed), [], fail
+    monkeypatch.setattr(setup, "GeneratorManager", _FakeMgr)
+
+    class _Camp:
+        def __init__(self, *a, **k): pass
+        def run(self, jobs=1):
+            _FakeMgr.log.append(("run",))
+            return type("R", (), {"run_id": "r", "executed": 0, "verdicts": {}, "new_signatures": []})()
+    monkeypatch.setattr(camp, "Campaign", _Camp)
+    srv = _server(tmp_path, gens)
+    resp = setup.start_run(srv, body)
+    srv.spreadex_jobs._thread.join(10)
+    return resp, srv.spreadex_jobs.current
+
+
+def test_missing_generators_are_installed_before_the_run_when_the_user_agreed(monkeypatch, tmp_path):
+    resp, job = _go(monkeypatch, tmp_path, ["fandango", "fuzzingbook", "isla"], {"install_missing": True})
+    assert resp["ok"] and resp["installing"] == ["fandango", "isla"]
+    assert _FakeMgr.log == [("install", "fandango"), ("install", "isla"), ("run",)]   # installed first, never twice
+    assert job.ok and job.result["installed"] == ["fandango", "isla"]
+
+
+def test_nothing_is_installed_unless_the_request_says_so(monkeypatch, tmp_path):
+    resp, job = _go(monkeypatch, tmp_path, ["fandango"], {})
+    assert resp["installing"] == [] and ("install", "fandango") not in _FakeMgr.log
+
+
+def test_a_failed_install_stops_the_run_and_says_why(monkeypatch, tmp_path):
+    resp, job = _go(monkeypatch, tmp_path, ["fandango"], {"install_missing": True}, fail="fandango")
+    assert job.ok is False and "no network to fetch fandango" in job.error
+    assert ("run",) not in _FakeMgr.log
+
+
+def test_already_installed_generators_are_left_alone(monkeypatch, tmp_path):
+    resp, job = _go(monkeypatch, tmp_path, ["fuzzingbook"], {"install_missing": True})
+    assert resp["installing"] == [] and _FakeMgr.log == [("run",)]
+
+
+def test_the_install_recipe_comes_from_the_catalog_not_the_request(monkeypatch, tmp_path):
+    resp, job = _go(monkeypatch, tmp_path, ["fandango"], {"install_missing": True, "package": "evil", "install": ["x"]})
+    assert _FakeMgr.log[0] == ("install", "fandango")
+    import inspect
+    assert "body.get(\"package\")" not in inspect.getsource(setup.start_run)
+
+
+# ------------------------------------------------------------- the page
+
+def test_not_installed_becomes_a_plan_once_selected():
+    assert "function isPending" in JS and "Installs when you run" in JS
+    t = JS[JS.index("function installTag"):JS.index("function inFilter")]
+    assert "isPending(g)" in t and "Not installed" in t and "Installed" in t
+
+
+def test_choosing_a_not_installed_generator_no_longer_blocks_continue():
+    c = JS[JS.index("function commitGenerators"):]
+    c = c[:c.index("\n}\n")]
+    assert "Not installed:" not in c and 'gotoStep("strategy")' in c
+
+
+def test_coming_soon_is_its_own_grey_section_apart_from_other_generators():
+    p = JS[JS.index("function paintGenerators"):JS.index("function openGenModal")]
+    assert 'class="gsec soonsec"' in p and "Coming soon" in p
+    other = p[p.index('id="gh-oth"'):p.index('class="gsec soonsec"')]
+    assert "upcomingCard" not in other
+    assert re.search(r"\.gsec\.soonsec \.gcard\.soon \{[^}]*grayscale\(1\)", CSS)
+
+
+def test_the_review_screen_names_what_will_be_downloaded_and_run_asks_to_install():
+    assert "Installed on first run" in JS and "downloaded from PyPI" in JS
+    assert "install_missing: true" in JS
+    assert "if (!S.generators)" in JS[JS.index("async function stepRun"):][:300]

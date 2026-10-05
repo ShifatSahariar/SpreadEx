@@ -176,6 +176,17 @@ def start_install(server, body: dict) -> dict[str, Any]:
     return {"ok": True, "started": gen.id}
 
 
+def missing_generators(config) -> list[str]:
+    """Selected generators that SpreadEx knows how to install but that are not installed yet.
+
+    The install recipe comes only from the catalog (package name and pinned version), never from
+    a model or from anything the request supplies.
+    """
+    mgr = GeneratorManager()
+    return [gid for gid in (config.generators or [])
+            if gid in mgr.catalog and not mgr.status(gid).installed]
+
+
 def start_run(server, body: dict) -> dict[str, Any]:
     """Launch a campaign using the configuration already on disk.
 
@@ -204,11 +215,25 @@ def start_run(server, body: dict) -> dict[str, Any]:
             return {"ok": False, "error": f"bad budget {budget!r}"}
 
     command = " ".join(config.targets[0].command) if config.targets else "?"
+    # Installing is something the user agreed to on the review screen, which lists what will be
+    # downloaded; a request that does not say so installs nothing and the campaign says what is missing.
+    install = bool(body.get("install_missing"))
+    to_install = missing_generators(config) if install else []
 
     def work(job):
+        installed = []
+        if to_install:
+            mgr = GeneratorManager()
+            job.log(f"Installing {len(to_install)} generator(s) before the run "
+                    f"(first time only; the run's time budget has not started).")
+            for gid in to_install:
+                job.log(f"- {mgr.get(gid).name}")
+                mgr.install(gid, log=job.log)
+                installed.append(gid)
         job.log(f"Running: {command}")
         result = Campaign(config, log=job.log).run(jobs=jobs)
         return {
+            "installed": installed,
             "run_id": result.run_id,
             "executed": result.executed,
             "verdicts": result.verdicts,
@@ -220,7 +245,7 @@ def start_run(server, body: dict) -> dict[str, Any]:
     except RuntimeError as exc:
         return {"ok": False, "error": str(exc)}
     # Echo the command back so the UI can show what it just set going.
-    return {"ok": True, "command": command}
+    return {"ok": True, "command": command, "installing": to_install}
 
 
 # -------------------------------------------------------- assistance (opt-in)

@@ -1047,3 +1047,12 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .subtle-danger { color: var(--color-error); border-color: var(--color-error-bd); }
 @media (max-width: 720px) { .specbar { flex-direction: column; align-items: stretch; } .ggrid { grid-template-columns: minmax(0, 1fr); } }
 .sut-badge.blue { background: #1687F8; } .sut-badge.purple { background: #9333EA; }
+.tag.pend { color: #9333EA; border-color: color-mix(in srgb, #9333EA 40%, var(--color-border));
+  background: color-mix(in srgb, #9333EA 9%, var(--color-surface)); }
+:root[data-theme="dark"] .tag.pend { color: #c4a0f7; }
+/* Coming soon: visibly a different kind of thing -- grey, flat, nothing to click. */
+.gsec.soonsec { background: color-mix(in srgb, var(--color-text) 3%, var(--color-surface)); border-style: dashed; }
+.gsec.soonsec .gsec-h h4 { color: var(--color-muted); }
+.gsec.soonsec .gcard.soon { background: transparent; filter: grayscale(1); opacity: .72; }
+.gsec.soonsec .gcard.soon .gname { color: var(--color-muted); }
+.gcard.soon .gbody { padding-left: 12px; }

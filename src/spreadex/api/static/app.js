@@ -1979,6 +1979,14 @@ function genSplit() {
   return { recommended, other };
 }
 
+// A generator that is not installed is not a problem: it is installed when the run starts, after
+// everything has been asked. Selecting it changes the wording from a state to a plan.
+function isPending(g) { return !g.installed && (cfg().generators || []).includes(g.id); }
+function installTag(g) {
+  if (g.installed) return `<span class="tag ok">Installed</span>`;
+  return isPending(g) ? `<span class="tag pend">Installs when you run</span>` : `<span class="tag warn">Not installed</span>`;
+}
+
 function inFilter(family) { const f = genState().filter; return f === "all" || family === f; }
 
 function genCard({ g, fit }, recommended) {
@@ -1993,7 +2001,7 @@ function genCard({ g, fit }, recommended) {
       <span class="gtext">
         <span class="gname">${esc(g.name)} ${recommended ? `<span class="tag ok gtag">Recommended</span>` : ""}</span>
         <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[g.family] || "Grammar")}</span>
-          ${g.installed ? `<span class="tag ok">Installed</span>` : `<span class="tag warn">Not installed</span>`}
+          ${installTag(g)}
           ${cleanVersion(g.version) ? `<span class="muted gver">v${esc(cleanVersion(g.version))}</span>` : ""}</span>
         ${fit.ok ? "" : `<span class="gwhy">${ICONS.alert}<span>${esc(fit.why)}</span></span>`}
         ${chosen && opt.constraints === false ? `<span class="muted gopt">Constraints off: grammar only</span>` : ""}
@@ -2003,10 +2011,9 @@ function genCard({ g, fit }, recommended) {
 
 function upcomingCard(u) {
   return `<div class="gcard soon" aria-disabled="true">
-    <span class="gcheck"><span class="box" aria-hidden="true"></span></span>
     <div class="gbody static">${genLogo(u.id)}<span class="gtext">
       <span class="gname">${esc(u.name)} ${u.ours ? `<span class="tag gfam">Our tool</span>` : ""}</span>
-      <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[u.family])}</span><span class="tag">Coming soon</span></span>
+      <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[u.family])}</span></span>
       <span class="muted gopt">${esc(u.summary)}</span></span></div></div>`;
 }
 
@@ -2090,11 +2097,17 @@ function paintGenerators() {
     </section>
 
     <section class="gsec" aria-labelledby="gh-oth">
-      <div class="gsec-h"><h4 id="gh-oth">Other generators ${hint("hint-oth", "Generators that cannot run this grammar, or that are not available yet. Disabled ones say why.")}</h4>
-        <span class="gcount">${otherShown.length + soon.length} shown</span></div>
-      <div class="ggrid">${otherShown.map(x => genCard(x, false)).join("")}${soon.map(upcomingCard).join("") ||
-        (otherShown.length ? "" : `<div class="muted gempty">None in this family.</div>`)}</div>
+      <div class="gsec-h"><h4 id="gh-oth">Other generators ${hint("hint-oth", "Generators that cannot run this grammar, or that did not make the top three. Disabled ones say why. Ones that are not installed yet are installed when you run.")}</h4>
+        <span class="gcount">${otherShown.length} shown</span></div>
+      <div class="ggrid">${otherShown.map(x => genCard(x, false)).join("") ||
+        `<div class="muted gempty">None in this family.</div>`}</div>
     </section>
+
+    ${soon.length ? `<section class="gsec soonsec" aria-labelledby="gh-soon">
+      <div class="gsec-h"><h4 id="gh-soon">Coming soon ${hint("hint-soon", "Planned generators. They are listed so you can see what is on the way; they cannot be selected yet.")}</h4>
+        <span class="gcount">${soon.length} planned</span></div>
+      <div class="ggrid">${soon.map(upcomingCard).join("")}</div>
+    </section>` : ""}
 
     <div id="joblog"></div>
     <div id="err"></div>
@@ -2120,7 +2133,7 @@ function paintGenerators() {
       <div class="gsel-h"><h4>Selected generators <span class="muted">(${sel.length})</span></h4>
         ${sel.length ? `<button type="button" class="linkish" onclick="clearGenerators()">Clear all</button>` : ""}</div>
       ${sel.length ? sel.map(g => `<div class="gsel-row">${genLogo(g.id)}<strong>${esc(g.name)}</strong>
-        <span class="muted">${cleanVersion(g.version) ? "v" + esc(cleanVersion(g.version)) : ""}</span>
+        <span class="muted">${g.installed ? (cleanVersion(g.version) ? "v" + esc(cleanVersion(g.version)) : "") : "installs on run"}</span>
         <button type="button" class="gx" onclick="removeGen('${esc(g.id)}')" aria-label="Remove ${esc(g.name)}">&times;</button></div>`).join("")
         : `<div class="muted">None yet. Tick a generator, or click one to see its options.</div>`}
     </div>
@@ -2194,7 +2207,9 @@ function paintGenModal() {
   }
   const status = g.installed
     ? `<span class="tag ok">Installed${cleanVersion(g.version) ? " v" + esc(cleanVersion(g.version)) : ""}</span> <span class="muted">${esc(g.where || "")}</span>`
-    : `<span class="tag warn">Not installed</span> <button type="button" class="ghost small" onclick="closeGenModal(); installGen('${esc(g.id)}')">${ICONS.download} Install ${esc(g.name)}</button>`;
+    : `${installTag(g)} <button type="button" class="ghost small" onclick="closeGenModal(); installGen('${esc(g.id)}')">${ICONS.download} Install now</button>`;
+  const lazy = g.installed ? "" : `<p class="muted gm-sum">${esc(g.name)} is not installed. If you use it, SpreadEx downloads it into its own
+    environment when you start the run, after the setup is finished. That keeps the first install small. Or install it now.</p>`;
   el("gen-modal-host").innerHTML = `
   <div class="gm-back" onclick="if (event.target === this) closeGenModal()">
    <div class="gm" role="dialog" aria-modal="true" aria-labelledby="gm-t" onkeydown="genModalKeys(event)">
@@ -2203,6 +2218,7 @@ function paintGenModal() {
         <div class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[g.family] || "Grammar")}</span> ${status}</div></div>
       <button type="button" class="gx" onclick="closeGenModal()" aria-label="Close">&times;</button></header>
     <p class="muted gm-sum">${esc(g.summary)}</p>
+    ${lazy}
     <h4 class="inp-h5">Can it run your grammar?</h4>
     ${fit.ok ? `<div class="gm-fit ok">${ICONS.success}<span>${fit.how === "rewrite" ? "Yes, after rewriting the grammar into its dialect." : "Yes, directly."}
         ${(fit.risks || []).map(r => `<span class="warn gm-risk">! ${esc(r)}</span>`).join("")}</span></div>`
@@ -2353,16 +2369,12 @@ function commitGenerators() {
       point at a corpus directory.</div>`;
     return;
   }
-  const missing = S.generators.filter(g => (cfg().generators || []).includes(g.id) && !g.installed);
-  if (missing.length) {
-    el("err").innerHTML = `<div class="note bad">Not installed: ${missing.map(m => esc(m.name)).join(", ")}.
-      Install them, or deselect them.</div>`;
-    return;
-  }
+  // Generators that are not installed are installed when the run starts (see the review screen).
   gotoStep("strategy");
 }
 
 async function stepRun(current = () => true) {
+  if (!S.generators) { try { S.generators = (await api("/api/generators")).generators; } catch (e) { /* the summary just omits the row */ } }
   const c = cfg();
   if (!c.generation) c.generation = { mode: "time", per_generator: "30s" };
   el("view").innerHTML = `
@@ -2434,6 +2446,15 @@ async function stepRun(current = () => true) {
     el(id) && el(id).addEventListener("change", refreshPreview));
 }
 
+// Names the downloads before they happen: this row is the user's chance to say no.
+function pendingInstallRow(row) {
+  const names = (S.generators || []).filter(isPending).map(g => g.name);
+  if (!names.length) return "";
+  return row("Installed on first run", `${names.map(esc).join(", ")}
+    <span class="muted">&mdash; downloaded from PyPI into ${names.length > 1 ? "their own environments" : "its own environment"}
+    when you press Run. The time budget starts after.</span>`);
+}
+
 function reviewSummary() {
   // The same facts as the YAML, in the order someone would ask about them.
   const c = cfg(), t = targets();
@@ -2455,6 +2476,7 @@ function reviewSummary() {
         ? gens.map(esc).join(", ")
         : (c.corpus?.path ? "nobody &mdash; existing inputs only"
                           : "<span class=\"bad\">no generator selected</span>"))}
+    ${pendingInstallRow(row)}
     ${row("Reported as failures", checks.join("; "))}
     ${row("Budget", `${esc(c.budget?.generation || "1m")} generating,
            ${esc(c.budget?.execution || "1m")} executing &mdash; and no more`)}
@@ -2501,7 +2523,7 @@ async function launch() {
     // The server adopts the file we just wrote; re-read so the header and the
     // steps reflect the project that now exists.
     try { S.project = await api("/api/project"); } catch (e) { /* non-fatal */ }
-    const started = await api("/api/run", { jobs: Number(el("jobs").value) || 1 });
+    const started = await api("/api/run", { jobs: Number(el("jobs").value) || 1, install_missing: true });
     if (started.ok === false) throw new Error(started.error);
     el("joblog").innerHTML = `<div class="note" style="border-left-color:var(--color-primary);
       background:var(--color-primary-lt)">Running <span class="mono">${esc(started.command)}</span></div>`;
