@@ -336,3 +336,10 @@ def test_coming_soon_cards_show_only_the_reference_not_a_description():
 
 def test_a_reference_note_reaches_the_tooltip():
     assert "r.note ?" in JS[JS.index("function refTitle"):JS.index("function refLine")]
+
+
+def test_no_generator_carries_an_our_tool_badge():
+    from spreadex.core.config import Config
+    r = setup.generator_status(Config.unconfigured(Path(".")))
+    assert not any("ours" in u for u in r["upcoming"])
+    assert "Our tool" not in JS and "u.ours" not in JS

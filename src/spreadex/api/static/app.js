@@ -2044,7 +2044,7 @@ function genCard({ g, fit }, recommended) {
 function upcomingCard(u) {
   return `<div class="gcard soon" aria-disabled="true">
     <div class="gbody static">${genLogo(u.id)}<span class="gtext">
-      <span class="gname">${esc(u.name)} ${u.ours ? `<span class="tag gfam">Our tool</span>` : ""}</span>
+      <span class="gname">${esc(u.name)}</span>
       <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[u.family])}</span></span>
       ${refLine(u.reference)}</span></div></div>`;
 }
