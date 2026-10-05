@@ -819,7 +819,6 @@ function readStrat() {
   const st = stratState();
   document.querySelectorAll(".pat-rejPats").forEach((i, k) => { st.rejPats[k] = i.value; });
   document.querySelectorAll(".pat-sigPats").forEach((i, k) => { st.sigPats[k] = i.value; });
-  if (el("exit-codes")) st.codes = el("exit-codes").value;
   return st;
 }
 function syncStrat() {
@@ -871,12 +870,15 @@ function stratSetTimeout(value) {
   return true;
 }
 function stratTimeoutInput(input) {
-  const ok = stratSetTimeout(input.value);
+  // The box holds seconds (the design's "seconds" unit); the config stores "20s".
+  const raw = String(input.value).trim();
+  const ok = raw !== "" && stratSetTimeout(raw + "s");
   input.setAttribute("aria-invalid", String(!ok));
-  const w = input.closest(".tfield")?.querySelector(".pat-warn");
-  if (w) w.textContent = ok ? "" : "Use a number with an optional unit: 5, 5s, 2m or 1h.";
-  const badge = input.closest(".tfield")?.querySelector(".t-state");
-  if (badge && ok) badge.innerHTML = timeoutState(input.value);
+  const f = input.closest(".tfield");
+  const w = f?.querySelector(".pat-warn");
+  if (w) w.textContent = ok ? "" : "Enter a number of seconds greater than zero.";
+  const badge = f?.querySelector(".t-state");
+  if (badge && ok) badge.innerHTML = timeoutState(raw + "s");
 }
 function timeoutState(v) {
   return durationSeconds(v) === durationSeconds(RECOMMENDED_TIMEOUT)
@@ -950,7 +952,8 @@ function stratActive() {
 
 function stratChips(c) {
   const st = stratState(), o = cfg().oracle || {};
-  const chip = (icon, text) => `<span class="schip">${ICONS[icon]}<span>${esc(text)}</span></span>`;
+  // A chip is also a shortcut: the pencil says "edit this", and it opens the row's settings.
+  const chip = (icon, text) => `<button type="button" class="schip edit" onclick="stratOpen('${c.id}')" aria-label="Edit: ${esc(text)}">${ICONS[icon]}<span>${esc(text)}</span>${ICONS.edit}</button>`;
   if (c.id === "crash") {
     const judged = st.rej || (o.expected_exit_codes || []).length;
     return chip("clock", `Timeout: ${sut().timeout || "5s"}`) +
@@ -959,17 +962,19 @@ function stratChips(c) {
   if (c.id === "rej") {
     if (!st.rej) return "";
     const n = parseExitCodes(st.codes).length, m = cleanPatterns(st.rejPats).length;
-    return (n ? chip("file", `${n} exit code${n > 1 ? "s" : ""}`) : "") + (m ? chip("file", `${m} message pattern${m > 1 ? "s" : ""}`) : "")
+    return (n ? chip("file", `${n} exit code${n > 1 ? "s" : ""}`) : "") + (m ? chip("doc", `${m} pattern${m > 1 ? "s" : ""}`) : "")
       || chip("file", "Nothing set up yet");
   }
   if (c.id === "sig") {
     if (!st.sig) return "";
     const m = cleanPatterns(st.sigPats).length;
-    return chip("file", m ? `${m} pattern${m > 1 ? "s" : ""}` : "Nothing set up yet");
+    return chip("doc", m ? `${m} pattern${m > 1 ? "s" : ""}` : "Nothing set up yet");
   }
-  if (targets().length > 1) return chip("grid", `${targets().length} implementations`);
+  if (targets().length > 1) return `<span class="schip">${ICONS.grid}<span>${targets().length} implementations</span></span>`;
   return `<button type="button" class="schip add" onclick="stratGoAddReference()">${ICONS.plus}<span>Add reference</span></button>`;
 }
+function stratOpen(id) { const st = readStrat(); st.open[id] = true; syncStrat(); stepStrategy(); }
+
 function stratGoAddReference() { stashStrat(); const d = sutDraft(); if (!d.extra.length) d.extra.push({ name: "sut2", command: "" }); gotoStep("sut"); }
 
 
@@ -990,29 +995,54 @@ function observerBlock() {
     ${out}${ask}</div>`;
 }
 
+// Exit codes are tokens, not a comma-separated string: each one reads as a thing you can remove.
+function codeTokens() {
+  const codes = parseExitCodes(stratState().codes);
+  return `<div class="ctokens">${codes.map(c => `<span class="cchip"><span class="mono">${c}</span>
+      <button type="button" onclick="stratDropCode(${c})" aria-label="Remove exit code ${c}">&times;</button></span>`).join("")}
+    <span class="cadd"><input id="code-add" type="text" inputmode="numeric" class="sut-cmd" placeholder="Add code" size="7" aria-label="Add an exit code"
+        onkeydown="if (event.key === 'Enter') { event.preventDefault(); stratAddCode(); }">
+      <button type="button" class="linkish" onclick="stratAddCode()">${ICONS.plus} Add</button></span></div>`;
+}
+function stratAddCode() {
+  const st = readStrat(), box = el("code-add"), n = box ? Number(box.value.trim()) : NaN;
+  if (!Number.isInteger(n)) { if (box) { box.setAttribute("aria-invalid", "true"); box.focus(); } return; }
+  const codes = parseExitCodes(st.codes);
+  if (!codes.includes(n)) codes.push(n);
+  st.codes = codes.join(", "); st.rej = true; syncStrat(); stepStrategy(); el("code-add")?.focus();
+}
+function stratDropCode(n) {
+  const st = readStrat(); st.codes = parseExitCodes(st.codes).filter(c => c !== n).join(", ");
+  syncStrat(); stepStrategy();
+}
+function stratNonZero(v) { stratSet("rej", v === "judged"); }
+
 function stratDetail(c) {
   const st = stratState();
+  const col = (inner, cls = "") => `<div class="scol ${cls}">${inner}</div>`;
   if (c.id === "crash") {
     const tv = sut().timeout || RECOMMENDED_TIMEOUT;
-    return `<div class="tfield"><label for="timeout-4">Per-input timeout ${hint("hint-timeout", "SpreadEx recommends 5 seconds. A compiler may need 30; a tiny parser may be fine with 1.")}</label>
-      <div class="tline"><input id="timeout-4" type="text" class="sut-cmd" value="${esc(tv)}" spellcheck="false" oninput="stratTimeoutInput(this)" aria-describedby="t-help">
-        <span class="t-state">${timeoutState(tv)}</span></div>
-      <p id="t-help" class="muted">Inputs running longer than this are reported as timeouts.</p>
-      <span class="pat-warn warn" role="status"></span></div>
-      <p class="muted">A non-zero exit counts as a crash unless you list it as expected under Expected rejections.</p>`;
+    const secs = durationSeconds(tv);
+    return `<div class="sgrid">${col(`<div class="tfield"><label for="timeout-4">Execution timeout ${hint("hint-timeout", "SpreadEx recommends 5 seconds. A compiler may need 30; a tiny parser may be fine with 1.")}</label>
+        <div class="unitbox"><input id="timeout-4" type="number" min="0.1" step="any" class="sut-cmd" value="${esc(String(secs === null ? "" : Math.round(secs * 100) / 100))}" oninput="stratTimeoutInput(this)" aria-describedby="t-help"><span class="unit">seconds</span></div>
+        <div class="t-state">${timeoutState(tv)}</div>
+        <p id="t-help" class="muted">An input with no response in this time is reported as a timeout.</p>
+        <span class="pat-warn warn" role="status"></span></div>`)}
+      ${col(`<label for="nz">Non-zero exit code ${hint("hint-nz", "Most compilers and parsers exit non-zero for input they refuse. Choose whether that is a crash or is judged by your Expected rejections.")}</label>
+        <select id="nz" onchange="stratNonZero(this.value)"><option value="crash" ${st.rej ? "" : "selected"}>Treat as crash (default)</option>
+          <option value="judged" ${st.rej ? "selected" : ""}>Judge by expected rejections</option></select>
+        <p class="muted">A non-zero exit is considered a crash unless you configure Expected rejections.</p>`)}</div>`;
   }
-  if (c.id === "rej") return `${observerBlock()}
-      <label for="exit-codes">Expected exit codes</label>
-      <p class="muted">A run that ends with one of these is treated as normal. Separate several with commas.</p>
-      <input id="exit-codes" type="text" class="sut-cmd" placeholder="0, 1" value="${esc(st.codes)}" spellcheck="false">
-      <label>Expected rejection messages</label>
-      <p class="muted">Matching diagnostics are treated as a normal input rejection rather than a crash. Regular expressions, ignoring case.</p>
-      ${patRows("rejPats", "SyntaxError")}
-      <button type="button" class="ghost small" onclick="stratAddPattern('rejPats')">${ICONS.plus} Add another message</button>`;
-  if (c.id === "sig") return `<label>Failure messages</label>
-      <p class="muted">Output matching one of these is always reported as a failure, even if the exit code looks fine. Checked before any rejection rule, so a broad one cannot hide a bug.</p>
-      ${patRows("sigPats", "Segmentation fault")}
-      <button type="button" class="ghost small" onclick="stratAddPattern('sigPats')">${ICONS.plus} Add another message</button>`;
+  if (c.id === "rej") return `${observerBlock()}<div class="sgrid">${col(`<label>Exit codes that are not failures ${hint("hint-codes", "A run that ends with one of these is treated as normal.")}</label>
+        ${codeTokens()}<p class="muted">Exit codes used when the system intentionally rejects an input.</p>`)}
+      ${col(`<label>Rejection message patterns ${hint("hint-rejpats", "Matching diagnostics are treated as a normal input rejection rather than a crash. Regular expressions, ignoring case.")}</label>
+        ${patRows("rejPats", "SyntaxError")}
+        <button type="button" class="ghost small" onclick="stratAddPattern('rejPats')">${ICONS.plus} Add pattern</button>`)}</div>`;
+  if (c.id === "sig") return `<div class="sgrid">${col(`<label>Crash / error message patterns ${hint("hint-sigpats", "Output matching one of these is always reported as a failure, even if the exit code looks fine.")}</label>
+        ${patRows("sigPats", "Segmentation fault")}
+        <button type="button" class="ghost small" onclick="stratAddPattern('sigPats')">${ICONS.plus} Add pattern</button>`)}
+      ${col(`<div class="sinfo">${ICONS.info}<div><strong>Matched before rejections</strong>
+        <p class="muted">These patterns are checked before the rejection patterns, so a genuine crash is not hidden by a broad rejection rule.</p></div></div>`)}</div>`;
   return targets().length > 1
     ? `<p class="muted">${targets().length} implementations run every input. A different exit class, exception or output is a divergence; all of them refusing the same input is not.</p>`
     : `<p class="muted">Needs a second implementation to compare against. Add one in System under test; no expected output is required.</p>
@@ -1051,14 +1081,15 @@ function stepStrategy() {
       <h4 id="cfg-h">Configuration</h4>
       <p class="muted inp-sub">Set up the selected checks. Use the defaults or customise as needed.</p>
       <div class="srows">${STRAT_CHECKS.map(c => {
-        const on = c.floor || st[c.id], open = !!st.open[c.id] || (c.floor && st.open[c.id]);
+        const on = c.floor || st[c.id], open = !!st.open[c.id];
         const dis = c.id === "diff" && !multi;
-        return `<div class="srow ${on ? "" : "off"}">
+        return `<div class="srow tc-${c.tone} ${on ? "on" : "off"}">
           <div class="srow-h">
             <button type="button" class="switch" role="switch" aria-checked="${on}" ${c.floor || dis ? "disabled" : ""}
               aria-label="${esc(c.t)}${c.floor ? " (always on)" : ""}" onclick="stratSet('${c.id}', ${!on})"><span></span></button>
             <span class="stile ${c.tone}" aria-hidden="true">${ICONS[c.icon]}</span>
-            <strong class="srow-t">${c.t}${c.floor ? ` <span class="tag">Always on</span>` : ""}</strong>
+            <strong class="srow-t">${c.t} ${hint("hint-row-" + c.id, c.tip)}</strong>
+            <span class="spill">${on ? "Enabled" : "Disabled"}</span>
             <span class="schips">${stratChips(c)}</span>
             <button type="button" class="chev ${open ? "open" : ""}" aria-expanded="${open}" aria-label="${open ? "Hide" : "Show"} settings for ${esc(c.t)}"
               onclick="stratToggleRow('${c.id}')">${ICONS.chevron}</button>
@@ -1103,9 +1134,10 @@ function stepStrategy() {
 
 function commitStrategy() {
   const st = stashStrat();
-  if (el("timeout-4") && durationSeconds(el("timeout-4").value) === null) {
+  const tsecs = el("timeout-4") ? durationSeconds(el("timeout-4").value + "s") : 1;
+  if (tsecs === null || tsecs <= 0) {
     st.open.crash = true; stepStrategy();
-    el("err").innerHTML = `<div class="note bad" role="alert">The timeout is not a duration. Use a number with an optional unit: 5, 5s, 2m or 1h.</div>`;
+    el("err").innerHTML = `<div class="note bad" role="alert">The timeout must be a number of seconds greater than zero.</div>`;
     return;
   }
   if (st.rej && !cleanPatterns(st.rejPats).length && !parseExitCodes(st.codes).length) {

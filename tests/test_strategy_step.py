@@ -203,19 +203,26 @@ def test_a_refusal_with_no_output_still_suggests_the_exit_code_only():
     assert r["exitCode"] == 4 and r["pattern"] == ""
 
 
-def test_the_timeout_is_editable_here_recommended_badged_and_resettable():
-    for t in ("Per-input timeout", "Recommended", "Reset to recommended", "reported as timeouts"):
-        assert t in JS, t
-    assert 'RECOMMENDED_TIMEOUT = "5s"' in JS
+def test_the_timeout_is_editable_here_in_seconds_recommended_badged_and_resettable():
+    for s in ("Execution timeout", "seconds", "Recommended", "Reset to recommended"):
+        assert s in JS, s
+    assert 'RECOMMENDED_TIMEOUT = "5s"' in JS and 'type="number"' in JS
     body = JS[JS.index("function stratSetTimeout"):]
     body = body[:body.index("\n}\n")]
     assert "S.config.sut" in body and "S.draft" in body, "step 1's draft must stay in step with this edit"
+    box = JS[JS.index("function stratTimeoutInput"):]
+    assert 'raw + "s"' in box[:400], "the box shows seconds; the config stores a duration"
 
 
-def test_labels_say_what_happens_not_just_what_the_setting_is_called():
-    for t in ("Inputs running longer than this", "treated as a normal input rejection rather than a crash",
-              "is treated as normal", "is always reported as a failure"):
-        assert t in JS, t
+def test_each_setting_states_its_consequence_in_the_design_s_words():
+    for s in ("An input with no response in this time is reported as a timeout.",
+              "A non-zero exit is considered a crash unless you configure Expected rejections.",
+              "Exit codes used when the system intentionally rejects an input.",
+              "treated as a normal input rejection rather than a crash",
+              "is always reported as a failure",
+              "Matched before rejections",
+              "so a genuine crash is not hidden by a broad rejection rule"):
+        assert s in JS, s
 
 
 def test_the_classification_order_is_shown_read_only_and_matches_the_engine():
@@ -241,3 +248,35 @@ def test_the_observer_runs_the_first_target_and_cannot_add_without_the_user_sayi
     assert "!codes.includes(sg.exitCode)" in acc, "an exit code is never added twice"
     assert "!cleanPatterns(st.rejPats).includes(sg.pattern)" in acc, "nor is a pattern"
     assert "onclick=\"stratAcceptSuggestion()\"" in JS and "Yes, add as expected rejection" in JS
+
+
+
+# -------------------------------------------------- the configuration panels
+
+def test_each_row_is_a_tinted_panel_with_a_status_pill_and_pencil_chips():
+    for s in ('class="spill"', '"Enabled"', '"Disabled"', 'class="srow tc-${c.tone}', "schip edit", "stratOpen("):
+        assert s in JS, s
+    assert re.search(r"\.srow\.on \{[^}]*linear-gradient\(180deg, color-mix\(in srgb, var\(--rc\)", CSS)
+    assert ".sgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)" in CSS
+    assert "@media (max-width: 720px) { .sgrid { grid-template-columns: minmax(0, 1fr); }" in CSS
+
+
+def test_exit_codes_are_removable_tokens_that_never_duplicate():
+    assert "function codeTokens" in JS and "stratDropCode(" in JS and "stratAddCode()" in JS
+    add = JS[JS.index("function stratAddCode"):]
+    add = add[:add.index("\n}\n")]
+    assert "Number.isInteger(n)" in add and "!codes.includes(n)" in add and "readStrat()" in add
+    assert 'el("exit-codes")' not in JS, "the comma-separated box is gone; tokens are the state"
+
+
+def test_the_non_zero_exit_choice_is_the_expected_rejections_switch_not_a_separate_setting():
+    sel = JS[JS.index("function stratNonZero"):]
+    sel = sel[:sel.index("\n}") + 2] if "\n}" in sel else sel
+    assert 'stratSet("rej", v === "judged")' in sel
+    assert "Treat as crash (default)" in JS and "Judge by expected rejections" in JS
+
+
+def test_the_two_column_body_stacks_on_a_narrow_screen_and_checks_before_leaving():
+    c = JS[JS.index("function commitStrategy"):]
+    c = c[:c.index("\n}\n")]
+    assert "tsecs === null || tsecs <= 0" in c, "zero is not a timeout"

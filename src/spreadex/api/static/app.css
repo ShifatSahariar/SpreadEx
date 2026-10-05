@@ -1126,3 +1126,51 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .obs-ask .muted { margin: 4px 0 8px; font-size: .8rem; } .obs-ask .mono { color: var(--code-fg); font-weight: 500; }
 .primary.small { padding: 6px 12px; font-size: .82rem; }
 .classify { margin: 0 0 8px; padding-left: 1.2rem; display: grid; gap: 6px; font-size: .85rem; }
+
+/* Configuration rows, as designed: each open row is a panel tinted with its check's colour. */
+.srow { --rc: #64748B; border-color: var(--color-border); overflow: hidden; }
+.srow.tc-red { --rc: #EF4444; } .srow.tc-green { --rc: #16A34A; } .srow.tc-blue { --rc: #1687F8; } .srow.tc-purple { --rc: #9333EA; }
+.srow.on { border-color: color-mix(in srgb, var(--rc) 38%, var(--color-border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--rc) 9%, var(--color-surface)) 0, color-mix(in srgb, var(--rc) 3%, var(--color-surface)) 100%); }
+.srow.on .srow-b { border-top: 0; background: color-mix(in srgb, var(--color-surface) 70%, transparent); }
+.srow-t { display: inline-flex; align-items: center; gap: 4px; font-size: 1rem; min-width: 0; }
+.spill { padding: 3px 12px; font-size: .74rem; font-weight: 600; border-radius: 999px;
+  color: var(--color-muted); background: color-mix(in srgb, var(--color-text) 7%, var(--color-surface)); }
+.srow.on .spill { color: var(--rc); background: color-mix(in srgb, var(--rc) 14%, var(--color-surface)); }
+.srow.tc-red.on .spill { color: #d97706; background: color-mix(in srgb, #F59E0B 16%, var(--color-surface)); }   /* "Enabled" is the step's orange on the red row */
+:root[data-theme="dark"] .srow.on .spill { color: color-mix(in srgb, var(--rc) 60%, #fff); }
+.schip.edit { cursor: pointer; border: 1px solid transparent; box-shadow: 0 1px 2px rgba(0, 0, 0, .06); background: var(--color-surface); color: var(--color-text); }
+.schip.edit:hover { border-color: var(--rc); }
+.schip.edit > svg:last-child { color: #1687F8; margin-left: 4px; }
+.srow-b { padding: 6px 18px 18px; }
+.sgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 28px; }
+.sgrid .scol + .scol { padding-left: 28px; border-left: 1px solid color-mix(in srgb, var(--rc) 18%, var(--color-border)); margin-left: -14px; }
+.scol label { display: flex; align-items: center; gap: 4px; margin: 14px 0 8px; font-size: .9rem; font-weight: 700; color: var(--color-text);
+  text-transform: none; letter-spacing: 0; }
+.scol .muted { font-size: .8rem; margin: 8px 0 0; }
+.scol select { width: 100%; }
+.unitbox { display: flex; align-items: stretch; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); overflow: hidden; }
+.unitbox input.sut-cmd { flex: 1; width: auto; border: 0; border-radius: 0; background: transparent; }
+.unitbox .unit { display: grid; place-items: center; padding: 0 14px; font-size: .85rem; color: var(--color-muted);
+  border-left: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-text) 4%, var(--color-surface)); }
+.tfield .t-state { margin-top: 8px; }
+.ctokens { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); background: var(--color-surface); }
+.cchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 6px 5px 12px; border-radius: 8px; font-size: .85rem;
+  color: #1687F8; background: color-mix(in srgb, #1687F8 11%, var(--color-surface)); }
+.cchip button { background: none; border: 0; padding: 0 4px; color: inherit; cursor: pointer; font-size: 1rem; line-height: 1; }
+.cadd { display: inline-flex; align-items: center; gap: 6px; }
+.cadd input.sut-cmd { width: 6.2rem; padding: 5px 8px; }
+.cadd .linkish svg { display: inline; width: 14px; height: 14px; vertical-align: -2px; }
+.sinfo { display: flex; gap: 12px; margin-top: 14px; padding: 16px; border-radius: var(--radius);
+  background: color-mix(in srgb, #1687F8 7%, var(--color-surface)); border: 1px solid color-mix(in srgb, #1687F8 25%, var(--color-border)); }
+.sinfo > svg { flex: none; width: 22px; height: 22px; color: #1687F8; }
+.sinfo p { margin: 4px 0 0; }
+@media (max-width: 720px) { .sgrid { grid-template-columns: minmax(0, 1fr); }
+  .sgrid .scol + .scol { padding-left: 0; margin-left: 0; border-left: 0; } }
+/* Header stays on one line: the chips take the spare room and wrap among themselves, so the
+   chevron never drops under the title. */
+.srow-h { flex-wrap: nowrap; }
+.srow-h .schips { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+.srow-t { flex: 0 1 auto; flex-wrap: wrap; }
+@media (max-width: 720px) { .srow-h { flex-wrap: wrap; } .srow-h .schips { flex-basis: 100%; justify-content: flex-start; order: 5; } }
