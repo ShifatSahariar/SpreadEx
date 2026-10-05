@@ -54,16 +54,178 @@ const S = {
   generators: [], grammars: [], runs: [], current: null, polling: null,
 };
 
+function initialView(project, runs) {
+  if (!project.configured) return "landing";
+  return runs.length ? "results" : "setup";
+}
+
+// ---------------------------------------------------------------- icons
+// Inline SVG rather than glyphs: a font glyph like "▥" renders differently on
+// every platform and cannot take a theme colour. These inherit currentColor,
+// scale with the box, and carry no text content for a screen reader to read
+// out -- the label beside them is the label.
+const I = (p, o = {}) =>
+  `<svg class="ico" viewBox="0 0 24 24" fill="${o.fill || "none"}" stroke="currentColor"
+     stroke-width="${o.w || 1.8}" stroke-linecap="round" stroke-linejoin="round"
+     aria-hidden="true" focusable="false">${p}</svg>`;
+
+const ICONS = {
+  home:       I(`<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-5.5h5V20"/>`),
+  folder:     I(`<path d="M3 7a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.6.8l.9 1.2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`),
+  sliders:    I(`<path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h8M16 17h4"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="14" cy="17" r="2"/>`),
+  play:       I(`<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M10.5 9.2v5.6L15 12z"/>`),
+  download:   I(`<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M12 8.5v5m0 0 2-2m-2 2-2-2M8.5 16h7"/>`),
+  gear:       I(`<circle cx="12" cy="12" r="3.2"/><path d="M19.4 14.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.2a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.5 1z"/>`),
+  playSolid:  I(`<path d="M7 4.8 19 12 7 19.2z" fill="currentColor" stroke-linejoin="round"/>`, {w: 1.6}),
+  book:       I(`<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2.5 2.5 0 0 1 2 1 2.5 2.5 0 0 1 2-1h4.5A1.5 1.5 0 0 1 20 5.5v12a1.5 1.5 0 0 1-1.5 1.5H14a2.5 2.5 0 0 0-2 1 2.5 2.5 0 0 0-2-1H5.5A1.5 1.5 0 0 1 4 17.5z"/><path d="M12 5v15"/>`),
+  arrow:      I(`<path d="M4 12h15m0 0-5.5-5.5M19 12l-5.5 5.5"/>`),
+  file:       I(`<path d="M6 3.5h7.5L19 9v11.5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z"/><path d="M13.5 3.5V9H19"/><path d="M8.5 13h7M8.5 16.5h5"/>`),
+  sparkle:    I(`<path d="m12 4 1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/><path d="M18.5 15.5 19.3 18l2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>`),
+  shield:     I(`<path d="M12 3.2 5 6v6c0 4.2 2.9 7.4 7 8.8 4.1-1.4 7-4.6 7-8.8V6z"/><path d="m9 12 2.2 2.2L15.2 10"/>`),
+  chart:      I(`<path d="M4.5 20h15"/><rect x="6" y="11" width="3.4" height="6" rx="1"/><rect x="11.3" y="6.5" width="3.4" height="10.5" rx="1"/><rect x="16.6" y="13.5" width="3.4" height="3.5" rx="1"/>`),
+  list:       I(`<path d="M9 6.5h11M9 12h11M9 17.5h11"/><circle cx="5" cy="6.5" r="1.4" fill="currentColor"/><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="5" cy="17.5" r="1.4" fill="currentColor"/>`),
+  search:     I(`<circle cx="11" cy="11" r="6.2"/><path d="m15.6 15.6 4.4 4.4"/>`),
+  tag:        I(`<path d="M3.5 11.3V4.8a1.3 1.3 0 0 1 1.3-1.3h6.5a1.3 1.3 0 0 1 .9.4l8 8a1.3 1.3 0 0 1 0 1.8l-6.5 6.5a1.3 1.3 0 0 1-1.8 0l-8-8a1.3 1.3 0 0 1-.4-.9z"/><circle cx="7.8" cy="7.8" r="1.5"/>`),
+  report:     I(`<path d="M6 3.5h7.5L19 9v11.5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z"/><path d="M13.5 3.5V9H19"/><path d="M8.5 17.5v-3M12 17.5v-5.5M15.5 17.5v-2"/>`),
+};
+
 // ------------------------------------------------------------- navigation
+
+function paintNavIcons() {
+  document.querySelectorAll("[data-icon]").forEach(node => {
+    if (node.dataset.painted) return;
+    const svg = ICONS[node.dataset.icon];
+    if (!svg) return;
+    node.insertAdjacentHTML("afterbegin", svg);
+    node.dataset.painted = "1";
+  });
+}
 
 function go(tab) {
   S.tab = tab;
+  paintNavIcons();
+  el("tab-home").setAttribute("aria-selected", tab === "landing");
   el("tab-setup").setAttribute("aria-selected", tab === "setup");
+  el("tab-generators").setAttribute("aria-selected", false);
+  el("tab-executions").setAttribute("aria-selected", false);
   el("tab-results").setAttribute("aria-selected", tab === "results");
   el("steps").style.display = tab === "setup" ? "" : "none";
-  tab === "setup" ? renderStep() : renderResults();
+  if (tab === "landing") renderLanding();
+  else tab === "setup" ? renderStep() : renderResults();
 }
 function gotoStep(id) { S.step = id; renderSteps(); renderStep(); }
+
+function copyDemoCommand(button) {
+  const command = "spreadex demo";
+  const copied = () => {
+    button.textContent = "Copied";
+    setTimeout(() => { button.textContent = "Copy command"; }, 1400);
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(command).then(copied).catch(() => {});
+  }
+}
+
+function renderLanding() {
+  const readOnly = Boolean(S.project?.read_only);
+
+  // The pipeline, as data. Rendering it from a list keeps the two rows in step
+  // with each other and means a stage cannot be renamed in one place only.
+  const TOP = [
+    { k: "grammar", icon: ICONS.file, label: "Grammar", sub: "built-in or custom" },
+    { k: "purple",  icon: ICONS.sparkle, label: "Generate" },
+    { k: "blue",    icon: ICONS.shield,  label: "Check" },
+    { k: "orange",  icon: ICONS.chart,   label: "Analyze" },
+  ];
+  const BOTTOM = [
+    { k: "red",    icon: ICONS.list,   label: "Prioritize" },
+    { k: "green",  icon: ICONS.playSolid, label: "Execute" },
+    { k: "blue",   icon: ICONS.search, label: "Observe" },
+    { k: "purple", icon: ICONS.tag,    label: "Classify" },
+    { k: "blue",   icon: ICONS.report, label: "Save & Report" },
+  ];
+  const node = n => `<span class="pipeline-node ${n.k}">${n.icon}<b>${n.label}</b>${
+    n.sub ? `<small>${n.sub}</small>` : ""}</span>`;
+  const row = nodes => nodes.map(node).join(`<i class="pipe-arrow">${ICONS.arrow}</i>`);
+
+  const STEPS = [
+    { n: 1, tone: "green",  icon: ICONS.folder,  title: "Choose a subject",
+      body: "Select a built-in system or add your own (compiler, interpreter, parser, etc.)." },
+    { n: 2, tone: "blue",   icon: ICONS.sliders, title: "Configure generators",
+      body: "Pick one or more generators and set key parameters." },
+    { n: 3, tone: "orange", icon: ICONS.gear,    title: "Run campaign",
+      body: "Generate, validate, execute and collect results." },
+    { n: 4, tone: "purple", icon: ICONS.chart,   title: "Explore results",
+      body: "Analyze coverage, mutation score and input diversity." },
+  ];
+  const card = c => `<div class="start-card ${c.tone}-card">
+      <em>${c.n}</em><span class="start-icon">${c.icon}</span>
+      <strong>${c.title}</strong><p>${c.body}</p></div>`;
+
+  el("view").innerHTML = `
+    <section class="landing dashboard-home" aria-labelledby="landing-title">
+      <div class="landing-hero">
+        <div class="landing-intro">
+          <p class="eyebrow">LOCAL TESTING WORKBENCH</p>
+          <h1 id="landing-title">SpreadEx <span>Workbench</span></h1>
+          <p class="landing-lede">Test compilers, interpreters, parsers, and other
+            program-processing systems from one local workbench.</p>
+          <div class="hero-actions">
+            <button class="primary landing-primary" onclick="go('setup')" ${readOnly ? "disabled" : ""}>
+              ${ICONS.playSolid}<span>Set up my system</span>${ICONS.arrow}
+            </button>
+            <button class="quick-demo" onclick="showDemoHint()">
+              <span class="qd-icon">${ICONS.book}</span>
+              <span><strong>Quick demo</strong><small>See a real run in ~20 seconds</small></span>
+            </button>
+          </div>
+          ${readOnly ? `<p class="landing-readonly">This Workbench is read-only. Open it without
+            <code>--read-only</code> to configure a project or run campaigns.</p>` : ""}
+          <div id="demo-hint"></div>
+        </div>
+
+        <div class="pipeline-art" aria-label="How a SpreadEx campaign runs">
+          <svg class="pipeline-thread" viewBox="0 0 100 100" preserveAspectRatio="none"
+               aria-hidden="true" focusable="false">
+            <path d="M2 26 H78 Q96 26 96 50 Q96 74 78 74 H4"
+                  fill="none" stroke="url(#thread)" stroke-width="1.1" stroke-linecap="round"/>
+            <defs><linearGradient id="thread" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#8b5cf6"/><stop offset=".55" stop-color="#2eb6d7"/>
+              <stop offset="1" stop-color="#16a34a"/></linearGradient></defs>
+          </svg>
+          <div class="pipeline-row top">${row(TOP)}</div>
+          <div class="pipeline-row bottom">${row(BOTTOM)}</div>
+        </div>
+      </div>
+
+      <div class="landing-divider"></div>
+
+      <section class="get-started" aria-labelledby="get-started-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="get-started-title">Get started</h2>
+            <p>Set up a subject, choose generators, and run your first testing campaign.</p>
+          </div>
+          <button class="link-arrow" onclick="go('setup')">View documentation ${ICONS.arrow}</button>
+        </div>
+        <div class="start-cards">
+          ${STEPS.map(card).join(`<span class="card-arrow">${ICONS.arrow}</span>`)}
+        </div>
+      </section>
+    </section>`;
+}
+
+function showDemoHint() {
+  // The demo is a terminal command, not a thing the browser can start: it
+  // writes a project to the working directory and runs a real campaign.
+  const holder = el("demo-hint");
+  if (!holder) return;
+  holder.innerHTML = holder.innerHTML
+    ? ""
+    : `<div class="note">A real campaign against a hundred-line system under test with one
+         documented bug. In a terminal:<pre>spreadex demo</pre>Then reload this page.</div>`;
+}
+
 
 function renderSteps() {
   el("steps").innerHTML = STEPS.map(s => `
@@ -1233,9 +1395,7 @@ async function showInput(hash, btn) {
     S.config = conf.parsed || {};
     await loadRuns();
     renderSteps();
-    // An unconfigured directory always starts at the wizard, whatever happens
-    // to be in .spreadex -- there is no campaign to show until it is set up.
-    go(S.project.configured && S.runs.length ? "results" : "setup");
+    go(initialView(S.project, S.runs));
   } catch (e) {
     const noToken = !TOKEN || /token/i.test(e.message);
     el("view").innerHTML = noToken

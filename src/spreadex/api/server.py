@@ -229,6 +229,7 @@ class _Handler(BaseHTTPRequestHandler):
         if route == "/api/project":
             self._json({
                 "configured": self.config.configured,
+                "read_only": self.server.spreadex_read_only,
                 "root": str(self.config.project_root),
                 "targets": [{"name": t.name, "command": t.command} for t in self.config.targets],
                 "generators": list(self.config.generators or []),

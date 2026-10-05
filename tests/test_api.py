@@ -207,6 +207,12 @@ def test_project_summary(served):
     assert payload["targets"] and payload["signal"] == "cc"
 
 
+def test_project_summary_exposes_read_only_state(read_only_server):
+    base, token = read_only_server
+    _, payload = get(f"{base}/api/project", token)
+    assert payload["read_only"] is True
+
+
 def test_a_stray_browser_path_redirects_to_the_page(served):
     """Someone typing a path into the address bar gets the UI, not raw JSON.
     `/spreadex` in particular was a route in the older research webapp."""

@@ -49,8 +49,18 @@
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
     </button>
-    <button id="tab-setup"   aria-selected="true"  onclick="go('setup')">Set up</button>
-    <button id="tab-results" aria-selected="false" onclick="go('results')">Results</button>
+    <button id="tab-home"    aria-selected="false" onclick="go('landing')"
+            data-icon="home">Home</button>
+    <button id="tab-setup"   aria-selected="true"  onclick="go('setup')"
+            data-icon="folder">Projects</button>
+    <button id="tab-generators" aria-selected="false" onclick="go('setup'); gotoStep('generators')"
+            data-icon="sliders">Generators</button>
+    <button id="tab-executions" aria-selected="false" onclick="go('results')"
+            data-icon="play">Executions</button>
+    <button id="tab-results" aria-selected="false" onclick="go('results')"
+            data-icon="download">Results</button>
+    <button class="icon-button" id="settings" onclick="go('setup'); gotoStep('run')"
+            title="Campaign settings" aria-label="Campaign settings" data-icon="gear"></button>
   </div>
 </div>
 
