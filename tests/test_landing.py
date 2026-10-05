@@ -74,6 +74,24 @@ def test_landing_has_responsive_shared_layout_foundation():
     assert "@media (max-width: 430px)" in CSS
 
 
+def _media(width: int, marker: str) -> str:
+    """The media block at `width` whose body contains `marker`.
+
+    Several blocks share a width (the header and the step bar both change at
+    960px; the hero and the step tiles at 1180px), so finding "the" block by
+    its query alone silently reads whichever comes first.
+    """
+    needle = f"@media (max-width: {width}px)"
+    start = 0
+    while True:
+        i = CSS.index(needle, start)
+        end = CSS.index("\n}", i) if "{\n" in CSS[i:i + len(needle) + 4] else CSS.index("}", i) + 1
+        body = CSS[i:end]
+        if marker in body:
+            return body
+        start = i + len(needle)
+
+
 # ------------------------------------------------- the start page's visuals
 
 def test_the_start_page_uses_svg_icons_not_font_glyphs():
@@ -142,7 +160,7 @@ def test_the_layout_adapts_without_hiding_navigation():
     scrolls rather than being clipped -- clipping would hide destinations."""
     assert "@media (max-width: 1020px)" in CSS
     assert "@media (max-width: 620px)" in CSS
-    narrow = CSS[CSS.index("@media (max-width: 960px)"):]
+    narrow = _media(960, ".tabs { order: 4")
     assert "overflow-x: auto" in narrow, "the section list must stay reachable"
 
 
@@ -448,8 +466,7 @@ def test_the_header_wraps_only_when_it_genuinely_cannot_fit():
     """~950px is what one row needs (measured: 823px of content, three 18px
     gaps, 56px of padding and a 15px scrollbar). Below 960px the menu takes its
     own row; wrapping any later strands the tools alone on a line."""
-    block = CSS[CSS.index("@media (max-width: 960px)"):]
-    block = block[:block.index("\n}")]
+    block = _media(960, ".tabs { order: 4")
     assert ".tabs { order: 4; flex-basis: 100%" in block
     assert ".topbar-tools { margin-left: auto; }" in block
     assert ".topbar-sep { display: none; }" in block, "a divider with nothing beside it"
@@ -566,8 +583,7 @@ def test_the_arrows_live_in_the_gaps_and_go_away_when_the_cards_stack():
     cards = cards[:cards.index("}") + 1]
     assert cards.count("auto") == 3, "three arrow tracks between four cards"
     assert "minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr)" in cards
-    stacked = CSS[CSS.index("@media (max-width: 1180px)"):]
-    stacked = stacked[:stacked.index("\n}")]
+    stacked = _media(1180, ".landing-hero")
     assert ".card-arrow { display: none; }" in stacked, "a 2x2 grid has no order to point along"
 
 
@@ -704,11 +720,12 @@ def test_the_step_bar_lines_up_with_the_page_beneath_it():
 
 
 def test_the_step_bar_gives_way_gracefully_when_narrow():
-    """Five steps with icon tiles need ~1100px. Below that the tile goes; below
-    860px the row scrolls and the current step is kept in view."""
-    assert "@media (max-width: 1100px) { .step-ico { display: none; } }" in CSS
-    narrow = CSS[CSS.index("@media (max-width: 860px) {\n  .steps-row"):]
-    narrow = narrow[:narrow.index("\n}")]
+    """Five steps with icon tiles and one-line titles need ~1180px. Below that
+    the tile goes; below 960px the row scrolls and the current step is kept in
+    view. Measured: tile-less, the longest title fits down to ~930px and wraps by
+    920, hence 960 and not the 860 this used to be."""
+    assert "@media (max-width: 1180px) { .step-ico { display: none; } }" in CSS
+    narrow = _media(960, ".steps-row")
     assert "overflow-x: auto" in narrow and "flex: 0 0 15.5rem" in narrow
     assert "row.scrollTo" in _RENDER and "row.scrollLeft = before" in _RENDER, (
         "a rebuilt row would otherwise snap back to the start on every step"
@@ -731,3 +748,47 @@ def test_a_hidden_tab_scrolls_instantly_because_smooth_scroll_never_runs_there()
     centre = APP[APP.index("function centreCurrentStep()"):APP.index("let resizeTimer")]
     assert "!document.hidden" in centre
     assert "prefers-reduced-motion: no-preference" in centre
+
+
+def test_every_step_reserves_two_lines_of_subtext_so_the_boxes_look_alike():
+    """Left to wrap naturally the five subtexts came out 1, 2, 2, 2 and 1 lines
+    -- identical boxes holding text blocks of different heights, which is what
+    looked 'off'. Two lines are reserved whether or not the text needs them."""
+    sub = CSS[CSS.index(".step .d {"):]
+    sub = sub[:sub.index("}") + 1]
+    assert "line-height: 1.3" in sub and "min-height: 2.6em" in sub, sub
+    # 2.6em is exactly two lines of a 1.3 line-height; if one changes, so must the other.
+    height, lines = float(sub.split("min-height:")[1].split("em")[0]), 2
+    line = float(sub.split("line-height:")[1].split(";")[0])
+    assert abs(height - lines * line) < 1e-9, (height, lines, line)
+
+
+def test_the_step_text_is_a_point_smaller_so_the_longest_title_has_room():
+    """13.8px -> 12.5px for titles and 12.2px -> 11.5px for subtexts. At the old
+    size 'System under test' needed 117px against a 112px column and wrapped; it
+    now has room to spare. The subtext stays under the title, and above 11px."""
+    title = CSS[CSS.index(".step .t {"):]
+    title = title[:title.index("}") + 1]
+    sub = CSS[CSS.index(".step .d {"):]
+    sub = sub[:sub.index("}") + 1]
+    t = float(title.split("font-size:")[1].split("rem")[0])
+    d = float(sub.split("font-size:")[1].split("rem")[0])
+    assert t == 0.78 and d == 0.72, (t, d)
+    assert d < t, "the subtext must read as secondary"
+    assert d * 16 >= 11, "below 11px it stops being legible"
+
+
+def test_the_icon_tile_steps_aside_where_titles_would_otherwise_wrap():
+    """At 1130px, with the tile showing, 'System under test' wrapped and the bar
+    jumped from 79px to 95px. The tile now goes at the width the hero stacks."""
+    assert "@media (max-width: 1180px) { .step-ico { display: none; } }" in CSS
+    assert "@media (max-width: 1100px) { .step-ico" not in CSS
+
+
+def test_the_row_scrolls_before_a_title_can_wrap():
+    """Five tile-less steps hold one-line titles down to ~930px and wrap by 920,
+    so the scroll takes over at 960 -- not the 860 it used to, which left a band
+    where the bar was taller and one box had two lines of title."""
+    narrow = _media(960, ".steps-row")
+    assert "overflow-x: auto" in narrow
+    assert "@media (max-width: 860px) {\n  .steps-row" not in CSS

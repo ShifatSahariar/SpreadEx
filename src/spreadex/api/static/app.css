@@ -130,16 +130,27 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   background: color-mix(in srgb, var(--tone) 13%, var(--color-surface)); }
 .step-ico .ico { width: 1.1rem; height: 1.1rem; }
 .step-text { min-width: 0; }
-.step .t { display: block; font-size: .86rem; font-weight: 700; line-height: 1.25;
+/* One point smaller than before (13.8px -> 12.5px), so the longest title has room
+   to spare instead of ~5px. */
+.step .t { display: block; font-size: .78rem; font-weight: 700; line-height: 1.25;
   letter-spacing: -.01em; }
+/* Two lines are RESERVED, whether or not the subtext needs them. Left to wrap
+   naturally the five came out 1, 2, 2, 2 and 1 lines, so identical boxes held
+   text blocks of different heights and the row looked uneven. With the space
+   reserved the boxes look the same at any width; a short subtext simply has
+   air beneath it. 2.6em is two lines of this 1.3 line-height. */
 .step .d { display: block; margin-top: .1rem; color: var(--color-muted);
-  font-size: .76rem; line-height: 1.3; }
+  font-size: .72rem; line-height: 1.3; min-height: 2.6em; }
 
-/* Five steps with icon tiles need about 1100px. Below that the tile goes, which
-   gives the text the room it needs; below 860px the row scrolls instead, and
-   the tile comes back because there is width to spare again. */
-@media (max-width: 1100px) { .step-ico { display: none; } }
-@media (max-width: 860px) {
+/* Five steps with icon tiles and one-line titles need about 1180px (measured:
+   at 1130 "System under test" wrapped and the bar jumped from 79px to 95px).
+   Below that the tile goes, which gives the text the room it needs -- the same
+   threshold at which the hero stacks. Below 960px the row scrolls instead and
+   the tile comes back, because there is width to spare again. Five tile-less
+   steps hold one-line titles down to ~930px (wrapped by 920), so 960 leaves a
+   margin, and it is the header's compact breakpoint too. */
+@media (max-width: 1180px) { .step-ico { display: none; } }
+@media (max-width: 960px) {
   .steps-row { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .steps-row::-webkit-scrollbar { display: none; }
   .step-item { flex: 0 0 15.5rem; }
