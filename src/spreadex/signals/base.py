@@ -13,6 +13,7 @@ algorithm.
 
 from __future__ import annotations
 
+import os
 import warnings
 
 from dataclasses import dataclass, field
@@ -118,6 +119,55 @@ class ClusterCoverageSignal:
         # the reference exactly.
         self.random_state = random_state
 
+    #: Measured, not guessed: scripts/scale_audit.py gave 2.5 GB at n=5000 and
+    #: 6.3 GB at n=10000, which is what a handful of float64 n-by-n matrices
+    #: costs. Fitted at the large end on purpose -- below a few thousand the
+    #: figure is mostly interpreter and sklearn baseline rather than
+    #: clustering, and the guard only acts where the quadratic dominates.
+    #: Rounded UP, because underestimating is the direction that OOMs.
+    BYTES_PER_PAIR = 70
+
+    @classmethod
+    def estimated_bytes(cls, n: int) -> int:
+        return cls.BYTES_PER_PAIR * n * n
+
+    @staticmethod
+    def _physical_memory_bytes() -> int | None:
+        try:
+            return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        except (ValueError, OSError, AttributeError):
+            return None
+
+    def _memory_guard(self, n: int) -> list[str]:
+        """Affinity Propagation is O(n^2) in memory and will take the machine
+        down with it rather than degrade.
+
+        A campaign that OOMs loses every input it generated, so this is checked
+        before the allocation rather than discovered during it.
+        """
+        total = self._physical_memory_bytes()
+        need = self.estimated_bytes(n)
+        if total is None or need < 0.25 * total:
+            return []
+        gb = need / 1024 ** 3
+        if need > 0.70 * total:
+            raise MemoryError(
+                f"Clustering {n:,} inputs needs roughly {gb:.1f} GB, and this "
+                f"machine has {total / 1024 ** 3:.0f} GB.\n"
+                f"  Affinity Propagation is O(n^2) in memory; it does not "
+                f"degrade, it fails.\n"
+                f"  Fix: cap the pool with `budget: {{max_inputs: 5000}}`, lower "
+                f"`generation.cap`\n"
+                f"       or `generation.per_generator`, or use "
+                f"`selection_signal: random` for this run."
+            )
+        return [
+            f"Clustering {n:,} inputs is expected to need about {gb:.1f} GB of "
+            f"memory, on a machine with {total / 1024 ** 3:.0f} GB. Affinity "
+            f"Propagation grows as the square of the corpus, so a larger pool "
+            f"may not complete at all. `budget.max_inputs` caps it."
+        ]
+
     def rank(self, items: Sequence[Item], seed: int = 42) -> Ordering:
         n = len(items)
         if n == 0:
@@ -133,7 +183,7 @@ class ClusterCoverageSignal:
         # file they have never heard of. It matters -- degenerate centers mean
         # the clusters CC is measured over are not trustworthy -- so it is
         # caught and reported in the tool's own words instead.
-        caveats: list[str] = []
+        caveats: list[str] = list(self._memory_guard(n))
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", ConvergenceWarning)
             clusters, exemplar_map = ref.cluster_once(

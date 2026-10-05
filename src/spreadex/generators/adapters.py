@@ -56,9 +56,16 @@ def _run(cmd: list[str], timeout: float, what: str) -> subprocess.CompletedProce
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
+        # Deliberately mode-agnostic: under `generation.mode: time` the budget
+        # IS the point and "lower generation.count" is advice for a setting
+        # that does not exist there.
         raise GeneratorError(
-            f"{what} exceeded its generation budget ({timeout:.0f}s).\n"
-            f"  Fix: raise budget.generation, or lower generation.count."
+            f"{what} exceeded its generation budget ({timeout:.0f}s) and wrote "
+            f"nothing usable.\n"
+            f"  Fix: give it longer (budget.generation, or "
+            f"generation.per_generator under mode: time),\n"
+            f"       ask for fewer inputs (generation.count under mode: count), "
+            f"or simplify the grammar."
         ) from None
     except OSError as exc:
         raise GeneratorError(f"{what} could not be started: {exc}") from exc

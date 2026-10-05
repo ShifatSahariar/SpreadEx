@@ -125,3 +125,83 @@ def test_the_caveat_reaches_the_manifest(tmp_path):
     assert result.signal_caveats == []
     result.signal_caveats = ["something to know"]
     assert result.signal_caveats == ["something to know"]
+
+
+# ------------------------------------------------- the O(n^2) memory ceiling
+
+def test_the_memory_estimate_tracks_what_was_actually_measured():
+    """scripts/scale_audit.py measured 2.5 GB at n=5000 and 6.3 GB at 10000.
+    An estimate that drifts from that is worse than none, because it is used
+    to refuse work.
+
+    Checked only at the large end: below a few thousand the measurement is
+    mostly interpreter and sklearn baseline rather than clustering, and the
+    guard never fires there anyway.
+    """
+    from spreadex.signals.base import ClusterCoverageSignal as C
+
+    for n, measured_gb in ((5000, 2.5), (10000, 6.3)):
+        est = C.estimated_bytes(n) / 1024 ** 3
+        assert 0.5 * measured_gb <= est <= 1.5 * measured_gb, (n, est, measured_gb)
+
+
+def test_the_estimate_errs_high_rather_than_low():
+    """Underestimating is the direction that takes the machine down."""
+    from spreadex.signals.base import ClusterCoverageSignal as C
+
+    assert C.estimated_bytes(10000) / 1024 ** 3 >= 6.3 * 0.95
+
+
+def test_a_corpus_too_large_for_the_machine_is_refused_before_it_allocates(monkeypatch):
+    """A campaign that OOMs loses every input it generated, so this has to be
+    checked before the allocation rather than discovered during it."""
+    from spreadex.signals.base import ClusterCoverageSignal
+
+    signal = ClusterCoverageSignal(embedding_model="tfidf")
+    monkeypatch.setattr(signal, "_physical_memory_bytes", lambda: 8 * 1024 ** 3)
+
+    with pytest.raises(MemoryError) as exc:
+        signal._memory_guard(50_000)
+    message = str(exc.value)
+    assert "50,000" in message and "8 GB" in message
+    assert "max_inputs" in message, "a refusal has to name the lever"
+    assert "random" in message, "...and the way to run anyway"
+
+
+def test_a_large_but_survivable_corpus_warns_instead_of_refusing(monkeypatch):
+    from spreadex.signals.base import ClusterCoverageSignal
+
+    signal = ClusterCoverageSignal(embedding_model="tfidf")
+    monkeypatch.setattr(signal, "_physical_memory_bytes", lambda: 36 * 1024 ** 3)
+    caveats = signal._memory_guard(14_000)
+    assert caveats and "square of the corpus" in caveats[0]
+
+
+def test_an_ordinary_corpus_is_not_nagged(monkeypatch):
+    from spreadex.signals.base import ClusterCoverageSignal
+
+    signal = ClusterCoverageSignal(embedding_model="tfidf")
+    monkeypatch.setattr(signal, "_physical_memory_bytes", lambda: 8 * 1024 ** 3)
+    assert signal._memory_guard(1000) == []
+
+
+def test_the_guard_stays_quiet_when_it_cannot_tell(monkeypatch):
+    """An unknown machine is not a reason to refuse to work."""
+    from spreadex.signals.base import ClusterCoverageSignal
+
+    signal = ClusterCoverageSignal(embedding_model="tfidf")
+    monkeypatch.setattr(signal, "_physical_memory_bytes", lambda: None)
+    assert signal._memory_guard(10_000_000) == []
+
+
+def test_the_default_time_cap_cannot_oom_a_small_laptop():
+    """Four generators at the cap is the realistic pool, and it has to fit on a
+    machine smaller than the one this was developed on."""
+    from spreadex.core.sources import DEFAULT_TIME_MODE_CAP
+    from spreadex.signals.base import ClusterCoverageSignal as C
+
+    pooled = 4 * DEFAULT_TIME_MODE_CAP
+    assert C.estimated_bytes(pooled) < 32 * 1024 ** 3, (
+        f"{pooled} pooled inputs would need "
+        f"{C.estimated_bytes(pooled) / 1024 ** 3:.0f} GB"
+    )

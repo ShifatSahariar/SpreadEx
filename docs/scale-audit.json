@@ -1,0 +1,57 @@
+{
+  "_what": "Runtime and peak memory of the CC diversity map (TF-IDF + Affinity Propagation) against corpus size.",
+  "platform": "darwin",
+  "python": "3.11.0",
+  "rows": [
+    {
+      "n": 500,
+      "status": "ok",
+      "seconds": 0.37,
+      "peak_rss_mb": 210.2,
+      "rss_growth_mb": 67.3,
+      "k_eff": 53,
+      "converged": true,
+      "caveats": []
+    },
+    {
+      "n": 1000,
+      "status": "ok",
+      "seconds": 0.35,
+      "peak_rss_mb": 341.3,
+      "rss_growth_mb": 130.9,
+      "k_eff": 106,
+      "converged": true,
+      "caveats": []
+    },
+    {
+      "n": 2000,
+      "status": "ok",
+      "seconds": 1.52,
+      "peak_rss_mb": 711.5,
+      "rss_growth_mb": 370.0,
+      "k_eff": 248,
+      "converged": true,
+      "caveats": []
+    },
+    {
+      "n": 5000,
+      "status": "ok",
+      "seconds": 11.01,
+      "peak_rss_mb": 2532.3,
+      "rss_growth_mb": 1819.7,
+      "k_eff": 590,
+      "converged": true,
+      "caveats": []
+    },
+    {
+      "n": 10000,
+      "status": "ok",
+      "seconds": 59.41,
+      "peak_rss_mb": 6314.2,
+      "rss_growth_mb": 3782.0,
+      "k_eff": 1012,
+      "converged": true,
+      "caveats": []
+    }
+  ]
+}

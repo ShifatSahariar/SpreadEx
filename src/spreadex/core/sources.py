@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..exec.runner import _parse_duration
 from ..generators import GeneratorError, GeneratorManager
 from ..generators.adapters import generate as run_generator
 
@@ -26,6 +27,50 @@ class GeneratedInput:
     data: bytes
     generator: str
     cost_ms: float
+
+
+@dataclass
+class GenerationStats:
+    """What one generator was asked for, and what it actually cost.
+
+    Recorded per generator because the headline question -- which generator
+    deserves the next budget -- is not answerable without it. Asking four
+    generators for 150 inputs each and comparing the result compares them at
+    wildly different computational effort: on examples/rhino that was 2.5s for
+    Fandango against 44.8s for ISLa, an 18x difference hidden behind an
+    identical input count.
+    """
+
+    generator: str
+    mode: str                 # "count" or "time"
+    requested_count: int | None = None
+    requested_seconds: float | None = None
+    elapsed_s: float = 0.0
+    produced: int = 0
+    partial: bool = False     # the budget stopped it before it was finished
+    cap: int | None = None    # the ceiling it was allowed to reach
+    hit_cap: bool = False     # ...and whether it reached it, which in time
+                              # mode means the comparison was not really
+                              # equal-time for this generator
+
+    @property
+    def throughput_per_s(self) -> float:
+        return self.produced / self.elapsed_s if self.elapsed_s > 0 else 0.0
+
+    def as_dict(self) -> dict:
+        return {
+            "generator": self.generator,
+            "mode": self.mode,
+            "requested_count": self.requested_count,
+            "requested_seconds": (round(self.requested_seconds, 3)
+                                  if self.requested_seconds is not None else None),
+            "elapsed_s": round(self.elapsed_s, 3),
+            "produced": self.produced,
+            "throughput_per_s": round(self.throughput_per_s, 3),
+            "partial": self.partial,
+            "cap": self.cap,
+            "hit_cap": self.hit_cap,
+        }
 
 
 def grammar_for(config, generator_id: str, derived: dict[str, Path] | None = None) -> Path | None:
@@ -102,8 +147,27 @@ def derive_grammars(config, generators: list[str], log=print) -> dict[str, Path]
     return result.written
 
 
-def collect(config, budget_s: float, log=print, manager: GeneratorManager | None = None):
-    """Gather inputs from every configured source, within the generation budget."""
+#: Time mode asks for "as many as you can" and lets the clock stop it. A
+#: ceiling is still needed, because a fast generator on a small grammar can
+#: emit faster than the rest of the pipeline can absorb -- Grammarinator
+#: produced 20,000 JavaScript programs in 11.7 seconds.
+#:
+#: 5,000 per generator, not more, because the diversity map is the real limit:
+#: scripts/scale_audit.py measures Affinity Propagation at 2.5 GB for 5,000
+#: pooled inputs and 6.3 GB for 10,000. Four generators at this cap can still
+#: pool 20,000 and want ~25 GB, which is why signals/base.py checks the
+#: machine's memory before clustering rather than after.
+DEFAULT_TIME_MODE_CAP = 5000
+
+
+def collect(config, budget_s: float, log=print, manager: GeneratorManager | None = None,
+            stats: list | None = None):
+    """Gather inputs from every configured source, within the generation budget.
+
+    `stats`, if given, is filled with one GenerationStats per generator. The
+    campaign passes a list so the manifest can record what each generator was
+    asked for and what it actually spent.
+    """
     out: list[GeneratedInput] = []
 
     corpus_cfg = config.raw.get("corpus") or {}
@@ -124,23 +188,57 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
         mgr.ensure(generators, log=log, auto_install=False)
 
         derived = derive_grammars(config, generators, log=log)
-        count = int((config.raw.get("generation") or {}).get("count", 200))
+        gen_cfg = config.raw.get("generation") or {}
+        mode = (gen_cfg.get("mode") or "count").lower()
+
         # Uniform allocation. The honest default, and the baseline any adaptive
         # policy has to beat.
         per_generator = budget_s / len(generators)
+        if mode == "time":
+            seconds = gen_cfg.get("per_generator")
+            seconds = _parse_duration(seconds) if seconds is not None else per_generator
+            cap = int(gen_cfg.get("cap", DEFAULT_TIME_MODE_CAP))
+            log(f"  equal time: {seconds:.0f}s per generator")
+        else:
+            seconds = per_generator
+            cap = int(gen_cfg.get("count", 200))
+
         for gid in generators:
             grammar = grammar_for(config, gid, derived)
             if grammar is None:
                 log(f"  ! {gid}: no grammar configured -- skipping")
                 continue
+            st = GenerationStats(
+                generator=gid, mode=mode,
+                requested_count=None if mode == "time" else cap,
+                requested_seconds=seconds,
+                cap=cap,
+            )
             try:
-                batch = run_generator(gid, grammar, count, seed=config.seed,
-                                      timeout=per_generator, manager=mgr)
+                batch = run_generator(gid, grammar, cap, seed=config.seed,
+                                      timeout=seconds, manager=mgr)
             except GeneratorError as exc:
                 # One broken generator must not abort a campaign that has others.
                 log(f"  ! {gid}: {exc}")
+                if stats is not None:
+                    stats.append(st)
                 continue
-            note = (f" (budget exhausted; asked for {count})" if batch.partial else "")
+
+            st.elapsed_s = batch.elapsed_ms / 1000
+            st.produced = len(batch.inputs)
+            st.partial = batch.partial
+            st.hit_cap = st.produced >= cap
+            if stats is not None:
+                stats.append(st)
+
+            if mode == "time":
+                # In time mode being stopped by the clock is the design, not a
+                # shortfall: every generator is meant to use its whole share.
+                note = f" ({st.throughput_per_s:.1f}/s)"
+                if st.hit_cap:
+                    note += f" -- hit the {cap} cap after {st.elapsed_s:.1f}s of its {seconds:.0f}s"
+            else:
+                note = (f" (budget exhausted; asked for {cap})" if batch.partial else "")
             log(f"  {gid}: {len(batch.inputs)} inputs in "
                 f"{batch.elapsed_ms / 1000:.1f}s{note}")
             out.extend(

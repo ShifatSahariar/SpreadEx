@@ -197,6 +197,22 @@ def load_config(path: Path | None = None) -> Config:
         seen.add(t.name)
         targets.append(t)
 
+    gen_cfg = raw.get("generation") or {}
+    gen_mode = (gen_cfg.get("mode") or "count").lower()
+    if gen_mode not in ("count", "time"):
+        raise ConfigError(
+            f"{path}: `generation.mode` is {gen_cfg.get('mode')!r}; expected "
+            f"'count' (every generator makes the same number of inputs -- "
+            f"reproducible) or 'time' (every generator gets the same number of "
+            f"seconds -- comparable)."
+        )
+    if gen_mode == "time" and "count" in gen_cfg:
+        raise ConfigError(
+            f"{path}: `generation.mode: time` ignores `generation.count`. "
+            f"Remove the count, or set `per_generator:` to say how long each "
+            f"generator gets."
+        )
+
     oracle = raw.get("oracle") or {}
     if "type" not in oracle:
         # The sensible default: differential the moment there is something to

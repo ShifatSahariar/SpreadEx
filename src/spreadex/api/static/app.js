@@ -111,7 +111,12 @@ function buildYaml() {
   lines.push("", `generators: [${(c.generators || []).join(", ")}]`);
   if (c.grammar?.source) lines.push("", "grammar:", `  source: ${c.grammar.source}`);
   if (c.corpus?.path) lines.push("", "corpus:", `  path: ${c.corpus.path}`);
-  if (c.generation?.count) lines.push("", "generation:", `  count: ${c.generation.count}`);
+  if ((c.generation?.mode || "time") === "time" && !c.generation?.count) {
+    lines.push("", "generation:", "  mode: time",
+               `  per_generator: ${c.generation.per_generator || "30s"}`);
+  } else if (c.generation?.count) {
+    lines.push("", "generation:", `  count: ${c.generation.count}`);
+  }
   lines.push("", "budget:",
     `  generation: ${c.budget?.generation || "1m"}`,
     `  execution: ${c.budget?.execution || "1m"}`);
@@ -823,8 +828,9 @@ function commitGenerators() {
   gotoStep("strategy");
 }
 
-async function stepRun() {
+async function stepRun(current = () => true) {
   const c = cfg();
+  if (!c.generation) c.generation = { mode: "time", per_generator: "30s" };
   el("view").innerHTML = `
   <div class="card">
     <h3>Budget</h3>
@@ -833,7 +839,16 @@ async function stepRun() {
     <div class="row">
       <div><label for="bgen">Generation</label><input id="bgen" type="text" value="${esc(c.budget?.generation || "1m")}"></div>
       <div><label for="bexec">Execution</label><input id="bexec" type="text" value="${esc(c.budget?.execution || "1m")}"></div>
-      <div><label for="count">Inputs per generator</label><input id="count" type="number" min="1" value="${c.generation?.count || 200}"></div>
+      <div><label for="genmode">How generators are compared</label>
+        <select id="genmode" onchange="redrawBudget()">
+          <option value="time" ${(c.generation?.mode || "time") === "time" ? "selected" : ""}>Equal time &mdash; recommended</option>
+          <option value="count" ${(c.generation?.mode || "time") !== "time" ? "selected" : ""}>Equal number of inputs</option>
+        </select></div>
+      ${(c.generation?.mode || "time") === "time"
+        ? `<div><label for="pergen">Seconds per generator</label>
+             <input id="pergen" type="text" value="${esc(c.generation?.per_generator || "30s")}"></div>`
+        : `<div><label for="count">Inputs per generator</label>
+             <input id="count" type="number" min="1" value="${c.generation?.count || 200}"></div>`}
     </div>
     <div class="row">
       <div><label for="signal">Selection signal</label>
@@ -848,6 +863,17 @@ async function stepRun() {
         </select></div>
       <div><label for="jobs">Parallel executions</label><input id="jobs" type="number" min="1" max="32" value="4"></div>
     </div>
+    <div class="note">${(c.generation?.mode || "time") === "time"
+      ? `<strong>Equal time</strong> gives every generator the same number of seconds, so the
+         comparison answers "who makes better use of a budget". They will produce different
+         numbers of inputs &mdash; that is the measurement, not a flaw. Note that cluster
+         coverage is computed over the pooled inputs, so a much faster generator contributes
+         more of that pool and scores higher partly for that reason; the results say so when
+         it happens.`
+      : `<strong>Equal number of inputs</strong> is reproducible and is what the ICST&nbsp;2026
+         experiments used, but it is not resource-fair: on this project's own JavaScript
+         grammar the same 150 inputs cost Fandango 2.5&thinsp;s and ISLa 44.8&thinsp;s. Prefer
+         equal time when you are deciding where budget should go.`}</div>
     <div class="note">More than one parallel execution is faster, but makes durations noisier and
       can time out an input that would have passed on its own.</div>
   </div>
@@ -870,8 +896,8 @@ async function stepRun() {
     <div id="err"></div>
     <div id="joblog"></div>
   </div>`;
-  ["bgen", "bexec", "count", "signal", "model"].forEach(id =>
-    el(id).addEventListener("change", refreshPreview));
+  ["bgen", "bexec", "count", "pergen", "signal", "model"].forEach(id =>
+    el(id) && el(id).addEventListener("change", refreshPreview));
 }
 
 function reviewSummary() {
@@ -898,14 +924,25 @@ function reviewSummary() {
     ${row("Reported as failures", checks.join("; "))}
     ${row("Budget", `${esc(c.budget?.generation || "1m")} generating,
            ${esc(c.budget?.execution || "1m")} executing &mdash; and no more`)}
+    ${row("Generators compared", (c.generation?.mode === "time")
+        ? `by equal time &mdash; ${esc(c.generation.per_generator || "30s")} each`
+        : `by equal input count &mdash; ${c.generation?.count || 200} each, `
+          + `<span class="muted">which is reproducible but not resource-fair</span>`)}
     ${row("Ordered by", (c.selection_signal === "random")
         ? "random (the baseline)" : "cluster coverage, most different first")}
   </table>`;
 }
 
+function redrawBudget() { collectRunConfig(); stepRun(); }
+
 function collectRunConfig() {
   S.config.budget = { generation: el("bgen").value, execution: el("bexec").value };
-  S.config.generation = { count: Number(el("count").value) || 200 };
+  // The two modes are mutually exclusive on purpose: a config carrying both a
+  // count and a time budget does not say which one was honoured.
+  const mode = el("genmode") ? el("genmode").value : (cfg().generation?.mode || "count");
+  S.config.generation = mode === "time"
+    ? { mode: "time", per_generator: (el("pergen") && el("pergen").value) || "30s" }
+    : { count: Number(el("count") && el("count").value) || 200 };
   S.config.selection_signal = el("signal").value;
   S.config.embedding = { model: el("model").value };
 }

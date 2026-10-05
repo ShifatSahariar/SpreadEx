@@ -116,6 +116,33 @@ That is the whole argument for the oracle being configurable and for
 overflow itself, prints `Caught an Exception :` and still exits 0, so neither
 the exit code nor the rejection rules would have found the real one.
 
+### Equal count or equal time
+
+Every run in the table above used `generation: {count: N}` — the same number
+of inputs from each generator, which is what the ICST 2026 experiments did and
+what makes a result reproducible. It is **not** resource-fair, and on this
+project's own JavaScript grammar the difference is not subtle:
+
+| | equal count (150 each) | equal time (30 s each) |
+|---|---|---|
+| grammarinator | CC 0.63 — **worst** | CC 0.91, 20,000 inputs, 1,701/s — **best** |
+| fuzzingbook | CC 0.71 — **best** | CC 0.22, 358 inputs, 11.9/s — **worst** |
+| fandango | CC 0.70 | CC 0.56, 2,117 inputs, 69.9/s |
+| isla | CC 0.70 | produced **nothing** in 30 s |
+
+**The ranking inverts.** Under equal counts FuzzingBook looks best and
+Grammarinator worst; under equal time it is the other way round by a wide
+margin, and ISLa cannot deliver at that budget at all. Any claim about which
+generator deserves budget has to say which basis it used, so the campaign
+report now states it on every run.
+
+Equal time is not simply the correct answer either. CC is pool-relative, and
+under equal time Grammarinator supplied **89% of the pooled inputs** — a
+generator contributing most of the pool touches most of the clusters almost by
+construction, so part of that 0.91 is throughput rather than diversity. The
+report says so when it happens. Separating the two properly is a research
+question, not a config flag, and belongs with R4.
+
 ### Still open
 
 1. **A pack format** (see `docs/PACKS.md`) so adding a subject never means
@@ -126,3 +153,8 @@ the exit code nor the rejection rules would have found the real one.
 3. **Longer budgets.** Every run above was minutes, not hours. No crashes in
    four mature JS engines is the expected outcome at that scale, not evidence
    they are defect-free.
+4. **The diversity map is the limit on campaign size**, not the generators.
+   Affinity Propagation needs ~6 GB at 10,000 pooled inputs and fails rather
+   than degrades beyond that; see [SCALE.md](SCALE.md). Equal-time generation
+   reaches 20,000 inputs in twenty seconds, so the two are not currently in
+   balance.

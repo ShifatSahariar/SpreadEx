@@ -120,6 +120,27 @@ def cmd_run(args) -> int:
     return 0
 
 
+def _warn_if_cc_is_really_volume(r, pool: int) -> None:
+    """CC is pool-relative, so an unequal pool makes it partly a volume count.
+
+    CC(g) is the share of clusters g touches. A generator contributing most of
+    the inputs touches most of the clusters almost by construction, so when the
+    shares are lopsided a high CC is not evidence of better coverage -- it is
+    partly evidence of having been faster. Equal-time budgeting makes this MORE
+    likely, not less, which is the honest trade it carries.
+    """
+    shares = {g: n / pool for g, n in r.generator_counts.items() if pool}
+    if len(shares) < 2:
+        return
+    top, top_share = max(shares.items(), key=lambda kv: kv[1])
+    if top_share < 0.5:
+        return
+    print(f"    ! {top} supplied {100 * top_share:.0f}% of the pool. CC is measured "
+          f"over that pool,\n      so a generator contributing most of it touches most "
+          f"clusters almost by\n      construction -- read this ranking as partly a "
+          f"throughput ranking.")
+
+
 def _print_result(r, config) -> None:
     v = r.verdicts
     print("\nSpreadEx Campaign\n")
@@ -129,19 +150,57 @@ def _print_result(r, config) -> None:
     print(f"    Prioritized ........... {r.prioritized}")
     if r.generator_scores and len(r.generator_scores) > 1:
         print("\n  Generator comparison" + (f"  (k_eff={r.k_eff})" if r.k_eff else ""))
-        print(f"    {'generator':<16} {'CC':>5} {'inputs':>7} {'gen cost':>10}")
+        by_gen = {st["generator"]: st for st in (r.generation_stats or [])}
+        mode = next(iter(by_gen.values()), {}).get("mode", "count")
+        pool = sum(r.generator_counts.values()) or 1
+        print(f"    {'generator':<16} {'CC':>5} {'inputs':>7} {'% pool':>7} "
+              f"{'gen cost':>10} {'rate/s':>8}")
         for g, s in sorted(r.generator_scores.items(), key=lambda kv: -kv[1]):
             n = r.generator_counts.get(g, 0)
             cost_s = r.generator_cost_ms.get(g, 0.0) / 1000
+            rate = by_gen.get(g, {}).get("throughput_per_s", 0.0)
             bar = "#" * int(round(s * 20))
-            print(f"    {g:<16} {s:>5.2f} {n:>7} {cost_s:>9.1f}s  {bar}")
+            print(f"    {g:<16} {s:>5.2f} {n:>7} {100 * n / pool:>6.1f}% "
+                  f"{cost_s:>9.1f}s {rate:>8.1f}  {bar}")
+
         # Cluster coverage is comparable only when the generators were given a
-        # comparable chance. Wildly different costs mean the comparison is
-        # equal-count, not equal-budget -- say so rather than let it mislead.
-        costs = [c for c in r.generator_cost_ms.values() if c > 0]
-        if len(costs) > 1 and max(costs) > 5 * min(costs):
-            print("    note: generation costs differ by more than 5x, so these "
-                  "CC values compare\n          equal INPUT COUNTS, not equal budgets.")
+        # comparable chance, so the basis of the comparison is stated every
+        # time rather than left for the reader to infer from the cost column.
+        if mode == "time":
+            secs = next((st.get("requested_seconds") for st in by_gen.values()
+                         if st.get("requested_seconds")), None)
+            budget = f"{secs:.0f}s each" if secs else "an equal share of time"
+            print(f"    basis: EQUAL TIME ({budget}). Inputs differ because the "
+                  f"generators differ,\n           which is the comparison you want "
+                  f"when deciding where budget goes.")
+            # Hitting the ceiling is not the same as finishing early, and a
+            # generator that produced nothing did neither.
+            capped = sorted(g for g, st in by_gen.items() if st.get("hit_cap"))
+            if capped:
+                print(f"    ! {', '.join(capped)} stopped before using the full share, "
+                      f"having hit\n      `generation.cap`. Raise the cap or these are "
+                      f"not really equal-time.")
+            silent = sorted(g for g in r.generator_scores
+                            if by_gen.get(g, {}).get("produced", 0) == 0)
+            if silent:
+                print(f"    ! {', '.join(silent)} produced nothing in the time given, "
+                      f"which is a result:\n      on this grammar it cannot deliver at "
+                      f"this budget.")
+            _warn_if_cc_is_really_volume(r, pool)
+        else:
+            _warn_if_cc_is_really_volume(r, pool)
+            counts = set(r.generator_counts.values())
+            costs = [c for c in r.generator_cost_ms.values() if c > 0]
+            same = f"{next(iter(counts))} each" if len(counts) == 1 else "a fixed count each"
+            print(f"    basis: EQUAL INPUT COUNT ({same}), which is reproducible but "
+                  f"not resource-fair.")
+            if len(costs) > 1 and max(costs) > 5 * min(costs):
+                print(f"    ! those counts cost between {min(costs)/1000:.1f}s and "
+                      f"{max(costs)/1000:.1f}s to produce\n"
+                      f"      ({max(costs)/min(costs):.0f}x), so CC here does NOT compare "
+                      f"equal budgets.\n"
+                      f"      Fix: `generation: {{mode: time}}` to give each generator "
+                      f"the same seconds.")
     print("\n  Execution")
     print(f"    Executed .............. {r.executed}")
     print(f"    Budget ................ {r.exec_budget_s:.1f} s "

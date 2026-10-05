@@ -50,6 +50,9 @@ class CampaignResult:
     #: Anything the selection signal wants the reader to know before trusting
     #: the CC numbers. Carried into the manifest so a replay sees it too.
     signal_caveats: list[str] = field(default_factory=list)
+    #: Per generator: what it was asked for, what it spent, what it produced.
+    #: Without this a CC comparison cannot be read as fair or unfair.
+    generation_stats: list[dict] = field(default_factory=list)
 
     @property
     def failures(self) -> int:
@@ -111,7 +114,10 @@ class Campaign:
             # 1. Generate -----------------------------------------------------
             self.log("Generating...")
             allocation = uniform_allocation(list(cfg.generators), cfg.budget.generation_s)
-            generated = sources.collect(cfg, cfg.budget.generation_s, log=self.log)
+            gen_stats: list = []
+            generated = sources.collect(cfg, cfg.budget.generation_s, log=self.log,
+                                        stats=gen_stats)
+            result.generation_stats = [st.as_dict() for st in gen_stats]
             result.generated = len(generated)
             if not generated:
                 raise RuntimeError(
@@ -261,6 +267,8 @@ class Campaign:
                 "generator_cost_ms": result.generator_cost_ms,
                 "k_eff": result.k_eff,
                 "signal_caveats": result.signal_caveats,
+                "generation_stats": result.generation_stats,
+                "generation_mode": (cfg.raw.get("generation") or {}).get("mode", "count"),
                 "allocation_s": allocation,
             }
             manifest.results = {
