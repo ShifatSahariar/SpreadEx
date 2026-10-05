@@ -162,7 +162,7 @@ def test_switching_mode_drops_a_stale_analysis_and_typing_survives_rerenders():
     m = JS[JS.index("function pickInpMode"):]
     m = m[:m.index("\n}\n")]
     assert "stashInp()" in m and 'if (id === "none") d.analysis = null' in m
-    for fn in ("pickInpLang", "inpExampleTab", "toggleInpDetails"):
+    for fn in ("chooseInpLang", "inpExampleTab", "toggleInpDetails"):
         assert "stashInp()" in JS[JS.index(f"function {fn}("):][:200], fn
 
 
@@ -174,3 +174,60 @@ def test_narrow_screens_cannot_be_pushed_wide_by_the_example_code():
     assert re.search(r"\.sut-side \{[^}]*grid-template-columns: minmax\(0, 1fr\)", CSS)
     assert re.search(r"\.side-card, \.ex-code, \.sut-main \{ min-width: 0", CSS)
     assert CSS.count("{") == CSS.count("}")
+
+
+# --------------------------------------------- language logos, extension, cards
+
+def _langs():
+    raw = JS[JS.index("const INP_LANGS = ") + len("const INP_LANGS = "):]
+    return json.loads(raw[:raw.index("];\n") + 1])
+
+
+def test_the_language_list_matches_the_design_and_every_entry_can_draw_a_logo():
+    langs = _langs()
+    names = [l["t"] for l in langs]
+    for n in ("JavaScript", "Python", "Java", "SQL", "Lua", "C", "C++", "Rust", "Go", "Ruby", "PHP", "R",
+              "Kotlin", "Swift", "TypeScript", "Scala", "C#", "Haskell", "Dart", "Elixir", "BASIC",
+              "Plain text", "JSON", "Other", "Not specified"):
+        assert n in names, n
+    assert [l["t"] for l in langs[-4:]] == ["Plain text", "JSON", "Other", "Not specified"]
+    icons = JS[JS.index("const ICONS = {"):JS.index("const BRANDS")]
+    for l in langs:
+        assert re.fullmatch(r"[0-9A-Fa-f]{6}", l["hex"]), l["t"]
+        assert l.get("d") or l.get("lucide") or l.get("badge"), l["t"]
+        if l.get("lucide"):
+            assert f"\n  {l['lucide']}: I(" in icons or f"\n  {l['lucide']}: I(" in JS, l["lucide"]
+
+
+def test_each_language_fills_a_plausible_unique_extension():
+    exts = {l["id"]: l["ext"] for l in _langs()}
+    assert exts["js"] == ".js" and exts["py"] == ".py" and exts["java"] == ".java" and exts["sql"] == ".sql"
+    assert exts["other"] == "" and exts[""] == ""
+    real = [e for e in exts.values() if e]
+    assert len(real) == len(set(real)), "two languages share an extension"
+    assert all(re.fullmatch(r"\.[a-z0-9+_-]{1,12}", e) for e in real)
+
+
+def test_the_default_language_is_not_specified_and_a_typed_extension_is_never_overwritten():
+    assert 'langById("")' in JS
+    c = JS[JS.index("function chooseInpLang"):]
+    c = c[:c.index("\n}\n")]
+    assert "if (!d.extTouched) d.ext = l.ext" in c and "stashInp()" in c
+
+
+def test_the_dropdown_is_an_accessible_listbox_that_closes_on_escape_and_outside_click():
+    for t in ('aria-haspopup="listbox"', 'role="listbox"', 'role="option"', 'aria-expanded', "Escape"):
+        assert t in JS, t
+    assert 'closest?.(".lang-pick")' in JS
+
+
+def test_java_and_python_use_the_supplied_artwork_which_ships():
+    assert '"/static/assets/sut-jar.png"' in JS and '"/static/assets/sut-script.png"' in JS
+    assert (STATIC / "assets/sut-jar.png").is_file() and (STATIC / "assets/sut-script.png").is_file()
+
+
+def test_the_extension_box_is_warm_code_and_the_grammar_picker_uses_plain_words():
+    rule = CSS[CSS.index(".sut input.sut-cmd, .sut input#sut-cwd"):]
+    assert "input#inp-ext" in rule[:rule.index("}")]
+    assert "Pick a ready-made grammar" in JS and "Choose a bundled grammar" not in JS
+    assert "lang-tile big" in JS[JS.index("function inpPanel"):]

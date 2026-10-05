@@ -130,6 +130,8 @@ def test_no_icon_is_defined_and_never_used():
     # The wizard's steps name their icon ("icon: \"terminal\"") and look it up at
     # render time, because ICONS is declared further down the file.
     used_in_js |= set(re.findall(r'icon: "(\w+)"', APP))
+    # Language logos name a Lucide glyph the same way ("lucide":"database").
+    used_in_js |= set(re.findall(r'"?lucide"?\s*:\s*"(\w+)"', APP))
     used_in_html = set(re.findall(r'data-icon="(\w+)"', INDEX))
     dead = [n for n in defined if n not in used_in_js | used_in_html]
     assert not dead, f"defined but never used: {dead}"

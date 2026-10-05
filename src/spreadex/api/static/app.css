@@ -335,11 +335,11 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .sut-pill code { color: var(--color-primary); font-weight: 600; }
 /* Anything the user types as a command or path is code: monospace, a warm off-black /
    off-white (never pure), and one weight heavier than body text so it reads as input. */
-.sut input.sut-cmd, .sut input#sut-cwd, .sut textarea#sut-env, .sut input#corpus, .sut input.x-cmd,
+.sut input.sut-cmd, .sut input#sut-cwd, .sut textarea#sut-env, .sut input#corpus, .sut input.x-cmd, .sut input#inp-ext,
 .sut .ex-code code, .sut .ex-block code, .sut .res-facts .mono {
   font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   font-weight: 500; color: var(--code-fg); }
-.sut input.sut-cmd, .sut input#sut-cwd, .sut textarea#sut-env, .sut input#corpus { background: var(--code-bg); border-color: var(--code-bd); font-size: .88rem; }
+.sut input.sut-cmd, .sut input#sut-cwd, .sut textarea#sut-env, .sut input#corpus, .sut input#inp-ext { background: var(--code-bg); border-color: var(--code-bd); font-size: .88rem; }
 .sut input.sut-cmd::placeholder, .sut input#sut-cwd::placeholder, .sut textarea#sut-env::placeholder, .sut input#corpus::placeholder { color: var(--code-ph); font-weight: 400; }
 .ex-code { background: var(--code-bg); border-color: var(--code-bd); }
 .sut-extra { display: flex; gap: 8px; margin-top: 8px; }
@@ -402,13 +402,55 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .sut-sec h4 .num { display: inline-grid; place-items: center; width: 24px; height: 24px; margin-right: 6px;
   border-radius: 50%; background: var(--color-bg); border: 1px solid var(--color-border);
   font-size: .78rem; color: var(--color-text); }
+/* Language logos: tile tinted from the language's own colour; the glyph is lightened on dark
+   so near-black marks (Rust, Go's text) stay visible. */
+.lang-tile { --b: #64748B; display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px;
+  border-radius: 9px; background: color-mix(in srgb, var(--b) 12%, var(--color-surface)); color: var(--b); }
+.lang-tile.big { width: 44px; height: 44px; border-radius: 12px; }
+.lang-tile svg { width: 60%; height: 60%; fill: var(--b); }
+.lang-tile svg:not(.brand) { fill: none; stroke: var(--b); }
+.lang-tile img { width: 64%; height: 64%; object-fit: contain; }
+.lang-badge { font: 700 .78rem ui-sans-serif, system-ui, sans-serif; color: var(--b); letter-spacing: -.02em; }
+:root[data-theme="dark"] .lang-tile { --bd: color-mix(in srgb, var(--b) 55%, #fff); color: var(--bd); }
+:root[data-theme="dark"] .lang-tile svg.brand { fill: var(--bd); }
+:root[data-theme="dark"] .lang-tile svg:not(.brand) { stroke: var(--bd); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lang-tile { --bd: color-mix(in srgb, var(--b) 55%, #fff); color: var(--bd); }
+  :root:not([data-theme="light"]) .lang-tile svg.brand { fill: var(--bd); }
+  :root:not([data-theme="light"]) .lang-tile svg:not(.brand) { stroke: var(--bd); } }
+.lang-pick { position: relative; }
+.lang-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 10px; text-align: left;
+  background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border);
+  border-radius: 8px; font: inherit; cursor: pointer; }
+.lang-btn:hover, .lang-btn[aria-expanded="true"] { border-color: var(--color-primary); }
+.lang-cur { flex: 1; }
+.lang-chev { width: 18px; height: 18px; color: var(--color-muted); }
+.lang-chev svg { width: 100%; height: 100%; }
+.lang-menu { position: absolute; z-index: 30; left: 0; width: min(720px, calc(100vw - 48px)); top: calc(100% + 6px);
+  max-height: 420px; overflow: auto; padding: 10px; background: var(--color-surface);
+  border: 1px solid var(--color-border); border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0, 0, 0, .18); }
+.lang-menu[hidden] { display: none; }
+.lang-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 8px; }
+.lang-foot { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--color-border); }
+.lang-opt { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; text-align: center;
+  background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border);
+  border-radius: 10px; font: inherit; cursor: pointer; }
+.lang-opt:hover { border-color: var(--color-primary); }
+.lang-opt.on { border: 2px solid var(--color-primary); padding: 9px 5px;
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface)); }
+.lang-opt:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.lang-name { margin-top: 4px; font-weight: 600; font-size: .85rem; }
+.lang-sub { color: var(--color-muted); font-size: .72rem; line-height: 1.25; }
 .inp-sub { margin: -4px 0 10px; font-size: .82rem; }
 .inp-lang { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 14px; }
 .inp-lang label { margin-top: 0; }
 .inp-panel { margin-top: 14px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius);
   background: color-mix(in srgb, var(--color-primary) 4%, var(--color-surface)); }
 .inp-panel h4 { margin: 0 0 4px; }
-.inp-list { display: grid; gap: 8px; margin: 10px 0; }
+.inp-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin: 10px 0; }
+.inp-gt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.inp-gt .muted { font-size: .74rem; }
 .inp-g { position: relative; display: flex; gap: 12px; align-items: center; text-align: left; padding: 10px 12px;
   background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border);
   border-radius: var(--radius); cursor: pointer; font: inherit; font-size: .85rem; }
