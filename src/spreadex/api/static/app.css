@@ -529,9 +529,10 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .quick-demo .qd-icon { background: var(--color-primary-lt); color: var(--color-primary-dk); }
 
 /* ---- the brand mark's animation -----------------------------------------
-   Carried over from the research webapp. One 5s cycle: red centre, then the
-   green squares, then the orange circles, with the spokes fading in behind
-   them. Everything scales about the SVG's centre. */
+   The research webapp's original, timings unchanged: a 5s cycle that builds
+   the mark up -- red centre, then the green squares, then the orange circles,
+   with the spokes fading in behind them -- holds it to 78%, then collapses it
+   and starts again. Everything scales about the SVG's centre. */
 .hero-mark .logo-green  { fill: #5cb85c; }
 .hero-mark .logo-orange { fill: #f5a623; }
 .hero-mark line { stroke: var(--color-muted); stroke-width: 1.8; stroke-linecap: round; }
@@ -540,31 +541,36 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .hero-mark .logo-line-green, .hero-mark .logo-line-orange {
   transform-box: view-box; transform-origin: 30px 30px; }
 
-.hero-mark .logo-red    { animation: mark-red 1.5s ease-out .1s both; }
-.hero-mark .logo-green  { animation: mark-green 1.5s ease-out .1s both; }
-.hero-mark .logo-orange { animation: mark-orange 1.5s ease-out .1s both; }
-.hero-mark .logo-line-green  { animation: mark-line-green 1.5s ease-out .1s both; }
-.hero-mark .logo-line-orange { animation: mark-line-orange 1.5s ease-out .1s both; }
+.hero-mark .logo-red    { animation: mark-red 5s ease-in-out infinite; }
+.hero-mark .logo-green  { animation: mark-green 5s ease-in-out infinite; }
+.hero-mark .logo-orange { animation: mark-orange 5s ease-in-out infinite; }
+.hero-mark .logo-line-green  { opacity: 0; animation: mark-line-green 5s ease-in-out infinite; }
+.hero-mark .logo-line-orange { opacity: 0; animation: mark-line-orange 5s ease-in-out infinite; }
 
 @keyframes mark-red {
-  0%   { transform: scale(0); opacity: 0; }
-  8%   { opacity: 1; }
-  34%  { transform: scale(1.3); }
-  52%  { transform: scale(1); }
-  100% { transform: scale(1); opacity: 1; } }
+  0%       { transform: scale(0); opacity: 0; }
+  2%       { opacity: 1; }
+  7%       { transform: scale(1.35); }
+  12%      { transform: scale(1); }
+  78%      { transform: scale(1); opacity: 1; }
+  88%, 100% { transform: scale(0); opacity: 0; } }
 @keyframes mark-green {
-  0%, 22% { transform: scale(0); opacity: 0; }
-  28%     { opacity: 1; }
-  58%     { transform: scale(1.14); }
-  74%     { transform: scale(1); }
-  100%    { transform: scale(1); opacity: 1; } }
+  0%, 8%   { transform: scale(0); opacity: 0; }
+  10%      { opacity: 1; }
+  20%      { transform: scale(1.15); }
+  24%      { transform: scale(1); }
+  78%      { transform: scale(1); opacity: 1; }
+  88%, 100% { transform: scale(0); opacity: 0; } }
 @keyframes mark-orange {
-  0%, 40% { transform: scale(0); opacity: 0; }
-  46%     { opacity: 1; }
-  76%     { transform: scale(1.14); }
-  90%     { transform: scale(1); }
-  100%    { transform: scale(1); opacity: 1; } }
-@keyframes mark-line-green  { 0%, 40% { opacity: 0; } 100% { opacity: .55; } }
-@keyframes mark-line-orange { 0%, 58% { opacity: 0; } 100% { opacity: .55; } }
+  0%, 16%  { transform: scale(0); opacity: 0; }
+  18%      { opacity: 1; }
+  28%      { transform: scale(1.15); }
+  32%      { transform: scale(1); }
+  78%      { transform: scale(1); opacity: 1; }
+  88%, 100% { transform: scale(0); opacity: 0; } }
+@keyframes mark-line-green {
+  0%, 16%  { opacity: 0; } 24%, 78% { opacity: .7; } 88%, 100% { opacity: 0; } }
+@keyframes mark-line-orange {
+  0%, 24%  { opacity: 0; } 32%, 78% { opacity: .7; } 88%, 100% { opacity: 0; } } }
 
 

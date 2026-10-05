@@ -175,25 +175,39 @@ def test_the_brand_mark_is_the_one_from_the_research_webapp():
     assert 'aria-hidden="true"' in mark, "decoration beside a heading that says the same"
 
 
-def test_the_mark_builds_once_and_then_holds_still():
-    """A hero mark that dissolves and rebuilds every five seconds competes with
-    the text beside it for attention. It assembles on arrival and stays
-    assembled."""
+def test_the_mark_keeps_the_research_webapp_s_original_loop():
+    """The 5s cycle from webapp/static/styles.css, timings unchanged: the mark
+    builds up, holds to 78%, collapses, and starts again.
+
+    An earlier version of this file played it once and held. That was changed
+    back on request -- the looping build is the identity the tool has always
+    had, and keeping it identical to the research webapp is the point.
+    """
     for stage in ("mark-red", "mark-green", "mark-orange",
                   "mark-line-green", "mark-line-orange"):
         assert f"@keyframes {stage}" in CSS, stage
         decl = CSS[CSS.index(f"animation: {stage}"):]
         decl = decl[:decl.index(";")]
-        assert "infinite" not in decl, f"{stage} loops: {decl}"
-        assert "both" in decl or "forwards" in decl, (
-            f"{stage} must hold its finished state: {decl}"
-        )
-    # ...and every stage ends assembled rather than scaled away.
-    for stage in ("mark-red", "mark-green", "mark-orange"):
-        frames = CSS[CSS.index(f"@keyframes {stage}"):]
-        frames = frames[:frames.index("}\n@") if "}\n@" in frames else len(frames)]
-        collapsed = " ".join(frames.split())
-        assert "100% { transform: scale(1); opacity: 1; }" in collapsed, stage
+        assert "5s" in decl and "infinite" in decl, f"{stage} no longer loops: {decl}"
+
+    # The staging is what makes it read as an assembly rather than a flicker:
+    # red leads, the green squares follow, the orange circles last.
+    def first_visible(stage):
+        frames = " ".join(CSS[CSS.index(f"@keyframes {stage}"):].split())
+        return frames[:frames.index("{", frames.index("{") + 1)]
+
+    assert "8%" in first_visible("mark-green"), "green should wait for red"
+    assert "16%" in first_visible("mark-orange"), "orange should wait for green"
+
+
+def test_the_looping_mark_still_holds_still_for_reduced_motion():
+    """A mark that rebuilds every five seconds is exactly what someone who
+    asked for less movement does not want."""
+    block = CSS[CSS.index("@media (prefers-reduced-motion: reduce)"):]
+    block = block[:block.index("\n}")]
+    assert ".hero-mark" in block
+    assert "animation: none" in block
+    assert "opacity: 1" in block, "and it must be left visible, not invisible"
 
 
 def test_the_pipeline_folds_rather_than_running_off_the_page():
