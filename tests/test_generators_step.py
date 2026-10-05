@@ -42,7 +42,7 @@ def test_the_api_lists_real_generators_and_keeps_upcoming_ones_apart(tmp_path):
     real = {g["id"] for g in r["generators"]}
     soon = {u["id"] for u in r["upcoming"]}
     assert real == set(load_catalog()) and not (real & soon)
-    assert {"clusgram", "nautilus", "dharma", "llm"} <= soon
+    assert {"clusgram", "nautilus", "dharma", "fuzz4all"} <= soon and "llm" not in soon
     assert all(u["family"] in FAMILIES for u in r["upcoming"])
     assert all(g["family"] in FAMILIES for g in r["generators"])
     assert {f["id"] for f in r["families"]} == FAMILIES
@@ -158,3 +158,12 @@ def test_the_name_clusgram_is_allowed_but_a_path_into_that_repo_is_not():
 def test_an_incompatible_generator_cannot_be_ticked_unless_it_is_already_chosen():
     card = JS[JS.index("function genCard"):JS.index("function upcomingCard")]
     assert '${fit.ok || chosen ? "" : "disabled"}' in card
+
+
+def test_fuzz4all_is_listed_inactive_in_the_llm_family_and_cannot_be_run():
+    from spreadex.core.config import Config
+    r = setup.generator_status(Config.unconfigured(Path(".")))
+    f = next(u for u in r["upcoming"] if u["id"] == "fuzz4all")
+    assert f["name"] == "Fuzz4All" and f["family"] == "llm-based"
+    assert "fuzz4all" not in {g["id"] for g in r["generators"]}
+    assert "LLM generator" not in JS and 'fuzz4all: "gen-llm.png"' in JS

@@ -120,8 +120,8 @@ UPCOMING_GENERATORS = [
      "summary": "Coverage-guided grammar fuzzer with feedback."},
     {"id": "dharma", "name": "Dharma", "family": "probabilistic",
      "summary": "Mozilla's generational grammar fuzzer."},
-    {"id": "llm", "name": "LLM generator", "family": "llm-based",
-     "summary": "Prompt-guided generation. Not bundled in v0.1."},
+    {"id": "fuzz4all", "name": "Fuzz4All", "family": "llm-based",
+     "summary": "LLM-driven universal fuzzer (Xia et al., ICSE 2024). Planned; no model is bundled."},
 ]
 
 

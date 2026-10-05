@@ -1935,7 +1935,8 @@ function commitGrammar() {
 // Logos come from the research tool's assets (small copies). Grammarinator has none there, so it
 // takes the purple node glyph from the design. Families drive the filter bar.
 const GEN_LOGO = { fandango: "gen-fandango.png", isla: "gen-isla.png", fuzzingbook: "gen-fuzzingbook.png",
-  clusgram: "gen-clusgram.png", nautilus: "gen-nautilus.png", dharma: "gen-dharma.png", llm: "gen-llm.png" };
+  clusgram: "gen-clusgram.png", nautilus: "gen-nautilus.png", dharma: "gen-dharma.png",
+  fuzz4all: "gen-llm.png" };   // Fuzz4All has no mark of its own here; the generic LLM icon stands in
 const FAMILY_LABEL = { "probabilistic": "Probabilistic", "constraint-based": "Constraint-based",
   "coverage-guided": "Coverage-guided", "llm-based": "LLM-based" };
 
