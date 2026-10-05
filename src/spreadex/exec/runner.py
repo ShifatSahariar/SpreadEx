@@ -94,6 +94,22 @@ class Target:
             out.append(part)
         return out
 
+    def resolved_cwd(self) -> str | None:
+        """The directory the child runs in, or None for a clean scratch directory.
+
+        A relative path is relative to the PROJECT, as every other path in
+        spreadex.yaml is. It used to be handed to subprocess as written, so the
+        same config ran in a different place depending on which directory
+        `spreadex` was launched from -- and a UI server can be launched from
+        anywhere.
+        """
+        if not self.cwd:
+            return None
+        path = Path(self.cwd).expanduser()
+        if not path.is_absolute() and self.base_dir is not None:
+            path = self.base_dir / path
+        return str(path)
+
     def render(self, input_path: Path) -> list[str]:
         """Substitute {input} in the command template.
 
@@ -117,7 +133,8 @@ class Target:
             command=list(cfg["command"]),
             input_mode=(cfg.get("input_mode") or defaults.get("input_mode") or "file"),
             version=cfg.get("version"),
-            env=dict(cfg.get("env", {})),
+            # `env: {LEVEL: 3}` is what a person types, and subprocess wants strings.
+            env={str(k): str(v) for k, v in (cfg.get("env") or {}).items()},
             cwd=cfg.get("cwd"),
             base_dir=base_dir,
             limits=Limits(
@@ -169,7 +186,16 @@ def run_one(target: Target, input_path: Path, input_hash: str | None = None) -> 
     out = err = ""
 
     with tempfile.TemporaryDirectory(prefix="spreadex-run-") as tmp:
-        cwd = target.cwd or tmp
+        cwd = target.resolved_cwd() or tmp
+        # subprocess raises the SAME FileNotFoundError for a missing command and
+        # a missing working directory, which used to be reported as "command not
+        # found" for a perfectly good command. Check the one we can name.
+        if target.cwd and not Path(cwd).is_dir():
+            raise RuntimeError(
+                f"Target {target.name!r}: working directory not found: {cwd}\n"
+                f"  Fix: correct `cwd` in spreadex.yaml, or remove it to run in a clean "
+                f"scratch directory."
+            )
         start = time.perf_counter()
         try:
             proc = subprocess.run(

@@ -91,3 +91,44 @@ def test_configuration_errors_say_how_to_fix_them(tmp_path, body, msg):
 def test_missing_config_file(tmp_path):
     with pytest.raises(ConfigError, match="spreadex init"):
         load_config(tmp_path / "nope.yaml")
+
+
+# --------------------------------------- the keys the wizard's Advanced section writes
+
+import pytest as _pytest
+
+from spreadex.core.config import ConfigError as _ConfigError, load_config as _load
+
+
+def _cfg(tmp_path, sut_yaml):
+    f = tmp_path / "spreadex.yaml"
+    f.write_text(f"sut:\n{sut_yaml}generators: []\ncorpus: {{path: .}}\n")
+    return f
+
+
+def test_working_directory_environment_stdin_and_memory_reach_the_target(tmp_path):
+    t = _load(_cfg(tmp_path,
+        '  command: ["echo"]\n  cwd: work\n  input_mode: stdin\n  memory_mb: 512\n'
+        '  env:\n    LANG: C.UTF-8\n    LEVEL: 3\n')).targets[0]
+    assert t.cwd == "work" and t.input_mode == "stdin" and t.limits.memory_mb == 512
+    assert t.env == {"LANG": "C.UTF-8", "LEVEL": "3"}, "numbers become strings"
+
+
+@_pytest.mark.parametrize("sut_yaml, expect", [
+    ('  command: ["x"]\n  env: [A, B]\n', "env must be a mapping"),
+    ('  command: ["x"]\n  cwd: 12\n', "cwd must be a path string"),
+    ('  command: ["x"]\n  memory_mb: lots\n', "memory_mb must be a positive whole number"),
+    ('  command: ["x"]\n  memory_mb: 0\n', "memory_mb must be a positive whole number"),
+    ('  command: ["x"]\n  timeout: soon\n', "timeout is not a duration"),
+])
+def test_a_malformed_option_is_refused_with_a_message_that_says_what_to_write(tmp_path, sut_yaml, expect):
+    with _pytest.raises(_ConfigError) as exc:
+        _load(_cfg(tmp_path, sut_yaml))
+    assert expect in str(exc.value), str(exc.value)
+
+
+def test_the_message_names_the_target_when_there_are_several(tmp_path):
+    with _pytest.raises(_ConfigError) as exc:
+        _load(_cfg(tmp_path,
+            '  targets:\n    - {name: a, command: ["x"]}\n    - {name: b, command: ["y"], env: [1]}\n'))
+    assert "sut.targets[1].env" in str(exc.value)

@@ -7,12 +7,16 @@ confirmed, and later executes exactly that.
 
 from __future__ import annotations
 
+import os
+import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from ..core.config import CONFIG_NAME, ConfigError, load_config
+from ..exec.runner import _parse_duration
 from ..generators import GeneratorError, GeneratorManager
 
 GRAMMAR_SUFFIXES = {".bnf", ".g4", ".fan", ".ebnf", ".isla", ".py"}
@@ -284,13 +288,91 @@ def save_grammar(config, body: dict) -> dict[str, Any]:
 
 # ------------------------------------------------------- command verification
 
-#: Long enough for a JVM to start, short enough that a hung command does not
-#: hold the wizard. A real campaign uses the project's own timeout.
-PROBE_TIMEOUT_S = 20.0
+#: A ceiling on what the connection test may ask for, whatever the config says.
+#: The campaign's own timeout is used (that is what it will experience), but a
+#: wizard request should not be able to hold a server thread for ten minutes.
+PROBE_MAX_TIMEOUT_S = 60.0
 
 #: Capped so a chatty command cannot fill the browser. The user is checking
 #: "did this run at all", not reading a log.
 PROBE_PREVIEW = 4000
+
+_VERSION_LINE = re.compile(r"\d+\.\d+")
+
+
+def _runtime_label(target) -> str | None:
+    """The interpreter's own version, for "Runtime: Java 21".
+
+    Only when the command starts with a BARE name (java, python3, node -- found
+    on PATH): those are runtimes. A path such as ./parser is the user's own
+    program, not a runtime, and `--version` on someone's program is at best
+    meaningless (the demo SUT answers it with "cannot read input") and at worst
+    an unwanted extra run.
+
+    Even then the answer is only believed if the call succeeded and the first
+    line contains something that looks like a version. Otherwise nothing is
+    shown: no label is better than a stack-trace fragment in a "Runtime" box.
+    """
+    exe = target.command[0]
+    if os.sep in exe:
+        return None
+    try:
+        proc = subprocess.run(
+            [exe, "--version"], capture_output=True, timeout=5, check=False,
+            stdin=subprocess.DEVNULL, cwd=target.resolved_cwd() or None,
+            env={**os.environ, **target.env},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    text = (proc.stdout or proc.stderr).decode("utf-8", "replace").strip().splitlines()
+    first = text[0].strip() if text else ""
+    return first[:60] if first and _VERSION_LINE.search(first) else None
+
+
+def _clean_probe_options(body: dict) -> tuple[dict | None, str | None]:
+    """Validate the request into a target spec, or say what is wrong with it."""
+    command = body.get("command")
+    if isinstance(command, str):
+        command = command.split()
+    if not isinstance(command, list) or not [c for c in command if str(c).strip()]:
+        return None, "enter a command first"
+    spec: dict[str, Any] = {"name": "probe", "command": [str(c) for c in command if str(c).strip()]}
+
+    mode = body.get("input_mode") or "file"
+    if mode not in ("file", "stdin"):
+        return None, f"input_mode must be 'file' or 'stdin', not {mode!r}"
+    spec["input_mode"] = mode
+
+    cwd = body.get("cwd")
+    if cwd not in (None, ""):
+        if not isinstance(cwd, str):
+            return None, "the working directory must be a path"
+        spec["cwd"] = cwd
+
+    env = body.get("env")
+    if env not in (None, {}):
+        if not isinstance(env, dict) or not all(isinstance(k, str) and k for k in env):
+            return None, "environment variables must be NAME=value pairs"
+        if len(env) > 64:
+            return None, "too many environment variables (the limit is 64)"
+        spec["env"] = {k: str(v) for k, v in env.items()}
+
+    try:
+        timeout = _parse_duration(body.get("timeout") or "5s")
+    except ValueError:
+        return None, f"{body.get('timeout')!r} is not a duration; use 5, 5s, 2m or 1h"
+    if timeout <= 0:
+        return None, "the timeout must be more than zero"
+    spec["timeout"] = min(timeout, PROBE_MAX_TIMEOUT_S)
+
+    mem = body.get("memory_mb")
+    if mem not in (None, ""):
+        if isinstance(mem, bool) or not isinstance(mem, int) or mem <= 0:
+            return None, "the memory limit must be a positive whole number of megabytes"
+        spec["memory_mb"] = mem
+    return spec, None
 
 
 def probe_target(config, body: dict) -> dict[str, Any]:
@@ -300,6 +382,10 @@ def probe_target(config, body: dict) -> dict[str, Any]:
     that every one of 500 inputs "crashed" because of a typo is the worst way
     to learn it, so the wizard runs it once, here, and shows the result.
 
+    The target is built by Target.from_config -- the code a campaign uses -- from
+    the same options (working directory, environment, stdin, timeout, memory),
+    so a passing test means the campaign will run it the same way.
+
     This is deliberately NOT a verdict. It reports exit code and output and
     leaves the judgement to the person reading it -- a parser rejecting the
     sample with a non-zero exit is working correctly, and saying otherwise
@@ -307,25 +393,18 @@ def probe_target(config, body: dict) -> dict[str, Any]:
     """
     import tempfile
 
-    from ..exec.runner import Limits, Target, run_one
+    from ..exec.runner import Target, run_one
 
-    command = body.get("command")
-    if isinstance(command, str):
-        command = command.split()
-    if not isinstance(command, list) or not [c for c in command if str(c).strip()]:
-        return {"ok": False, "error": "enter a command first"}
-    command = [str(c) for c in command if str(c).strip()]
+    spec, problem = _clean_probe_options(body)
+    if problem:
+        return {"ok": False, "error": problem}
+    command = spec["command"]
 
     sample = body.get("sample")
     if not isinstance(sample, str) or not sample:
         sample = "1 + 1\n"
 
-    target = Target(
-        name="probe",
-        command=command,
-        base_dir=config.project_root,
-        limits=Limits(timeout_s=PROBE_TIMEOUT_S),
-    )
+    target = Target.from_config(spec, base_dir=config.project_root)
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "sample.txt"
         path.write_text(sample)
@@ -334,11 +413,15 @@ def probe_target(config, body: dict) -> dict[str, Any]:
         except RuntimeError as exc:
             # run_one turns a missing command into a configuration error with
             # its own CLI-shaped advice; in the wizard the fix is on screen.
-            if "not found" in str(exc):
+            text = str(exc)
+            if "working directory not found" in text:
+                return {"ok": False, "error": text.split("\n")[0].split(": ", 1)[1]
+                        if ": " in text else text}
+            if "not found" in text:
                 return {"ok": False,
                         "error": f"{command[0]!r} was not found. Check the path, "
                                  f"or install it and try again."}
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": text}
         except PermissionError:
             return {"ok": False, "error": f"{command[0]!r} is not executable. "
                                           f"`chmod +x` it and try again."}
@@ -358,4 +441,7 @@ def probe_target(config, body: dict) -> dict[str, Any]:
         "stderr": (obs.stderr_preview or "")[:PROBE_PREVIEW],
         "sample": sample,
         "substituted": any("{input}" in part for part in command),
+        "input_mode": target.input_mode,
+        "timeout_s": target.limits.timeout_s,
+        "runtime": _runtime_label(target),
     }

@@ -5,6 +5,7 @@ are tested as carefully as the data.
 """
 
 import json
+import os
 import threading
 from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
@@ -735,3 +736,120 @@ def test_the_project_payload_says_whether_it_is_on(served, experimental_server):
     assert project["experimental"] is False
     _, project = get(f"{experimental_server[0]}/api/project", experimental_server[1])
     assert project["experimental"] is True
+
+
+# ------------------------------- the connection test, with the Advanced options
+
+def test_probe_can_send_the_input_on_standard_input(empty_project):
+    """The old message said stdin "is not something SpreadEx provides". It is
+    now -- input_mode: stdin -- and the test has to be able to exercise it."""
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe",
+                   {"command": ["cat"], "input_mode": "stdin", "sample": "from stdin\n"},
+                   token=token)
+    assert body["ok"] is True and body["stdout"].strip() == "from stdin"
+    assert body["input_mode"] == "stdin"
+    assert body["substituted"] is False
+    assert not any(part.endswith("sample.txt") for part in body["command"]), (
+        "no path may be passed in stdin mode"
+    )
+
+
+def test_probe_runs_in_the_requested_working_directory_relative_to_the_project(empty_project):
+    base, token, root, _ = empty_project
+    (root / "work").mkdir()
+    _, body = post(f"{base}/api/probe",
+                   {"command": ["pwd"], "cwd": "work", "input_mode": "stdin"}, token=token)
+    assert body["ok"] is True
+    assert body["stdout"].strip() == str((root / "work").resolve())
+
+
+def test_probe_names_a_missing_working_directory_instead_of_blaming_the_command(empty_project):
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe", {"command": ["pwd"], "cwd": "no/such/dir"}, token=token)
+    assert body["ok"] is False
+    assert "working directory not found" in body["error"] and "no/such/dir" in body["error"]
+    assert "was not found. Check the path" not in body["error"], "that is the wrong diagnosis"
+
+
+def test_probe_passes_environment_variables_through(empty_project):
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe",
+                   {"command": ["sh", "-c", "echo $SPREADEX_MARK"], "env": {"SPREADEX_MARK": "hello"}},
+                   token=token)
+    assert body["ok"] is True and body["stdout"].strip() == "hello"
+
+
+def test_probe_uses_the_campaigns_timeout_not_a_private_one(empty_project):
+    """What the user is testing is what the campaign will experience."""
+    import time as _t
+
+    base, token, _, _ = empty_project
+    started = _t.perf_counter()
+    _, body = post(f"{base}/api/probe",
+                   {"command": ["sleep", "10"], "timeout": "1s", "input_mode": "stdin"},
+                   token=token)
+    assert body["ok"] is True and body["timed_out"] is True
+    assert body["timeout_s"] == 1.0
+    assert _t.perf_counter() - started < 6, "the 1s timeout was ignored"
+
+
+@pytest.mark.parametrize("extra, fragment", [
+    ({"timeout": "soon"}, "not a duration"),
+    ({"timeout": "0"}, "more than zero"),
+    ({"input_mode": "pipe"}, "'file' or 'stdin'"),
+    ({"env": ["A=1"]}, "NAME=value"),
+    ({"env": {"": "x"}}, "NAME=value"),
+    ({"memory_mb": -5}, "positive whole number"),
+    ({"memory_mb": "lots"}, "positive whole number"),
+    ({"cwd": 7}, "must be a path"),
+])
+def test_probe_refuses_malformed_options_and_says_why(empty_project, extra, fragment):
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe", {"command": ["echo"], **extra}, token=token)
+    assert body["ok"] is False and fragment in body["error"], body
+
+
+def test_probe_caps_the_timeout_it_will_honour(empty_project):
+    """A wizard request must not be able to hold a server thread for ten minutes."""
+    from spreadex.api.setup import PROBE_MAX_TIMEOUT_S, _clean_probe_options
+
+    spec, _ = _clean_probe_options({"command": ["x"], "timeout": "10m"})
+    assert spec["timeout"] == PROBE_MAX_TIMEOUT_S
+
+
+def test_probe_reports_the_runtime_of_a_real_interpreter(empty_project):
+    import shutil
+
+    if not shutil.which("python3"):
+        pytest.skip("no python3 on PATH")
+    base, token, _, _ = empty_project
+    _, body = post(f"{base}/api/probe", {"command": ["python3", "-c", "pass"]}, token=token)
+    assert body["ok"] is True
+    assert body["runtime"] and body["runtime"].startswith("Python 3"), body["runtime"]
+
+
+def test_probe_does_not_call_a_users_own_program_a_runtime(empty_project, tmp_path):
+    """./parser --version is not the parser's runtime, and running someone's
+    program an extra time with a flag it may read as a filename is not ours to do."""
+    base, token, root, _ = empty_project
+    tool = root / "mytool.py"
+    tool.write_text("#!/usr/bin/env python3\nprint('Python 3.99 is what I claim')\n")
+    tool.chmod(0o755)
+    _, body = post(f"{base}/api/probe", {"command": [str(tool)]}, token=token)
+    assert body["ok"] is True
+    assert body["runtime"] is None
+
+
+def test_probe_does_not_show_an_error_line_as_a_runtime(empty_project, monkeypatch, tmp_path):
+    """Probed against the demo SUT, `--version` answers "cannot read input" and
+    exits 2. That line must never appear under "Runtime"."""
+    base, token, _, _ = empty_project
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "faketool"
+    fake.write_text("#!/bin/sh\necho 'faketool: cannot read input: [Errno 2] 1.2' >&2\nexit 2\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    _, body = post(f"{base}/api/probe", {"command": ["faketool"]}, token=token)
+    assert body["runtime"] is None, body["runtime"]

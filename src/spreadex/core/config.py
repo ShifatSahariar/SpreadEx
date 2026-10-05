@@ -191,7 +191,23 @@ def load_config(path: Path | None = None) -> Config:
                 f"{path}: sut.targets[{i}].input_mode is {mode!r}; "
                 f"expected 'file' (a path is passed) or 'stdin' (the bytes are piped in)."
             )
-        t = Target.from_config(entry, defaults, base_dir=path.parent)
+        where = f"{path}: sut.targets[{i}]" if "targets" in sut else f"{path}: sut"
+        if "cwd" in entry and not isinstance(entry["cwd"], str):
+            raise ConfigError(f"{where}.cwd must be a path string, not {type(entry['cwd']).__name__}.")
+        if "env" in entry and not isinstance(entry["env"] or {}, dict):
+            raise ConfigError(
+                f"{where}.env must be a mapping of NAME: value, not {type(entry['env']).__name__}.\n"
+                f"  Example:\n      env:\n        LANG: C.UTF-8"
+            )
+        mem = entry.get("memory_mb", defaults["memory_mb"])
+        if isinstance(mem, bool) or not isinstance(mem, int) or mem <= 0:
+            raise ConfigError(f"{where}.memory_mb must be a positive whole number of megabytes, got {mem!r}.")
+        try:
+            t = Target.from_config(entry, defaults, base_dir=path.parent)
+        except ValueError as exc:
+            raise ConfigError(
+                f"{where}.timeout is not a duration ({exc}). Use 5, 5s, 2m or 1h."
+            ) from None
         if t.name in seen:
             raise ConfigError(f"{path}: duplicate target name {t.name!r}; names must be unique.")
         seen.add(t.name)

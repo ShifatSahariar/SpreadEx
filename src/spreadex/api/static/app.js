@@ -222,6 +222,9 @@ const ICONS = {
   playSolid:  I(`<path d="M7 4.8 19 12 7 19.2z" fill="currentColor" stroke-linejoin="round"/>`, {w: 1.6}),
   book:       I(`<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2.5 2.5 0 0 1 2 1 2.5 2.5 0 0 1 2-1h4.5A1.5 1.5 0 0 1 20 5.5v12a1.5 1.5 0 0 1-1.5 1.5H14a2.5 2.5 0 0 0-2 1 2.5 2.5 0 0 0-2-1H5.5A1.5 1.5 0 0 1 4 17.5z"/><path d="M12 5v15"/>`),
   arrow:      I(`<path d="M4 12h15m0 0-5.5-5.5M19 12l-5.5 5.5"/>`),
+  check:      I(`<path d="M5 12.5l4.5 4.5L19 7.5"/>`),
+  alert:      I(`<path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.5"/><path d="M12 17.2v.01" stroke-width="2.4"/>`),
+  copy:       I(`<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>`),
   chart:      I(`<path d="M4.5 20h15"/><rect x="6" y="11" width="3.4" height="6" rx="1"/><rect x="11.3" y="6.5" width="3.4" height="10.5" rx="1"/><rect x="16.6" y="13.5" width="3.4" height="3.5" rx="1"/>`),
 };
 
@@ -453,6 +456,75 @@ addEventListener("resize", () => {
   resizeTimer = setTimeout(centreCurrentStep, 120);
 });
 
+// ---- command line helpers (pure: the tests run this region under Node) -----
+//
+// A command is stored as an argv list and shown as one editable string, so it
+// has to survive the round trip. The wizard used to split on whitespace, which
+// made a path with a space -- the usual case on macOS -- impossible to enter.
+
+// POSIX-flavoured, deliberately small: single quotes are literal, double quotes
+// allow \" and \\ , and a backslash outside quotes only escapes whitespace, a
+// quote or another backslash (so a Windows-style path is not mangled).
+function splitCommand(text) {
+  const argv = [];
+  let cur = "", started = false, quote = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      else if (quote === '"' && ch === "\\" && '"\\$`'.includes(text[i + 1] ?? "")) cur += text[++i];
+      else cur += ch;
+    } else if (ch === '"' || ch === "'") { quote = ch; started = true; }
+    else if (/\s/.test(ch)) { if (started || cur) { argv.push(cur); cur = ""; started = false; } }
+    else if (ch === "\\" && /[\s"'\\]/.test(text[i + 1] ?? "")) { cur += text[++i]; started = true; }
+    else { cur += ch; started = true; }
+  }
+  if (quote) return { argv, error: `a ${quote === '"' ? "double" : "single"} quote is never closed` };
+  if (started || cur) argv.push(cur);
+  return { argv, error: null };
+}
+
+function joinCommand(argv) {
+  return (argv || []).map(a => {
+    a = String(a);
+    return a !== "" && !/[\s"'\\]/.test(a) ? a : '"' + a.replace(/(["\\])/g, "\\$1") + '"';
+  }).join(" ");
+}
+
+// NAME=value per line; blank lines and # comments are ignored.
+function parseEnv(text) {
+  const env = {};
+  const lines = String(text || "").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    const key = eq > 0 ? line.slice(0, eq).trim() : "";
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      return { env: null, error: `line ${i + 1}: expected NAME=value (NAME may use letters, digits and _)` };
+    }
+    env[key] = line.slice(eq + 1).trim();
+  }
+  return { env, error: null };
+}
+
+function envToText(env) {
+  return Object.entries(env || {}).map(([k, v]) => `${k}=${v}`).join("\n");
+}
+
+const INTERPRETERS = new Set(["python", "python3", "node", "nodejs", "ruby", "perl", "php",
+                              "bash", "sh", "deno", "bun", "lua", "rscript"]);
+function inferKind(argv) {
+  const exe = (argv || [])[0];
+  if (!exe) return "cli";
+  if (exe === "java") return "jar";
+  if (INTERPRETERS.has(exe.split("/").pop())) return "script";
+  return /^(\.{1,2}\/|\/)/.test(exe) ? "cli" : "other";
+}
+
+const DURATION = /^\d+(\.\d+)?\s*[smh]?$/i;
+// ---- end command line helpers ----------------------------------------------
+
 // ------------------------------------------------------ config helpers
 
 function cfg() { return S.config || {}; }
@@ -460,7 +532,7 @@ function sut() { return cfg().sut || {}; }
 function targets() {
   const s = sut();
   if (s.targets) return s.targets;
-  if (s.command) return [{ name: s.name || "sut", command: s.command }];
+  if (s.command) return [{ name: s.name || "sut", command: s.command, cwd: s.cwd, env: s.env }];
   return [];
 }
 
@@ -470,12 +542,23 @@ function buildYaml() {
   const c = cfg(), t = targets();
   const q = v => JSON.stringify(v);
   const lines = ["# Written by the SpreadEx setup wizard. Safe to edit by hand.", "sut:"];
+  const extras = x => {
+    const out = [];
+    if (x.cwd) out.push(`cwd: ${q(x.cwd)}`);
+    if (x.env && Object.keys(x.env).length) {
+      out.push(`env: {${Object.entries(x.env).map(([k, v]) => `${k}: ${q(String(v))}`).join(", ")}}`);
+    }
+    return out;
+  };
   if (t.length > 1) {
     lines.push("  targets:");
-    t.forEach(x => lines.push(`    - {name: ${x.name}, command: [${x.command.map(q).join(", ")}]}`));
+    t.forEach(x => lines.push(`    - {${[`name: ${x.name}`, `command: [${x.command.map(q).join(", ")}]`, ...extras(x)].join(", ")}}`));
   } else if (t.length === 1) {
     lines.push(`  command: [${t[0].command.map(q).join(", ")}]`);
+    extras(t[0]).forEach(l => lines.push(`  ${l}`));
   }
+  if (c.sut?.input_mode === "stdin") lines.push("  input_mode: stdin");
+  if (c.sut?.memory_mb) lines.push(`  memory_mb: ${c.sut.memory_mb}`);
   lines.push(`  timeout: ${c.sut?.timeout || "5s"}`, "", "oracle:");
   lines.push(`  type: ${t.length > 1 ? "differential" : (c.oracle?.type || "crash")}`);
   if (c.oracle?.expected_exit_codes?.length) {
@@ -639,160 +722,310 @@ function renderStep() {
   });
 }
 
-function targetRow(x, i, total) {
-  return `<div class="row" data-target="${i}" style="align-items:flex-end">
-    ${total > 1 ? `<div style="flex:0 0 130px"><label>Name</label>
-      <input type="text" class="t-name" value="${esc(x.name || "sut" + (i + 1))}"></div>` : ""}
-    <div style="flex:4"><label>Command${total > 1 ? "" : ""}</label>
-      <input type="text" class="t-cmd" value="${esc((x.command || []).join(" "))}"></div>
-    ${total > 1 ? `<div style="flex:0 0 40px"><button class="ghost small" onclick="dropTarget(${i})">&times;</button></div>` : ""}
-  </div>`;
-}
+// ------------------------------------------------- step 1: system under test
 
-function readTargets() {
-  return [...document.querySelectorAll("[data-target]")].map((row, i) => ({
-    name: (row.querySelector(".t-name")?.value || `sut${i + 1}`).trim(),
-    command: (row.querySelector(".t-cmd").value || "").trim().split(/\s+/).filter(Boolean),
-  })).filter(x => x.command.length);
-}
-function addTarget() {
-  const t = readTargets();
-  t.push({ name: `sut${t.length + 1}`, command: [] });
-  S.config.sut = { ...sut(), targets: t, command: undefined };
-  stepSut();
-}
-function dropTarget(i) {
-  const t = readTargets(); t.splice(i, 1);
-  S.config.sut = t.length > 1 ? { ...sut(), targets: t, command: undefined }
-                              : { ...sut(), command: t[0]?.command, targets: undefined };
-  stepSut();
-}
-
-// Categories are a starting point, not a taxonomy: each one fills in a command
-// shape and a sample input that suits it. The user edits both.
-const TARGET_KINDS = [
-  { id: "cli",     t: "A command-line program",
-    d: "Reads a file given as an argument.",
-    cmd: "./your-parser {input}", sample: "1 + 1\n" },
-  { id: "jar",     t: "A Java program",
-    d: "A jar, run with the JDK on your PATH.",
-    cmd: "java -jar your-tool.jar {input}", sample: "1 + 1\n" },
-  { id: "script",  t: "A script",
-    d: "Python, Node, Ruby -- anything with an interpreter.",
-    cmd: "python3 parse.py {input}", sample: "1 + 1\n" },
-  { id: "other",   t: "Something else",
-    d: "Write the command yourself.", cmd: "", sample: "" },
+// Presets only prefill the command and the example shown on the right; the
+// user's text is never overwritten once they have typed something of their own.
+const SUT_KINDS = [
+  { id: "cli",    t: "Executable",     d: "A compiled program or binary", icon: "terminal",
+    cmd: "./your-parser {input}" },
+  { id: "jar",    t: "Java / JVM",     d: "JAR, class or JVM-based program", icon: "book",
+    cmd: "java -jar your-tool.jar {input}" },
+  { id: "script", t: "Script / Runtime", d: "Python, Node.js, Ruby and more", icon: "doc",
+    cmd: "python3 your_parser.py {input}" },
+  { id: "other",  t: "Custom command", d: "Any command that runs your program", icon: "gear",
+    cmd: "" },
 ];
 
-function pickKind(id) {
-  const k = TARGET_KINDS.find(x => x.id === id);
+const SUT_EXAMPLES = [
+  { id: "jar",    t: "Java (Rhino)", code: "java -jar rhino-all.jar {input}" },
+  { id: "python", t: "Python",       code: "python3 your_parser.py {input}" },
+  { id: "node",   t: "Node.js",      code: "node parse.js {input}" },
+  { id: "other",  t: "Custom",       code: "./run-my-tool.sh {input}" },
+];
+
+const SUT_TIPS = [
+  "Use the exact command you would type in a terminal.",
+  "Keep {input} where the test file path should go.",
+  "Use absolute paths if the command lives outside this project.",
+];
+
+function sutDraft() {
+  if (S.draft) return S.draft;
+  const t = targets();
+  const s = sut();
+  const first = t[0] || {};
+  S.draft = {
+    kind: S.kind || (first.command ? inferKind(first.command) : "cli"),
+    command: first.command ? joinCommand(first.command) : "",
+    extra: t.slice(1).map(x => ({ name: x.name, command: joinCommand(x.command || []) })),
+    cwd: first.cwd || s.cwd || "",
+    env: envToText(first.env || s.env),
+    input_mode: first.input_mode || s.input_mode || "file",
+    memory_mb: first.memory_mb || s.memory_mb || "",
+    timeout: String(s.timeout || "5s"),
+    advancedOpen: !!(first.cwd || s.cwd || first.env || s.env || s.memory_mb ||
+                     (first.input_mode || s.input_mode) === "stdin"),
+    exampleTab: "jar",
+  };
+  return S.draft;
+}
+
+// Read what is on screen back into the draft before any re-render, so toggling
+// a card or a tab never eats what was typed.
+function stashSut() {
+  const d = sutDraft();
+  const v = id => (el(id) ? el(id).value : undefined);
+  if (v("sut-cmd") !== undefined) d.command = v("sut-cmd");
+  if (v("sut-cwd") !== undefined) d.cwd = v("sut-cwd");
+  if (v("sut-env") !== undefined) d.env = v("sut-env");
+  if (v("sut-mem") !== undefined) d.memory_mb = v("sut-mem");
+  if (v("sut-timeout") !== undefined) d.timeout = v("sut-timeout");
+  if (el("sut-stdin")) d.input_mode = el("sut-stdin").checked ? "stdin" : "file";
+  const adv = document.getElementById("sut-adv");
+  if (adv) d.advancedOpen = adv.open;
+  document.querySelectorAll(".sut-extra").forEach((row, i) => {
+    if (!d.extra[i]) return;
+    d.extra[i].name = row.querySelector(".x-name").value;
+    d.extra[i].command = row.querySelector(".x-cmd").value;
+  });
+  return d;
+}
+
+function pickSutKind(id) {
+  const d = stashSut();
+  const was = SUT_KINDS.find(k => k.id === d.kind);
+  const k = SUT_KINDS.find(x => x.id === id);
+  d.kind = id;
   S.kind = id;
-  if (id === null) { S.config.sut = { timeout: sut().timeout }; S.probe = null; stepSut(); return; }
-  if (k && k.cmd && !readTargets().length) {
-    S.config.sut = { ...sut(), command: k.cmd.split(" ") };
-  }
-  if (k && k.sample) S.sample = k.sample;
+  // Swap the placeholder command only if the box is empty or still holds the
+  // previous card's untouched template.
+  if (k && k.cmd && (!d.command.trim() || (was && was.cmd === d.command))) d.command = k.cmd;
+  if (id === "jar") d.exampleTab = "jar";
+  else if (id === "script") d.exampleTab = "python";
+  else if (id === "other") d.exampleTab = "other";
   S.probe = null;
   stepSut();
 }
 
-async function verifyCommand() {
-  const t = readTargets();
-  if (!t.length) { el("err").innerHTML = `<div class="note bad">Enter a command first.</div>`; return; }
-  S.config.sut = { ...sut(), ...(t.length > 1 ? { targets: t } : { command: t[0].command }) };
-  S.sample = el("sample").value;
-  el("probe").innerHTML = `<div class="note">Running it once&hellip;</div>`;
-  try {
-    S.probe = await api("/api/probe", { command: t[0].command, sample: S.sample });
-  } catch (e) {
-    S.probe = { ok: false, error: String(e.message || e) };
+function sutExampleTab(id) { stashSut().exampleTab = id; stepSut(); }
+
+function copyExample(button) {
+  const d = sutDraft();
+  const ex = SUT_EXAMPLES.find(x => x.id === d.exampleTab) || SUT_EXAMPLES[0];
+  const done = () => { button.classList.add("copied"); button.setAttribute("aria-label", "Copied");
+    setTimeout(() => { button.classList.remove("copied"); button.setAttribute("aria-label", "Copy command"); }, 1400); };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(ex.code).then(done).catch(() => {});
+}
+
+function addSutExtra() {
+  const d = stashSut();
+  d.extra.push({ name: `sut${d.extra.length + 2}`, command: "" });
+  stepSut();
+}
+function dropSutExtra(i) { const d = stashSut(); d.extra.splice(i, 1); stepSut(); }
+
+// Everything the form says, checked once, in the order a person fixes things.
+// `problem` is for Continue and Test (a blocker); the draft is never altered.
+function readSut() {
+  const d = stashSut();
+  const main = splitCommand(d.command);
+  if (main.error) return { problem: `Command: ${main.error}.`, focus: "sut-cmd" };
+  if (!main.argv.length) return { problem: "Enter the command that runs your program.", focus: "sut-cmd" };
+  const env = parseEnv(d.env);
+  if (env.error) return { problem: `Environment variables: ${env.error}.`, focus: "sut-env", open: true };
+  if (!DURATION.test(String(d.timeout).trim())) {
+    return { problem: `Timeout: "${d.timeout}" is not a duration; use 5, 5s, 2m or 1h.`, focus: "sut-timeout", open: true };
   }
+  let memory_mb;
+  if (String(d.memory_mb).trim() !== "") {
+    memory_mb = Number(d.memory_mb);
+    if (!Number.isInteger(memory_mb) || memory_mb <= 0) {
+      return { problem: "Memory limit: enter a whole number of megabytes.", focus: "sut-mem", open: true };
+    }
+  }
+  const extra = [];
+  for (const [i, x] of d.extra.entries()) {
+    if (!x.command.trim()) continue;
+    const p = splitCommand(x.command);
+    if (p.error || !p.argv.length) return { problem: `Second implementation: ${p.error || "enter a command"}.`, focus: null };
+    extra.push({ name: (x.name || `sut${i + 2}`).trim(), command: p.argv });
+  }
+  return { argv: main.argv, env: env.env, cwd: d.cwd.trim(), memory_mb,
+           input_mode: d.input_mode, timeout: String(d.timeout).trim(), extra };
+}
+
+function showSutProblem(r) {
+  el("err").innerHTML = `<div class="note bad" role="alert">${esc(r.problem)}</div>`;
+  if (r.open && el("sut-adv")) el("sut-adv").open = true;
+  if (r.focus && el(r.focus)) el(r.focus).focus();
+}
+
+async function verifyCommand() {
+  const r = readSut();
+  el("err").innerHTML = "";
+  if (r.problem) { showSutProblem(r); return; }
+  const btn = el("sut-test");
+  btn.disabled = true;
+  S.probe = { pending: true };
+  el("probe").innerHTML = sutResult();
+  const body = { command: r.argv, input_mode: r.input_mode, timeout: r.timeout,
+                 sample: S.sample || "1 + 1\n" };
+  if (r.cwd) body.cwd = r.cwd;
+  if (Object.keys(r.env).length) body.env = r.env;
+  if (r.memory_mb) body.memory_mb = r.memory_mb;
+  try { S.probe = await api("/api/probe", body); }
+  catch (e) { S.probe = { ok: false, error: String(e.message || e) }; }
+  S.probeShowDetails = false;
   stepSut();
 }
 
-function probeReport() {
+function toggleProbeDetails() { stashSut(); S.probeShowDetails = !S.probeShowDetails; stepSut(); }
+
+function sutResult() {
   const r = S.probe;
   if (!r) return "";
-  if (!r.ok) return `<div class="note bad"><strong>It did not run.</strong><br>${esc(r.error)}</div>`;
+  const check = `<span class="res-ico" aria-hidden="true">${ICONS.check}</span>`;
+  if (r.pending) return `<div class="res note" role="status">Running it once&hellip;</div>`;
+  if (!r.ok) {
+    return `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.alert}</span>
+      <div class="res-main"><div class="res-t">It did not run</div>
+      <div class="res-s">${esc(r.error)}</div></div></div>`;
+  }
   const dead = r.timed_out;
-  // Deliberately not a verdict. A non-zero exit here is usually the system
-  // doing its job -- step 4 is where that gets configured.
-  const head = dead
-    ? `<strong>No answer in ${Math.round(r.duration_ms / 1000)}s.</strong> If that is normal for
-       your system, raise the timeout; if not, the command may be waiting for input on stdin,
-       which SpreadEx does not provide.`
-    : `<strong>It ran.</strong> Exit code <span class="mono">${r.exit_code}</span>,
-       ${Math.round(r.duration_ms)}&thinsp;ms. A non-zero exit here is often correct &mdash;
-       you will say what counts as a failure on step 4.`;
+  const facts = [["Command", `<span class="mono">${esc((r.command || []).join(" "))}</span>`],
+                 ["Runtime", esc(r.runtime || "Not detected")],
+                 ["Test time", dead ? `no answer in ${Math.round(r.duration_ms / 1000)}s`
+                                    : `${Math.round(r.duration_ms)} ms`]];
   const block = (title, text) => text && text.trim()
-    ? `<div style="margin-top:8px"><label>${title}</label><pre>${esc(text)}</pre></div>` : "";
-  return `<div class="note ${dead ? "warn" : "good"}">${head}
-    <div style="margin-top:8px"><label>Command run</label>
-      <pre>${esc((r.command || []).join(" "))}</pre></div>
-    ${block("Standard output", r.stdout)}${block("Standard error", r.stderr)}</div>`;
+    ? `<div class="res-pre"><label>${title}</label><pre>${esc(text)}</pre></div>` : "";
+  return `<div class="res ${dead ? "warn" : "good"}" role="status">${dead ? `<span class="res-ico" aria-hidden="true">${ICONS.alert}</span>` : check}
+    <div class="res-main">
+      <div class="res-t">${dead ? "No answer in time" : "System ready!"}</div>
+      <div class="res-s">${dead
+        ? "If that is normal for your system, raise the timeout under Advanced options. Otherwise the command may be waiting on stdin &mdash; turn on &ldquo;Pass input via stdin&rdquo;."
+        : `SpreadEx successfully executed a test input.${r.exit_code ? ` It exited with code <span class="mono">${r.exit_code}</span>, which is often correct for a parser &mdash; you will say what counts as a failure on step 4.` : ""}`}</div>
+      <dl class="res-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
+      ${S.probeShowDetails ? `${block("Standard output", r.stdout)}${block("Standard error", r.stderr)}
+        ${!(r.stdout || "").trim() && !(r.stderr || "").trim() ? `<div class="res-s">It printed nothing.</div>` : ""}` : ""}
+    </div>
+    <button class="ghost small res-btn" onclick="toggleProbeDetails()" aria-expanded="${!!S.probeShowDetails}">${S.probeShowDetails ? "Hide details" : "View details"}</button></div>`;
 }
 
 function stepSut() {
-  const t = targets();
-  const rows = t.length ? t : [{ name: "sut", command: [] }];
-  const chosen = S.kind || (t.length ? "other" : null);
+  const d = sutDraft();
   if (S.sample === undefined) S.sample = "1 + 1\n";
+  const ex = SUT_EXAMPLES.find(x => x.id === d.exampleTab) || SUT_EXAMPLES[0];
   el("view").innerHTML = `
-  <div class="card">
-    <h3>What are you testing?</h3>
-    <p class="why">SpreadEx runs one command for every generated input.
-      <span class="mono">{input}</span> is replaced with the path to each one; leave it out and
-      the path is appended as the last argument.</p>
+  <div class="sut">
+   <div class="sut-main">
+    <header class="sut-head">
+      <span class="sut-badge" aria-hidden="true">1</span>
+      <div><h3>Connect your system under test</h3>
+        <p class="why">Tell SpreadEx how to run the program you want to test.</p></div>
+    </header>
 
-    ${chosen || S.project?.configured ? "" : `<div class="note">
-      <strong>Never used SpreadEx?</strong> There is a small demo project &mdash; a hundred-line
-      system under test with one real, documented bug &mdash; that runs the genuine pipeline in
-      about twenty seconds. In a terminal:
-      <pre>spreadex demo</pre>
-      Then come back here and set up your own.</div>`}
-    ${chosen ? "" : `<div class="kinds">${TARGET_KINDS.map(k => `
-      <button class="kind" onclick="pickKind('${k.id}')">
-        <span class="t">${k.t}</span><span class="d">${k.d}</span>
-      </button>`).join("")}</div>`}
+    <section class="sut-sec" aria-labelledby="sut-q">
+      <h4 id="sut-q">How do you run your program?</h4>
+      <div class="sut-kinds" role="radiogroup" aria-labelledby="sut-q">
+        ${SUT_KINDS.map(k => `<button type="button" role="radio" class="sut-kind ${d.kind === k.id ? "on" : ""}"
+          aria-checked="${d.kind === k.id}" onclick="pickSutKind('${k.id}')">
+          <span class="sk-ico" aria-hidden="true">${ICONS[k.icon]}</span>
+          <span class="sk-t">${k.t}</span><span class="sk-d">${k.d}</span>
+          <span class="sk-ok" aria-hidden="true">${ICONS.check}</span></button>`).join("")}
+      </div>
+    </section>
 
-    ${chosen ? `
-    <div id="targets">${rows.map((x, i) => targetRow(x, i, rows.length)).join("")}</div>
-    <div class="actions">
-      <button class="ghost small" onclick="addTarget()">Compare another implementation</button>
-      <span class="muted" style="font-size:12.5px">Two or more lets SpreadEx test them against
-        each other &mdash; no expected output needed.</span>
+    <section class="sut-sec">
+      <div class="sut-lab"><label for="sut-cmd">Execution command</label>
+        <button type="button" class="sut-help" aria-label="SpreadEx runs this command once per generated input. Quote any argument that contains a space."
+          title="SpreadEx runs this once per generated input. Quote any argument that contains a space.">${ICONS.info}</button>
+        <span class="sut-pill"><code>{input}</code> will be replaced with each generated test file</span></div>
+      <input id="sut-cmd" class="sut-cmd" type="text" spellcheck="false" autocomplete="off"
+        value="${esc(d.command)}" placeholder="${esc((SUT_KINDS.find(k => k.id === d.kind) || {}).cmd || "your-command {input}")}">
+      ${d.extra.map((x, i) => `<div class="sut-extra">
+        <input class="x-name" type="text" value="${esc(x.name)}" aria-label="Name of implementation ${i + 2}">
+        <input class="x-cmd sut-cmd" type="text" spellcheck="false" value="${esc(x.command)}" aria-label="Command for implementation ${i + 2}" placeholder="another-implementation {input}">
+        <button type="button" class="ghost small" onclick="dropSutExtra(${i})" aria-label="Remove">&times;</button></div>`).join("")}
+      <div class="sut-compare"><button type="button" class="linkish" onclick="addSutExtra()">Compare another implementation</button>
+        <span class="muted">Two or more lets SpreadEx test them against each other &mdash; no expected output needed.</span></div>
+    </section>
+
+    <div class="sut-test-row">
+      <button type="button" id="sut-test" class="primary" onclick="verifyCommand()">${ICONS.playSolid} Test connection</button>
+      <span class="muted">Runs a quick check with a sample input to verify the setup.</span>
     </div>
-    <div class="row" style="margin-top:4px">
-      <div><label for="timeout">Timeout per input</label>
-        <input id="timeout" type="text" value="${esc(sut().timeout || "5s")}"></div>
-      <div><label for="sample">Sample input to try it with</label>
-        <input id="sample" type="text" value="${esc(S.sample.replace(/\n$/, ""))}"></div>
-    </div>
-    <div class="actions">
-      <button class="ghost" onclick="verifyCommand()">Try it once</button>
-      <span class="muted" style="font-size:12.5px">Runs your command on that sample, now, so a
-        typo does not surface as 500 crashes later.</span>
-    </div>
-    <div id="probe">${probeReport()}</div>
-    <div class="actions">
-      <button class="ghost small" onclick="pickKind(null)">Start over</button>
-      <button class="primary" onclick="commitSut()">Continue</button>
-    </div>` : ""}
+
+    <details id="sut-adv" class="sut-adv" ${d.advancedOpen ? "open" : ""}>
+      <summary><span><strong>Advanced options</strong> (optional)</span>
+        <span class="muted">Working directory, environment variables, input via stdin, timeouts, resource limits&hellip;</span></summary>
+      <div class="sut-adv-body">
+        <label for="sut-cwd">Working directory</label>
+        <input id="sut-cwd" type="text" value="${esc(d.cwd)}" placeholder="Leave empty for a clean scratch directory (relative paths are from this project)">
+        <label for="sut-env">Environment variables <span class="muted">one NAME=value per line</span></label>
+        <textarea id="sut-env" rows="3" spellcheck="false" placeholder="JAVA_OPTS=-Xmx512m">${esc(d.env)}</textarea>
+        <label class="sut-check"><input id="sut-stdin" type="checkbox" ${d.input_mode === "stdin" ? "checked" : ""}>
+          Pass input via stdin <span class="muted">instead of as a file path</span></label>
+        <div class="row">
+          <div><label for="sut-timeout">Timeout per input</label><input id="sut-timeout" type="text" value="${esc(d.timeout)}"></div>
+          <div><label for="sut-mem">Memory limit (MB)</label><input id="sut-mem" type="text" inputmode="numeric" value="${esc(d.memory_mb)}" placeholder="2048">
+            <span class="muted sut-note">Not enforced everywhere &mdash; macOS often ignores it.</span></div>
+        </div>
+      </div>
+    </details>
+
+    <div id="probe" aria-live="polite">${sutResult()}</div>
     <div id="err"></div>
+    <div class="actions sut-actions">
+      <button type="button" class="primary" onclick="commitSut()">Continue to Inputs ${ICONS.arrow}</button>
+    </div>
+   </div>
+
+   <aside class="sut-side" aria-label="Help">
+    <div class="side-card">
+      <h4>What happens here?</h4>
+      <p>SpreadEx runs your program once for every generated input, then watches how it behaves &mdash; exit code, output and time &mdash; to find the inputs worth a closer look.</p>
+    </div>
+    <div class="side-card">
+      <h4>Examples</h4>
+      <div class="ex-tabs" role="tablist">${SUT_EXAMPLES.map(x => `<button type="button" role="tab"
+        aria-selected="${x.id === ex.id}" class="${x.id === ex.id ? "on" : ""}" onclick="sutExampleTab('${x.id}')">${x.t}</button>`).join("")}</div>
+      <div class="ex-code"><code>${esc(ex.code)}</code>
+        <button type="button" class="ex-copy" onclick="copyExample(this)" aria-label="Copy command">${ICONS.copy}</button></div>
+    </div>
+    <div class="side-card">
+      <h4>Tips</h4>
+      <ul class="tips-list">${SUT_TIPS.map(t => `<li><span aria-hidden="true">${ICONS.check}</span>${esc(t)}</li>`).join("")}</ul>
+    </div>
+   </aside>
   </div>`;
 }
 
 function commitSut() {
-  const t = readTargets();
-  if (!t.length) { el("err").innerHTML = `<div class="note bad">Enter a command to run.</div>`; return; }
-  S.config.sut = t.length > 1
-    ? { timeout: el("timeout").value, targets: t }
-    : { timeout: el("timeout").value, command: t[0].command };
+  const r = readSut();
+  el("err").innerHTML = "";
+  if (r.problem) { showSutProblem(r); return; }
+  const d = sutDraft();
+  const opts = {};
+  if (r.cwd) opts.cwd = r.cwd;
+  if (Object.keys(r.env).length) opts.env = r.env;
+  const shared = { timeout: r.timeout };
+  if (r.memory_mb) shared.memory_mb = r.memory_mb;
+  if (r.input_mode === "stdin") shared.input_mode = "stdin";
+  if (r.extra.length) {
+    // cwd and env belong to a target, so every implementation gets them; the
+    // rest are defaults the engine applies to all.
+    S.config.sut = { ...shared, targets: [{ name: "sut1", command: r.argv, ...opts },
+                                          ...r.extra.map(x => ({ ...x, ...opts }))] };
+  } else {
+    S.config.sut = { ...shared, command: r.argv, ...opts };
+  }
   // A second implementation is the only thing that makes differential testing
   // possible, so dropping back to one target has to retire it.
   const o = { ...(cfg().oracle || {}) };
-  if (t.length < 2 && o.type === "differential") o.type = "crash";
+  if (!r.extra.length && o.type === "differential") o.type = "crash";
   S.config.oracle = o;
+  S.kind = d.kind;
   gotoStep("grammar");
 }
 
@@ -1614,6 +1847,7 @@ async function showInput(hash, btn) {
     badge.title = `Running locally for ${S.project.root}\n\n${badge.title}`;
     const conf = await api("/api/config");
     S.config = conf.parsed || {};
+    S.draft = null;
     await loadRuns();
     renderSteps();
     go(initialView(S.project, S.runs));

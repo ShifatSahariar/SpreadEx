@@ -139,3 +139,83 @@ def test_input_mode_reaches_the_target_from_the_config(tmp_path):
     cfg.write_text('sut:\n  command: ["cat"]\n  input_mode: stdin\n'
                    "generators: []\ncorpus: {path: .}\n")
     assert load_config(cfg).targets[0].input_mode == "stdin"
+
+
+# ------------------------------------- the options the wizard's Advanced section sets
+
+def _where_am_i(tmp_path):
+    """A SUT that reports its working directory and one environment variable."""
+    script = tmp_path / "where.py"
+    script.write_text("import os, sys\nprint(os.getcwd())\nprint(os.environ.get('SPREADEX_PROBE', '<unset>'))\n")
+    return script
+
+
+def test_a_relative_working_directory_is_relative_to_the_project_not_to_the_process(tmp_path, monkeypatch):
+    """Every other relative path in spreadex.yaml means "relative to the project".
+    `cwd` resolved against whatever directory the process happened to start in,
+    so the same config ran in different places depending on where `spreadex` was
+    launched from -- and the UI server is launched from anywhere."""
+    from spreadex.exec.runner import Target, run_one
+
+    project = tmp_path / "project"
+    (project / "work").mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)               # the process is NOT in the project
+
+    script = _where_am_i(tmp_path)
+    src = tmp_path / "in.txt"
+    src.write_text("x")
+    target = Target.from_config(
+        {"name": "t", "command": [sys.executable, str(script), "{input}"], "cwd": "work"},
+        base_dir=project)
+    obs = run_one(target, src)
+
+    assert obs.stdout_preview.splitlines()[0] == str((project / "work").resolve())
+
+
+def test_a_missing_working_directory_is_named_not_reported_as_a_missing_command(tmp_path):
+    """subprocess raises the SAME FileNotFoundError for a missing command and a
+    missing cwd, so the runner reported "command not found: 'python'" for a
+    perfectly good command -- sending the user to fix the wrong thing."""
+    from spreadex.exec.runner import Target, run_one
+
+    src = tmp_path / "in.txt"
+    src.write_text("x")
+    target = Target.from_config(
+        {"name": "t", "command": [sys.executable, "-c", "pass"], "cwd": "no/such/dir"},
+        base_dir=tmp_path)
+    with pytest.raises(RuntimeError) as exc:
+        run_one(target, src)
+    message = str(exc.value)
+    assert "working directory" in message and "no/such/dir" in message
+    assert "command not found" not in message
+
+
+def test_environment_values_may_be_numbers_in_the_yaml(tmp_path):
+    """`env: {LEVEL: 3}` is what a person types. subprocess wants strings and
+    raised a TypeError that surfaced as an unexplained crash."""
+    from spreadex.exec.runner import Target, run_one
+
+    script = _where_am_i(tmp_path)
+    src = tmp_path / "in.txt"
+    src.write_text("x")
+    target = Target.from_config(
+        {"name": "t", "command": [sys.executable, str(script), "{input}"],
+         "env": {"SPREADEX_PROBE": 3}}, base_dir=tmp_path)
+    obs = run_one(target, src)
+    assert obs.stdout_preview.splitlines()[1] == "3"
+
+
+def test_the_environment_is_added_to_not_substituted_for_the_parents(tmp_path):
+    """A SUT given one extra variable must still find PATH and HOME."""
+    from spreadex.exec.runner import Target, run_one
+
+    script = tmp_path / "env.py"
+    script.write_text("import os\nprint('PATH' in os.environ, os.environ.get('MINE'))\n")
+    src = tmp_path / "in.txt"
+    src.write_text("x")
+    target = Target.from_config(
+        {"name": "t", "command": [sys.executable, str(script), "{input}"], "env": {"MINE": "yes"}},
+        base_dir=tmp_path)
+    assert run_one(target, src).stdout_preview.strip() == "True yes"
