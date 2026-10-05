@@ -793,13 +793,13 @@ function renderStep() {
 // Presets only prefill the command and the example shown on the right; the
 // user's text is never overwritten once they have typed something of their own.
 const SUT_KINDS = [
-  { id: "cli",    t: "Executable",     d: "A compiled program or binary", icon: "terminal", tone: "green",
+  { id: "cli",    t: "Executable",     d: "A compiled program or binary", img: "cli", icon: "terminal", tone: "green",
     cmd: "./your-parser {input}" },
-  { id: "jar",    t: "Java / JVM",     d: "JAR, class or JVM-based program", icon: "java", tone: "orange",
+  { id: "jar",    t: "Java / JVM",     d: "JAR, class or JVM-based program", img: "jar", icon: "java", tone: "orange",
     cmd: "java -jar your-tool.jar {input}" },
-  { id: "script", t: "Script / Runtime", d: "Python, Node.js, Ruby and more", icon: "python", tone: "blue",
+  { id: "script", t: "Script / Runtime", d: "Python, Node.js, Ruby and more", img: "script", icon: "python", tone: "blue",
     cmd: "python3 your_parser.py {input}" },
-  { id: "other",  t: "Custom command", d: "Any command that runs your program", icon: "grid", tone: "slate",
+  { id: "other",  t: "Custom command", d: "Any command that runs your program", img: "other", icon: "grid", tone: "slate",
     cmd: "" },
 ];
 
@@ -996,7 +996,7 @@ function stepSut() {
       <div class="sut-kinds" role="radiogroup" aria-labelledby="sut-q">
         ${SUT_KINDS.map(k => `<button type="button" role="radio" class="sut-kind ${d.kind === k.id ? "on" : ""}"
           aria-checked="${d.kind === k.id}" onclick="pickSutKind('${k.id}')">
-          <span class="tile ${k.tone}" aria-hidden="true">${BRANDS[k.icon] || ICONS[k.icon]}</span>
+          <span class="tile big ${k.tone}" aria-hidden="true"><img src="/static/assets/sut-${k.img}.png" alt="" width="34" height="34" draggable="false"></span>
           <span class="sk-t">${k.t}</span><span class="sk-d">${k.d}</span>
           <span class="sk-ok" aria-hidden="true">${ICONS.check}</span></button>`).join("")}
       </div>

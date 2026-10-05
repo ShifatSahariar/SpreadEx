@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+ROOT = Path(__file__).parent.parent
 STATIC = Path(__file__).parent.parent / "src" / "spreadex" / "api" / "static"
 JS = (STATIC / "app.js").read_text()
 CSS = (STATIC / "app.css").read_text()
@@ -169,8 +170,8 @@ def test_the_status_and_help_glyphs_the_system_names_exist():
 
 
 def test_run_style_cards_use_tones_and_brand_marks():
-    for pair in ('icon: "java", tone: "orange"', 'icon: "python", tone: "blue"',
-                 'icon: "terminal", tone: "green"', 'icon: "grid", tone: "slate"'):
+    for pair in ('img: "jar", icon: "java", tone: "orange"', 'img: "script", icon: "python", tone: "blue"',
+                 'img: "cli", icon: "terminal", tone: "green"', 'img: "other", icon: "grid", tone: "slate"'):
         assert pair in JS, pair
     for hexv in ("#16A34A", "#1687F8", "#9333EA", "#F59E0B", "#64748B"):
         assert hexv in CSS, hexv
@@ -197,3 +198,20 @@ def test_a_401_is_flagged_and_rendered_as_recoverable_not_as_a_raw_error():
 def test_step_failures_go_through_the_shared_card():
     assert "el(\"view\").innerHTML = failureCard(e);" in JS
     assert "holder.innerHTML = failureCard(e)" in JS
+
+
+def test_the_run_style_artwork_ships_and_is_transparent():
+    from PIL import Image
+    for k in ("cli", "jar", "script", "other"):
+        f = STATIC / "assets" / f"sut-{k}.png"
+        assert f.is_file(), f
+        im = Image.open(f)
+        assert im.mode == "RGBA" and im.size == (128, 128)
+        assert im.getchannel("A").getextrema()[0] == 0, "needs a transparent surround to sit on either theme tile"
+        assert f"/static/assets/sut-${{k.img}}.png" in JS
+    assert "static/assets/*" in (ROOT / "pyproject.toml").read_text()
+
+
+def test_tiles_are_theme_tinted_rounded_squares_with_a_dark_lift_for_slate():
+    assert re.search(r"\.tile\.big \{ width: 56px; height: 56px; border-radius: 16px", CSS)
+    assert CSS.count('.tile.big.slate img { filter: brightness(1.6)') == 2   # explicit dark + system dark

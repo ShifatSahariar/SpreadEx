@@ -300,6 +300,12 @@ details summary { cursor: pointer; color: var(--color-muted); font-size: 13px; p
 .tile.green { --t: #16A34A; } .tile.blue { --t: #1687F8; } .tile.purple { --t: #9333EA; }
 .tile.orange { --t: #F59E0B; } .tile.slate { --t: #64748B; }
 .tile svg { width: 24px; height: 24px; }
+/* The run-style tiles carry artwork (PNG), not a glyph: a larger rounded square whose
+   tint follows the theme, with the slate artwork lifted on dark so it stays legible. */
+.tile.big { width: 56px; height: 56px; border-radius: 16px; }
+.tile.big img { width: 34px; height: 34px; object-fit: contain; }
+:root[data-theme="dark"] .tile.big.slate img { filter: brightness(1.6); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tile.big.slate img { filter: brightness(1.6); } }
 .side-card h4 { display: flex; align-items: center; gap: 8px; }
 .side-card h4 svg { width: 18px; height: 18px; color: var(--color-muted); }
 .sk-t { font-weight: 600; font-size: .9rem; }
