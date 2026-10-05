@@ -9,6 +9,7 @@ install:
 check:
   type: command
   command: [grammarinator-process, --version]
+family: probabilistic
 capabilities:
   grammar: antlr4
   constraints: false

@@ -80,7 +80,9 @@ def test_nothing_in_the_package_points_at_a_development_machine():
         if path.suffix not in (".py", ".yaml", ".html", ".js", ".css", ".bnf", ".sql"):
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        for needle in ("/Users/", "ClusGram", "SpreadEx-2026"):
+        # "ClusGram" as a product NAME may appear (the generators page lists it as coming soon);
+        # what must never appear is a path into that repository or the research checkout.
+        for needle in ("/Users/", "/ClusGram", "ClusGram/", "RESEARCH/ClusGram", "SpreadEx-2026"):
             if needle in text:
                 offenders.append(f"{path.relative_to(ROOT)}: {needle}")
     assert not offenders, offenders

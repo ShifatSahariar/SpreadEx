@@ -670,6 +670,10 @@ function buildYaml() {
   if (c.grammar?.source) lines.push("", "grammar:", `  source: ${c.grammar.source}`);
   if (c.corpus?.path) lines.push("", "corpus:", `  path: ${c.corpus.path}`);
   if (c.input_extension) lines.push("", `input_extension: ${q(c.input_extension)}`);
+  if (c.generator_options && Object.keys(c.generator_options).length) {
+    lines.push("", "generator_options:");
+    Object.entries(c.generator_options).forEach(([gid, o]) => lines.push(`  ${gid}: {${Object.entries(o).map(([k, v]) => `${k}: ${v}`).join(", ")}}`));
+  }
   if (c.semantics) {
     lines.push("", "semantics:");
     if (c.semantics.guidance?.length) lines.push(`  guidance: [${c.semantics.guidance.map(q).join(", ")}]`);
@@ -1663,7 +1667,7 @@ function paintInputs() {
   <div class="sut">
    <div class="sut-main">
     <header class="sut-head">
-      <span class="sut-badge" aria-hidden="true">2</span>
+      <span class="sut-badge blue" aria-hidden="true">2</span>
       <div><h3>Define the input specification</h3>
         <p class="why">Tell SpreadEx what valid test inputs for your program look like and where they come from.</p></div>
     </header>
@@ -1926,51 +1930,303 @@ function commitGrammar() {
   gotoStep("generators");
 }
 
+// ------------------------------------------------ step 3: generators
+
+// Logos come from the research tool's assets (small copies). Grammarinator has none there, so it
+// takes the purple node glyph from the design. Families drive the filter bar.
+const GEN_LOGO = { fandango: "gen-fandango.png", isla: "gen-isla.png", fuzzingbook: "gen-fuzzingbook.png",
+  clusgram: "gen-clusgram.png", nautilus: "gen-nautilus.png", dharma: "gen-dharma.png", llm: "gen-llm.png" };
+const FAMILY_LABEL = { "probabilistic": "Probabilistic", "constraint-based": "Constraint-based",
+  "coverage-guided": "Coverage-guided", "llm-based": "LLM-based" };
+
+// The catalog's version string is whatever `--version` printed ("Fandango 1.2.0",
+// "grammarinator-process 26.1"). Show only the number; hide it if there is none.
+function cleanVersion(v) { const m = /\d+(?:\.\d+)+/.exec(v || ""); return m ? m[0] : ""; }
+
+function genLogo(id, big) {
+  const inner = GEN_LOGO[id] ? `<img src="/static/assets/${GEN_LOGO[id]}" alt="" draggable="false">`
+    : id === "grammarinator" ? ICONS.import : ICONS.code;
+  return `<span class="gen-logo ${big ? "big" : ""} ${GEN_LOGO[id] ? "" : "glyph"}" aria-hidden="true">${inner}</span>`;
+}
+
+function genState() {
+  if (!S.gen) S.gen = { filter: "all", modal: null, draftConstraints: true, analysis: null };
+  return S.gen;
+}
+
+// Is this generator able to run the grammar from step 2? Uses the same expressibility report the
+// Inputs page shows; with no grammar nothing can run, which is said plainly.
+function genFit(g) {
+  const d = genState(), a = d.analysis;
+  if (!cfg().grammar?.source) return { ok: false, why: "Needs a grammar. Your inputs come from a folder." };
+  if (!a || a.error) return { ok: false, why: a?.error ? "The grammar could not be read." : "Checking the grammar…" };
+  if (!g.emittable) return { ok: false, why: "SpreadEx cannot write this generator's grammar dialect yet." };
+  const s = (a.support || []).find(x => x.generator === g.id);
+  if (!s) return { ok: true, how: "direct" };
+  if (s.status === "blocked" || s.status === "unsupported") {
+    return { ok: false, why: (s.blockers && s.blockers[0]) || "It cannot express this grammar." };
+  }
+  return { ok: true, how: s.status, risks: s.risks || [] };
+}
+
+function genSplit() {
+  const all = S.generators || [];
+  const fits = all.map(g => ({ g, fit: genFit(g) }));
+  const recommended = fits.filter(x => x.fit.ok).slice(0, 3);
+  const recIds = new Set(recommended.map(x => x.g.id));
+  const other = fits.filter(x => !recIds.has(x.g.id));
+  return { recommended, other };
+}
+
+function inFilter(family) { const f = genState().filter; return f === "all" || family === f; }
+
+function genCard({ g, fit }, recommended) {
+  const chosen = (cfg().generators || []).includes(g.id);
+  const line = semanticLine(g, cfg().semantics, !!S.project?.experimental);
+  const opt = (cfg().generator_options || {})[g.id] || {};
+  return `<div class="gcard ${chosen ? "on" : ""} ${fit.ok ? "" : "off"}" data-gen="${esc(g.id)}">
+    <label class="gcheck"><input type="checkbox" ${chosen ? "checked" : ""} ${fit.ok || chosen ? "" : "disabled"}
+      onclick="event.stopPropagation()" onchange="toggleGen('${esc(g.id)}')" aria-label="Use ${esc(g.name)}"><span class="box" aria-hidden="true">${ICONS.check}</span></label>
+    <button type="button" class="gbody" onclick="openGenModal('${esc(g.id)}', this)" aria-haspopup="dialog">
+      ${genLogo(g.id)}
+      <span class="gtext">
+        <span class="gname">${esc(g.name)} ${recommended ? `<span class="tag ok gtag">Recommended</span>` : ""}</span>
+        <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[g.family] || "Grammar")}</span>
+          ${g.installed ? `<span class="tag ok">Installed</span>` : `<span class="tag warn">Not installed</span>`}
+          ${cleanVersion(g.version) ? `<span class="muted gver">v${esc(cleanVersion(g.version))}</span>` : ""}</span>
+        ${fit.ok ? "" : `<span class="gwhy">${ICONS.alert}<span>${esc(fit.why)}</span></span>`}
+        ${chosen && opt.constraints === false ? `<span class="muted gopt">Constraints off: grammar only</span>` : ""}
+        ${chosen && line ? `<span class="sem-line ${line.tone}">${ICONS[line.tone === "ok" ? "success" : line.tone === "warn" ? "alert" : "info"]}<span>${esc(line.text)}</span></span>` : ""}
+      </span></button></div>`;
+}
+
+function upcomingCard(u) {
+  return `<div class="gcard soon" aria-disabled="true">
+    <span class="gcheck"><span class="box" aria-hidden="true"></span></span>
+    <div class="gbody static">${genLogo(u.id)}<span class="gtext">
+      <span class="gname">${esc(u.name)} ${u.ours ? `<span class="tag gfam">Our tool</span>` : ""}</span>
+      <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[u.family])}</span><span class="tag">Coming soon</span></span>
+      <span class="muted gopt">${esc(u.summary)}</span></span></div></div>`;
+}
+
+function setGenFilter(id) { genState().filter = id; paintGenerators(); }
+function clearGenerators() { S.config.generators = []; paintGenerators(); }
+function removeGen(id) { toggleGen(id); }
+
+function selectedGenRows() {
+  return (cfg().generators || []).map(id => (S.generators || []).find(g => g.id === id)).filter(Boolean);
+}
+
+function inputSpecBar() {
+  const d = inpState(), c = cfg();
+  const l = langById(d.lang);
+  const gram = c.grammar?.source;
+  const how = d.mode === "builtin" ? "SpreadEx grammar" : d.mode === "import" ? "Imported grammar" : d.mode === "provide" ? "Project grammar" : "";
+  const start = d.analysis?.start;
+  return `<div class="specbar">
+    <div class="specbar-l"><div class="muted specbar-t">Input specification from previous step</div>
+      <div class="specbar-row">
+        ${d.lang ? langLogo(l, true) : `<span class="lang-tile big" style="--b:#64748B" aria-hidden="true">${ICONS.doc}</span>`}
+        <span><strong>${esc(d.lang ? l.t : "Language not specified")}</strong></span>
+        ${gram ? `<span class="spec-i">${ICONS.doc}<span class="mono">${esc(gram.split("/").pop())}</span></span>
+          ${how ? `<span class="spec-i">${ICONS.grid}<span>${how}</span></span>` : ""}
+          ${start ? `<span class="spec-i">${ICONS.code}<span>Start: <span class="mono">${esc(start)}</span></span></span>` : ""}`
+          : `<span class="spec-i">${ICONS.folder}<span>${c.corpus?.path ? `Inputs folder <span class="mono">${esc(c.corpus.path)}</span>` : "No grammar chosen"}</span></span>`}
+      </div></div>
+    <button type="button" class="ghost small specbar-edit" onclick="gotoStep('grammar')">${ICONS.edit} Edit</button></div>`;
+}
+
 async function stepGenerators(current = () => true) {
   el("view").innerHTML = `<div class="card"><div class="empty">Checking generators…</div></div>`;
-  const { generators } = await api("/api/generators");
+  const src = cfg().grammar?.source;
+  const [gens, analysis] = await Promise.all([
+    api("/api/generators"),
+    src ? api(`/api/grammar?source=${encodeURIComponent(src)}`).catch(e => ({ error: e.message })) : Promise.resolve(null),
+  ]);
   if (!current()) return;
-  S.generators = generators;
-  if (!cfg().generators) S.config.generators = generators.filter(g => g.selected).map(g => g.id);
+  S.generators = gens.generators;
+  S.upcoming = gens.upcoming || [];
+  const d = genState();
+  d.analysis = analysis;
+  if (analysis && !analysis.error && inpState().picked === src) inpState().analysis = analysis;
+  if (!cfg().generators) S.config.generators = gens.generators.filter(g => g.selected).map(g => g.id);
   if (!S.config.generators.length && !cfg().corpus) {
-    S.config.generators = generators.filter(g => g.installed && g.emittable).map(g => g.id);
+    // First visit: pre-tick what is both installed and able to run this grammar.
+    const fit = new Set(genSplit().recommended.map(x => x.g.id));
+    S.config.generators = gens.generators.filter(g => g.installed && g.emittable && (fit.has(g.id) || !src)).map(g => g.id);
   }
   paintGenerators();
 }
 
 function paintGenerators() {
-  const chosen = new Set(cfg().generators || []);
+  const d = genState();
+  const { recommended, other } = genSplit();
+  const recShown = recommended.filter(x => inFilter(x.g.family));
+  const otherShown = other.filter(x => inFilter(x.g.family));
+  const soon = (S.upcoming || []).filter(u => inFilter(u.family));
+  const sel = selectedGenRows();
+  const sig = cfg().selection_signal || "cc";
   el("view").innerHTML = `
-  <div class="card">
-    <h3>Which generators?</h3>
-    <p class="why">Each runs in its own isolated environment, so one generator's dependency pins
-      cannot break another's. Picking several is the point: SpreadEx compares them.</p>
-    <div class="gen-grid">
-      ${S.generators.map(g => `
-        <div class="gen" aria-pressed="${chosen.has(g.id)}" onclick="toggleGen('${g.id}')">
-          <div class="name">${esc(g.name)}</div>
-          <div class="meta">${esc(g.dialect)}${g.constraints ? " · constraints" : ""}</div>
-          <div class="state">${g.installed
-            ? `<span class="tag ok">installed${g.version ? " " + esc(g.version) : ""}</span>`
-            : `<span class="tag warn">not installed</span>`}
-            ${g.emittable ? "" : `<span class="tag bad">no dialect</span>`}</div>
-          ${g.installed ? "" : `<div class="actions" style="margin-top:9px">
-            <button class="ghost small" onclick="event.stopPropagation();installGen('${g.id}')">Install</button></div>`}
-          ${g.notes ? `<div class="meta" style="margin-top:7px">${esc(g.notes)}</div>` : ""}
-          ${(() => { const l = semanticLine(g, cfg().semantics, !!S.project?.experimental);
-            return l ? `<div class="sem-line ${l.tone}">${ICONS[l.tone === "ok" ? "success" : l.tone === "warn" ? "alert" : "info"]}<span>${esc(l.text)}</span></div>` : ""; })()}
-        </div>`).join("")}
+  <div class="sut gens">
+   <div class="sut-main">
+    <header class="sut-head">
+      <span class="sut-badge purple" aria-hidden="true">3</span>
+      <div><h3>Choose your input generators</h3>
+        <p class="why">Select one or more generators. SpreadEx will handle compatible grammar formats.</p></div>
+    </header>
+    ${inputSpecBar()}
+
+    <div class="gfilter" role="tablist" aria-label="Generator family">
+      ${[["all", "All"], ...Object.entries(FAMILY_LABEL)].map(([id, t]) => `<button type="button" role="tab" class="${d.filter === id ? "on" : ""}"
+        aria-selected="${d.filter === id}" onclick="setGenFilter('${id}')">${t}</button>`).join("")}
     </div>
+
+    <section class="gsec rec" aria-labelledby="gh-rec">
+      <div class="gsec-h"><h4 id="gh-rec">Recommended generators ${hint("hint-rec", "Generators that are able to run your grammar, so they should work without changes.")}</h4>
+        <span class="gcount">Up to 3 shown</span></div>
+      <div class="ggrid">${recShown.map(x => genCard(x, true)).join("") ||
+        `<div class="muted gempty">${recommended.length ? "None in this family." : (cfg().grammar?.source ? "No installed or installable generator can run this grammar." : "Generators need a grammar. Go back to add one, or continue with an inputs folder.")}</div>`}</div>
+    </section>
+
+    <section class="gsec" aria-labelledby="gh-oth">
+      <div class="gsec-h"><h4 id="gh-oth">Other generators ${hint("hint-oth", "Generators that cannot run this grammar, or that are not available yet. Disabled ones say why.")}</h4>
+        <span class="gcount">${otherShown.length + soon.length} shown</span></div>
+      <div class="ggrid">${otherShown.map(x => genCard(x, false)).join("")}${soon.map(upcomingCard).join("") ||
+        (otherShown.length ? "" : `<div class="muted gempty">None in this family.</div>`)}</div>
+    </section>
+
     <div id="joblog"></div>
-    <div class="actions">
-      <button class="ghost" onclick="gotoStep('grammar')">Back</button>
-      ${constraintCapable().length ? `<button class="ghost" onclick="toggleConstraints()">Add constraints</button>` : ""}
-      <button class="primary" onclick="commitGenerators()">Continue</button>
-    </div>
     <div id="err"></div>
+    <div class="actions inp-actions">
+      <button type="button" class="ghost" onclick="gotoStep('grammar')">${ICONS.back} Back to Inputs</button>
+      ${constraintCapable().length ? `<button type="button" class="ghost" onclick="toggleConstraints()">Add constraints</button>` : ""}
+      <button type="button" class="primary" onclick="commitGenerators()">Continue to Testing strategy ${ICONS.arrow}</button>
+    </div>
+    <div id="constraints"></div>
+   </div>
+
+   <aside class="sut-side" aria-label="Help">
+    <div class="side-card">
+      <h4><span class="h-ico purple">${ICONS.stats}</span> Generator selection</h4>
+      <div class="gsel-opt"><span class="gsel-dot" aria-hidden="true"></span>
+        <span><strong>Automatic recommendation</strong>
+          <span class="muted gsel-sub">${sig === "cc" ? "Cluster Coverage" : esc(sig)} ${hint("hint-cc", "SpreadEx ranks generated inputs by how much new input space each adds (Cluster Coverage) before running them. You can change the signal in Budget & run.")}</span></span></div>
+      <details class="gsel-adv"><summary>${ICONS.gear} Advanced settings</summary>
+        <p class="muted">The selection signal and the embedding model are set in Budget &amp; run.</p>
+        <button type="button" class="linkish" onclick="gotoStep('run')">Open Budget &amp; run</button></details>
+    </div>
+    <div class="side-card">
+      <div class="gsel-h"><h4>Selected generators <span class="muted">(${sel.length})</span></h4>
+        ${sel.length ? `<button type="button" class="linkish" onclick="clearGenerators()">Clear all</button>` : ""}</div>
+      ${sel.length ? sel.map(g => `<div class="gsel-row">${genLogo(g.id)}<strong>${esc(g.name)}</strong>
+        <span class="muted">${cleanVersion(g.version) ? "v" + esc(cleanVersion(g.version)) : ""}</span>
+        <button type="button" class="gx" onclick="removeGen('${esc(g.id)}')" aria-label="Remove ${esc(g.name)}">&times;</button></div>`).join("")
+        : `<div class="muted">None yet. Tick a generator, or click one to see its options.</div>`}
+    </div>
+    <div class="side-card">
+      <h4><span class="h-ico amber">${ICONS.bulb}</span> Tips</h4>
+      <ul class="tips-list">${["Select at least one generator.", "Generators that cannot run your grammar are disabled, with the reason.",
+        "Click a generator to see its options and install it.", "Compare generators after your first run."]
+        .map(t => `<li><span aria-hidden="true">${ICONS.check}</span>${esc(t)}</li>`).join("")}</ul>
+    </div>
+   </aside>
   </div>
-  <div id="constraints"></div>`;
+  <div id="gen-modal-host"></div>`;
   if (CONSTRAINTS.open) paintConstraints();
+  if (d.modal) paintGenModal();
+}
+
+// A popup per generator: what it is, whether it can run this grammar, and the choices that are real
+// for it today. Only Fandango and ISLa have one (use my constraints file, or the grammar alone).
+function openGenModal(id, opener) {
+  const d = genState();
+  // The clicked card, not document.activeElement: Safari does not focus a button on click.
+  d.modal = id; d.opener = opener || document.activeElement; d.openerGen = id;
+  const opt = (cfg().generator_options || {})[id] || {};
+  d.draftConstraints = opt.constraints !== false;
+  paintGenModal();
+}
+function closeGenModal() {
+  const d = genState();
+  const back = (d.opener && document.contains(d.opener)) ? d.opener
+    : document.querySelector(`.gcard[data-gen="${d.openerGen}"] .gbody`);
+  d.modal = null; el("gen-modal-host").innerHTML = "";
+  if (back) back.focus();
+}
+function setGenConstraints(v) { genState().draftConstraints = v; paintGenModal(); }
+
+function confirmGenModal() {
+  const d = genState(), id = d.modal, g = (S.generators || []).find(x => x.id === id);
+  if (!g) return closeGenModal();
+  const nativeFile = (cfg().semantics?.native || {})[id];
+  const opts = { ...(cfg().generator_options || {}) };
+  if (g.constraints && nativeFile) {
+    if (d.draftConstraints) delete opts[id]; else opts[id] = { constraints: false };
+  }
+  S.config.generator_options = Object.keys(opts).length ? opts : undefined;
+  const set = new Set(cfg().generators || []); set.add(id);
+  S.config.generators = [...set];
+  closeGenModal(); paintGenerators();
+}
+function removeFromModal() { const id = genState().modal; closeGenModal(); toggleGen(id, false); }
+
+function paintGenModal() {
+  const d = genState(), g = (S.generators || []).find(x => x.id === d.modal);
+  if (!g) return;
+  const chosen = (cfg().generators || []).includes(g.id);
+  const fit = genFit(g);
+  const nativeFile = (cfg().semantics?.native || {})[g.id];
+  const hasGuidance = !!(cfg().semantics?.guidance || []).length;
+  const supportRow = ((d.analysis && d.analysis.support) || []).find(x => x.generator === g.id);
+  let options;
+  if (g.constraints) {
+    const withOk = !!nativeFile;
+    options = `<div class="gm-opts" role="radiogroup" aria-label="${esc(g.name)} options">
+      <label class="gm-opt ${d.draftConstraints ? "" : "on"}"><input type="radio" name="gm-c" ${d.draftConstraints ? "" : "checked"} onchange="setGenConstraints(false)">
+        <span><strong>Grammar only</strong><span class="muted">Run ${esc(g.name)} on your grammar without constraints.</span></span></label>
+      <label class="gm-opt ${d.draftConstraints && withOk ? "on" : ""} ${withOk ? "" : "dis"}"><input type="radio" name="gm-c" ${d.draftConstraints && withOk ? "checked" : ""} ${withOk ? "" : "disabled"} onchange="setGenConstraints(true)">
+        <span><strong>Use my constraints</strong><span class="muted">${withOk
+          ? `Your file <span class="mono">${esc(nativeFile)}</span> is used as written.`
+          : `No ${esc(g.name)} constraints file yet. Add one under Advanced in step 2.${hasGuidance ? " Your written guidance is not translated for you." : ""}`}</span></span></label></div>`;
+  } else {
+    options = `<p class="muted gm-none">There is nothing to set for ${esc(g.name)}: it runs from your grammar. Options will appear here as they are added.</p>`;
+  }
+  const status = g.installed
+    ? `<span class="tag ok">Installed${cleanVersion(g.version) ? " v" + esc(cleanVersion(g.version)) : ""}</span> <span class="muted">${esc(g.where || "")}</span>`
+    : `<span class="tag warn">Not installed</span> <button type="button" class="ghost small" onclick="closeGenModal(); installGen('${esc(g.id)}')">${ICONS.download} Install ${esc(g.name)}</button>`;
+  el("gen-modal-host").innerHTML = `
+  <div class="gm-back" onclick="if (event.target === this) closeGenModal()">
+   <div class="gm" role="dialog" aria-modal="true" aria-labelledby="gm-t" onkeydown="genModalKeys(event)">
+    <header class="gm-h">${genLogo(g.id, true)}
+      <div><h3 id="gm-t">Configure ${esc(g.name)}</h3>
+        <div class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[g.family] || "Grammar")}</span> ${status}</div></div>
+      <button type="button" class="gx" onclick="closeGenModal()" aria-label="Close">&times;</button></header>
+    <p class="muted gm-sum">${esc(g.summary)}</p>
+    <h4 class="inp-h5">Can it run your grammar?</h4>
+    ${fit.ok ? `<div class="gm-fit ok">${ICONS.success}<span>${fit.how === "rewrite" ? "Yes, after rewriting the grammar into its dialect." : "Yes, directly."}
+        ${(fit.risks || []).map(r => `<span class="warn gm-risk">! ${esc(r)}</span>`).join("")}</span></div>`
+      : `<div class="gm-fit bad">${ICONS.error}<span>${esc(fit.why)}</span></div>`}
+    <h4 class="inp-h5">Generation options</h4>
+    ${options}
+    <div class="gm-f">
+      ${chosen ? `<button type="button" class="ghost subtle-danger" onclick="removeFromModal()">Remove ${esc(g.name)}</button>` : ""}
+      <span class="gm-sp"></span>
+      <button type="button" class="ghost" onclick="closeGenModal()">Cancel</button>
+      <button type="button" class="primary" id="gm-ok" onclick="confirmGenModal()" ${fit.ok || chosen ? "" : "disabled"}>${chosen ? "Save options" : `Use ${esc(g.name)}`}</button>
+    </div>
+   </div></div>`;
+  (el("gm-ok") || document.querySelector(".gm .gx"))?.focus({ preventScroll: true });
+}
+
+// Keep Tab inside the dialog and close it on Escape.
+function genModalKeys(e) {
+  if (e.key === "Escape") { e.stopPropagation(); closeGenModal(); return; }
+  if (e.key !== "Tab") return;
+  const f = [...document.querySelectorAll(".gm button:not([disabled]), .gm input:not([disabled])")];
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }
 
 // ------------------------------------------------ constraints (opt-in)
@@ -2076,9 +2332,10 @@ async function runConstraints() {
     </div>`;
 }
 
-function toggleGen(id) {
+function toggleGen(id, force) {
   const set = new Set(cfg().generators || []);
-  set.has(id) ? set.delete(id) : set.add(id);
+  const want = force === undefined ? !set.has(id) : force;
+  want ? set.add(id) : set.delete(id);
   S.config.generators = [...set];
   paintGenerators();
 }
@@ -2512,6 +2769,7 @@ async function showInput(hash, btn) {
     S.config = conf.parsed || {};
     S.draft = null;
     S.inp = null;
+    S.gen = null;
     await loadRuns();
     renderSteps();
     go(initialView(S.project, S.runs));

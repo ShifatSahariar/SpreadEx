@@ -106,6 +106,25 @@ def list_candidate_grammars(config) -> dict[str, Any]:
     return {"grammars": found, "truncated": seen > MAX_SCAN}
 
 
+GENERATOR_FAMILIES = [
+    {"id": "probabilistic", "label": "Probabilistic"},
+    {"id": "constraint-based", "label": "Constraint-based"},
+    {"id": "coverage-guided", "label": "Coverage-guided"},
+    {"id": "llm-based", "label": "LLM-based"},
+]
+
+UPCOMING_GENERATORS = [
+    {"id": "clusgram", "name": "ClusGram", "family": "coverage-guided", "ours": True,
+     "summary": "Rule-coverage-driven generation for diverse inputs."},
+    {"id": "nautilus", "name": "Nautilus", "family": "coverage-guided",
+     "summary": "Coverage-guided grammar fuzzer with feedback."},
+    {"id": "dharma", "name": "Dharma", "family": "probabilistic",
+     "summary": "Mozilla's generational grammar fuzzer."},
+    {"id": "llm", "name": "LLM generator", "family": "llm-based",
+     "summary": "Prompt-guided generation. Not bundled in v0.1."},
+]
+
+
 def generator_status(config) -> dict[str, Any]:
     from ..grammar import RENDERERS
 
@@ -122,13 +141,17 @@ def generator_status(config) -> dict[str, Any]:
             "notes": gen.notes,
             "dialect": gen.grammar_dialect,
             "constraints": gen.supports_constraints,
+            "family": gen.family,
             "installed": status.installed,
             "version": status.version,
             "where": status.where,
             "emittable": gen.id in RENDERERS,
             "selected": gen.id in (config.generators or []),
         })
-    return {"generators": out}
+    # Named in the research tool or planned, but not generators SpreadEx can run. Shown inactive
+    # so nobody wonders where they are; never selectable, never written to the config.
+    return {"generators": out, "upcoming": UPCOMING_GENERATORS, "families": GENERATOR_FAMILIES,
+            "options": {"constraint_capable": [g["id"] for g in out if g["constraints"]]}}
 
 
 # ---------------------------------------------------------------- actions

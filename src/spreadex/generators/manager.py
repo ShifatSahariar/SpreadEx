@@ -45,6 +45,8 @@ class Generator:
     install: dict = field(default_factory=dict)
     check: dict = field(default_factory=dict)
     capabilities: dict = field(default_factory=dict)
+    #: probabilistic | constraint-based | coverage-guided | llm-based (the filter in step 3)
+    family: str = ""
 
     @property
     def package(self) -> str:
@@ -88,6 +90,7 @@ def load_catalog(catalog_dir: Path | None = None) -> dict[str, Generator]:
             install=data.get("install") or {},
             check=data.get("check") or {},
             capabilities=data.get("capabilities") or {},
+            family=data.get("family", ""),
         )
     return out
 

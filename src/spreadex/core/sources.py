@@ -143,7 +143,9 @@ def derive_grammars(config, generators: list[str], log=print) -> dict[str, Path]
             f"  Fix: correct `grammar.source` in spreadex.yaml."
         )
 
-    native = {gid: (config.project_root / rel) for gid, rel in config.semantics.native.items()}
+    # A generator the user switched constraints off for gets the grammar alone.
+    native = {gid: (config.project_root / rel) for gid, rel in config.semantics.native.items()
+              if (config.generator_options.get(gid) or {}).get("constraints", True)}
     h = hashlib.sha256(source_path.read_bytes())
     for gid in sorted(native):                      # editing a native spec must not hit a stale cache
         h.update(gid.encode() + native[gid].read_bytes())

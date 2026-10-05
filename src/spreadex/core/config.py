@@ -44,6 +44,8 @@ class Config:
     #: e.g. ".js". Executed inputs are linked under a name ending in it, because many
     #: systems choose a front end from the extension. Empty keeps the bare hash name.
     input_extension: str = ""
+    #: Per-generator choices made in the step 3 popup, e.g. {"fandango": {"constraints": false}}.
+    generator_options: dict = field(default_factory=dict)
     #: Generator-independent semantic guidance and constraint files (see spec/).
     semantics: "Semantics" = field(default_factory=lambda: Semantics())
     raw: dict = field(default_factory=dict)
@@ -98,6 +100,8 @@ class Config:
         # every project without semantics keeps the hash it always had.
         if self.semantics:
             payload["semantics"] = self.semantics_digest()
+        if self.generator_options:
+            payload["generator_options"] = self.generator_options
         blob = json.dumps(payload, sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -276,8 +280,32 @@ def load_config(path: Path | None = None) -> Config:
         seed=int(raw.get("seed", 42)),
         input_extension=_input_extension(raw.get("input_extension"), path),
         semantics=_semantics(raw.get("semantics"), path),
+        generator_options=_generator_options(raw.get("generator_options"), path),
         raw=raw,
     )
+
+
+_GENERATOR_OPTION_KEYS = {"constraints": bool}
+
+
+def _generator_options(value, path) -> dict:
+    if value in (None, {}):
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: `generator_options:` must map a generator id to its options.")
+    out: dict = {}
+    for gid, opts in value.items():
+        if not isinstance(opts, dict):
+            raise ConfigError(f"{path}: generator_options.{gid} must be a mapping.")
+        for key, val in opts.items():
+            if key not in _GENERATOR_OPTION_KEYS:
+                raise ConfigError(
+                    f"{path}: generator_options.{gid}.{key} is not an option. "
+                    f"Known: {', '.join(sorted(_GENERATOR_OPTION_KEYS))}.")
+            if not isinstance(val, _GENERATOR_OPTION_KEYS[key]):
+                raise ConfigError(f"{path}: generator_options.{gid}.{key} must be true or false.")
+        out[str(gid)] = dict(opts)
+    return out
 
 
 def _semantics(value, path) -> "Semantics":

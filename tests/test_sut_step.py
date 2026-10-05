@@ -304,7 +304,7 @@ def test_the_yaml_carries_the_semantics_block_and_edits_survive_rerender():
 
 
 def test_step_3_cards_show_the_rule_line_from_the_pure_function():
-    g = JS[JS.index("function paintGenerators"):JS.index("// ---", JS.index("function paintGenerators"))]
+    g = JS[JS.index("function genCard"):JS.index("function upcomingCard")]
     assert "semanticLine(g, cfg().semantics" in g and "sem-line" in g
 
 

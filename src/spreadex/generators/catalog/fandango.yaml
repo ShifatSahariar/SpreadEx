@@ -9,6 +9,7 @@ install:
 check:
   type: command
   command: [fandango, --version]
+family: constraint-based
 capabilities:
   grammar: fandango-fan
   constraints: true
