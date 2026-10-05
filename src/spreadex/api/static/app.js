@@ -69,6 +69,34 @@ const I = (p, o = {}) =>
      stroke-width="${o.w || 1.8}" stroke-linecap="round" stroke-linejoin="round"
      aria-hidden="true" focusable="false">${p}</svg>`;
 
+//: The brand mark, animated. Carried over from the research webapp's topbar so
+//: the tool keeps the identity it has always had: the red centre pops, the
+//: green squares fan to the corners, the orange circles follow, and the spokes
+//: fade in behind them. Decorative, so it is hidden from assistive tech -- the
+//: heading beside it already says what this is.
+const BRAND_MARK = `
+  <svg class="hero-mark" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"
+       aria-hidden="true" focusable="false">
+    <line class="logo-line-green"  x1="30" y1="30" x2="16.5" y2="16.5"/>
+    <line class="logo-line-green"  x1="30" y1="30" x2="43.5" y2="16.5"/>
+    <line class="logo-line-green"  x1="30" y1="30" x2="16.5" y2="43.5"/>
+    <line class="logo-line-green"  x1="30" y1="30" x2="43.5" y2="43.5"/>
+    <line class="logo-line-orange" x1="30" y1="30" x2="30" y2="17"/>
+    <line class="logo-line-orange" x1="30" y1="30" x2="30" y2="43"/>
+    <line class="logo-line-orange" x1="30" y1="30" x2="17" y2="30"/>
+    <line class="logo-line-orange" x1="30" y1="30" x2="43" y2="30"/>
+    <rect class="logo-green" x="12" y="12" width="9" height="9" rx="1.5"/>
+    <rect class="logo-green" x="39" y="12" width="9" height="9" rx="1.5"/>
+    <rect class="logo-green" x="12" y="39" width="9" height="9" rx="1.5"/>
+    <rect class="logo-green" x="39" y="39" width="9" height="9" rx="1.5"/>
+    <circle class="logo-orange" cx="30" cy="17" r="5"/>
+    <circle class="logo-orange" cx="30" cy="43" r="5"/>
+    <circle class="logo-orange" cx="17" cy="30" r="5"/>
+    <circle class="logo-orange" cx="43" cy="30" r="5"/>
+    <circle class="logo-red" cx="30" cy="30" r="8"   fill="#e53935"/>
+    <circle class="logo-red" cx="30" cy="30" r="4.5" fill="#c62828"/>
+  </svg>`;
+
 const ICONS = {
   home:       I(`<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-5.5h5V20"/>`),
   folder:     I(`<path d="M3 7a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.6.8l.9 1.2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`),
@@ -167,16 +195,24 @@ function renderLanding() {
       <div class="landing-hero">
         <div class="landing-intro">
           <p class="eyebrow">LOCAL TESTING WORKBENCH</p>
-          <h1 id="landing-title">SpreadEx <span>Workbench</span></h1>
+          <div class="hero-title-row">
+            ${BRAND_MARK}
+            <h1 id="landing-title">SpreadEx <span>Workbench</span></h1>
+          </div>
           <p class="landing-lede">Test compilers, interpreters, parsers, and other
             program-processing systems from one local workbench.</p>
           <div class="hero-actions">
-            <button class="primary landing-primary" onclick="go('setup')" ${readOnly ? "disabled" : ""}>
-              ${ICONS.playSolid}<span>Set up my system</span>${ICONS.arrow}
+            <button class="hero-action primary landing-primary" onclick="go('setup')"
+                    ${readOnly ? "disabled" : ""}>
+              <span class="ha-icon">${ICONS.playSolid}</span>
+              <span class="ha-text"><strong>Set up my system</strong></span>
+              <span class="ha-end">${ICONS.arrow}</span>
             </button>
-            <button class="quick-demo" onclick="showDemoHint()">
-              <span class="qd-icon">${ICONS.book}</span>
-              <span><strong>Quick demo</strong><small>See a real run in ~20 seconds</small></span>
+            <button class="hero-action quick-demo" onclick="showDemoHint()">
+              <span class="ha-icon qd-icon">${ICONS.book}</span>
+              <span class="ha-text"><strong>Quick demo</strong>
+                <small>See a real run in ~20 seconds</small></span>
+              <span class="ha-end"></span>
             </button>
           </div>
           ${readOnly ? `<p class="landing-readonly">This Workbench is read-only. Open it without

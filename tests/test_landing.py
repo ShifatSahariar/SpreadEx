@@ -58,7 +58,9 @@ def test_read_only_mode_is_still_stated_on_the_start_page():
     clicks the button that would."""
     assert "S.project?.read_only" in APP
     assert "This Workbench is read-only" in APP
-    assert 'onclick="go(\'setup\')" ${readOnly ? "disabled" : ""}' in APP
+    assert '${readOnly ? "disabled" : ""}' in APP, (
+        "the primary action must be disabled when nothing can be changed"
+    )
 
 
 def test_landing_has_responsive_shared_layout_foundation():
@@ -131,3 +133,90 @@ def test_the_layout_adapts_without_hiding_navigation():
 
 def test_decoration_is_dropped_for_readers_who_asked_for_less():
     assert "prefers-reduced-motion: reduce" in CSS
+
+
+# --------------------------------------------- hero: mark, lede and actions
+
+def test_the_two_hero_actions_are_sized_by_the_grid_not_by_their_labels():
+    """Both must match in width and height at every viewport. Side by side
+    they came out 244px each with both labels wrapping, so they stack: one
+    column makes the width identical by construction, and `grid-auto-rows: 1fr`
+    makes the height identical even though only one has a second line."""
+    rule = CSS[CSS.index(".hero-actions {"):]
+    rule = rule[:rule.index("}") + 1]
+    assert "grid-template-columns: 1fr" in rule, rule
+    assert "grid-auto-rows: 1fr" in rule, rule
+    assert "align-items: stretch" in rule, rule
+    assert CSS.count(".hero-actions {") == 1, "a second rule would fight this one"
+
+
+def test_the_lede_and_the_actions_share_one_measure():
+    """Three different widths stacked up read as three blocks; one measure
+    reads as a column."""
+    assert "--hero-col" in CSS
+    intro = CSS[CSS.index(".dashboard-home .landing-intro {"):]
+    assert "--hero-col" in intro[:intro.index("}")], (
+        "the measure must be declared on the shared parent, or the lede cannot "
+        "see it -- custom properties cascade down, not sideways"
+    )
+    assert "max-width: var(--hero-col)" in CSS
+    assert "text-wrap: balance" in CSS, "even line lengths, not a short widow"
+
+
+def test_the_brand_mark_is_the_one_from_the_research_webapp():
+    """Same geometry as the original: four green squares at the corners, four
+    orange circles on the cardinals, a two-part red centre, and eight spokes."""
+    mark = APP[APP.index("const BRAND_MARK"):APP.index("const ICONS")]
+    assert mark.count('class="logo-green"') == 4
+    assert mark.count('class="logo-orange"') == 4
+    assert mark.count('class="logo-red"') == 2
+    assert mark.count("logo-line-green") == 4 and mark.count("logo-line-orange") == 4
+    assert 'viewBox="0 0 60 60"' in mark
+    assert 'aria-hidden="true"' in mark, "decoration beside a heading that says the same"
+
+
+def test_the_mark_builds_once_and_then_holds_still():
+    """A hero mark that dissolves and rebuilds every five seconds competes with
+    the text beside it for attention. It assembles on arrival and stays
+    assembled."""
+    for stage in ("mark-red", "mark-green", "mark-orange",
+                  "mark-line-green", "mark-line-orange"):
+        assert f"@keyframes {stage}" in CSS, stage
+        decl = CSS[CSS.index(f"animation: {stage}"):]
+        decl = decl[:decl.index(";")]
+        assert "infinite" not in decl, f"{stage} loops: {decl}"
+        assert "both" in decl or "forwards" in decl, (
+            f"{stage} must hold its finished state: {decl}"
+        )
+    # ...and every stage ends assembled rather than scaled away.
+    for stage in ("mark-red", "mark-green", "mark-orange"):
+        frames = CSS[CSS.index(f"@keyframes {stage}"):]
+        frames = frames[:frames.index("}\n@") if "}\n@" in frames else len(frames)]
+        collapsed = " ".join(frames.split())
+        assert "100% { transform: scale(1); opacity: 1; }" in collapsed, stage
+
+
+def test_the_pipeline_folds_rather_than_running_off_the_page():
+    """Between the stacking breakpoint and a wide desktop the nine stages are
+    wider than their column. nowrap let them overflow the page edge."""
+    rule = CSS[CSS.index(".pipeline-row {"):]
+    rule = rule[:rule.index("}") + 1]
+    assert "flex-wrap: wrap" in rule, rule
+    assert "nowrap" not in rule, rule
+
+
+def test_the_landing_styles_are_defined_exactly_once():
+    """Two complete definitions of the hero, the pipeline and the cards is how
+    a fix comes to need a third: the later block silently won, and editing the
+    earlier one did nothing.
+
+    Only BASE rules are counted. In this stylesheet a base rule starts at
+    column 0 and a responsive override is indented inside a media query, so a
+    legitimate override is not mistaken for a duplicate.
+    """
+    base = [ln for ln in CSS.splitlines() if ln and not ln[0].isspace()]
+    for selector in (".hero-actions {", ".pipeline-row {", ".start-cards {",
+                     ".landing-hero {", ".hero-action {",
+                     ".dashboard-home .landing-intro {"):
+        hits = [ln for ln in base if ln.startswith(selector)]
+        assert len(hits) == 1, f"{selector} has {len(hits)} base rules: {hits}"

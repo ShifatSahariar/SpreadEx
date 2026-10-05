@@ -263,7 +263,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .landing-pipeline { display: flex; flex-wrap: wrap; justify-content: center; gap: .15rem .3rem; margin: 1.75rem auto 0; max-width: 800px; color: var(--color-text); font-size: clamp(.9rem, 1.1vw, .95rem); font-weight: 550; line-height: 1.8; }
 .landing-pipeline span { color: var(--color-primary); padding: 0 .1rem; }
 .landing-actions { margin-top: 1.9rem; }
-.landing-primary { min-width: 190px; }
 .landing-readonly { margin: 10px auto 0; max-width: 460px; color: var(--color-muted); font-size: .875rem; }
 .landing-demo { margin: 2.5rem auto 0; padding-top: 1.5rem; border-top: 1px solid var(--color-border); max-width: var(--demo-max); color: var(--color-muted); }
 .landing-demo p { margin: 0; font-size: .9rem; }
@@ -294,77 +293,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
   .command-row { flex-wrap: wrap; justify-content: center; }
 }
 
-/* ------------------------------------------------------ dashboard landing */
-.dashboard-home .landing-intro { max-width: 680px; margin: 0; text-align: left; }
-.dashboard-home h1 { font-size: clamp(2.7rem, 5vw, 4rem); letter-spacing: -.055em; white-space: nowrap; }
-.dashboard-home h1 span { color: var(--color-primary); }
-.dashboard-home .landing-lede { max-width: 650px; margin-left: 0; font-size: clamp(1.05rem, 1.55vw, 1.25rem); }
-.hero-actions { display: flex; align-items: stretch; gap: 1rem; margin-top: 1.75rem; }
-.dashboard-home .landing-primary { display: inline-flex; align-items: center; gap: .75rem; min-width: 305px; min-height: 4.5rem; justify-content: center; font-size: 1.05rem; border-radius: 11px; box-shadow: 0 9px 18px rgba(22,163,74,.18); }
-.dashboard-home .landing-primary > span:last-child { font-size: 1.4rem; }
-.button-icon { font-size: 1.7rem; font-weight: 400; }
-.quick-demo { display: flex; align-items: center; gap: .75rem; min-width: 260px; padding: .8rem 1.1rem; border: 1px solid var(--color-border); border-radius: 11px; background: var(--color-surface); box-shadow: var(--shadow); color: var(--color-text); }
-.quick-demo strong, .quick-demo small { display: block; }
-.quick-demo strong { font-size: 1rem; }
-.quick-demo small { color: var(--color-muted); font-size: .95rem; }
-.book-icon { font-size: 2rem; color: var(--color-muted); }
-.pipeline-art { position: relative; min-height: 290px; padding: 1.25rem 0; display: grid; align-content: center; gap: 1.1rem; }
-.pipeline-row { display: flex; align-items: center; justify-content: center; gap: .55rem; }
-.pipeline-row.bottom { margin-left: 2rem; }
-.pipeline-row i { color: var(--color-primary); font-style: normal; font-size: 1.35rem; }
-.pipeline-node { display: grid; place-items: center; gap: .15rem; width: 88px; min-height: 82px; padding: .5rem .3rem; border: 1px solid var(--color-border); border-radius: 13px; background: color-mix(in srgb, var(--color-surface) 88%, var(--color-primary-lt)); color: var(--color-primary); font-size: 1.6rem; box-shadow: 0 5px 13px rgba(15,23,42,.04); }
-.pipeline-node b { color: var(--color-text); font-size: .72rem; font-weight: 650; }
-.pipeline-node small { color: var(--color-muted); font-size: .52rem; line-height: 1; }
-.pipeline-node.purple { color: #8b5cf6; background: color-mix(in srgb, var(--color-surface) 92%, #eadcff); }
-.pipeline-node.blue { color: #3182f6; background: color-mix(in srgb, var(--color-surface) 92%, #dcecff); }
-.pipeline-node.orange { color: #f59e0b; background: color-mix(in srgb, var(--color-surface) 92%, #fff0d8); }
-.pipeline-node.red { color: #ef4444; background: color-mix(in srgb, var(--color-surface) 92%, #ffe0e3); }
-.pipeline-node.green { color: var(--color-primary); background: color-mix(in srgb, var(--color-surface) 92%, #dcf8e5); }
-.landing-divider { height: 1px; max-width: 1200px; margin: clamp(2.5rem, 6vh, 5rem) auto 0; background: var(--color-border); }
-.get-started { max-width: 1200px; margin: 2rem auto 0; text-align: left; }
-.section-heading { display: flex; justify-content: space-between; align-items: end; gap: 1rem; }
-.section-heading h2 { margin: 0; font-size: clamp(1.8rem, 3vw, 2.2rem); letter-spacing: -.04em; }
-.section-heading p { margin: .25rem 0 0; color: var(--color-muted); font-size: 1.05rem; }
-.section-heading a { color: #2563eb; text-decoration: none; font-size: .95rem; white-space: nowrap; }
-.start-cards { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; align-items: center; gap: .75rem; margin-top: 1.75rem; }
-.start-card { position: relative; display: grid; align-content: start; min-height: 13rem; padding: 1.4rem 1.25rem 1.25rem 4.75rem; border: 1px solid var(--color-border); border-radius: 13px; box-shadow: var(--shadow); background: var(--color-surface); }
-.start-card em { position: absolute; top: 1rem; left: 1rem; display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; color: white; font-style: normal; font-weight: 700; }
-.start-icon { display: grid; place-items: center; width: 3.25rem; height: 3.25rem; margin-bottom: .7rem; border-radius: 11px; font-size: 2rem; }
-.start-card strong { font-size: 1.05rem; letter-spacing: -.02em; }
-.start-card p { margin: .25rem 0 0; color: var(--color-muted); font-size: .95rem; line-height: 1.45; }
-.green-card { background: linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 94%, #d9f8e5), var(--color-surface)); border-color: var(--color-success-bd); }
-.green-card em { background: var(--color-primary); }.green-card .start-icon { color: var(--color-primary); background: var(--color-primary-lt); }
-.blue-card { background: linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 94%, #dcecff), var(--color-surface)); border-color: #cfe2ff; }
-.blue-card em { background: #3b82f6; }.blue-card .start-icon { color: #3182f6; background: #e2efff; }
-.orange-card { background: linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 94%, #fff0d8), var(--color-surface)); border-color: #f8dfbe; }
-.orange-card em { background: #f59e0b; }.orange-card .start-icon { color: #f59e0b; background: #fff0dd; }
-.purple-card { background: linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 94%, #eee3ff), var(--color-surface)); border-color: #e4d8ff; }
-.purple-card em { background: #8b5cf6; }.purple-card .start-icon { color: #8b5cf6; background: #f0e8ff; }
-.card-arrow { color: var(--color-muted); font-size: 1.6rem; }
-
-@media (max-width: 1050px) {
-  .landing-hero { grid-template-columns: 1fr; gap: 1rem; }
-  .dashboard-home .landing-intro { max-width: 760px; margin: 0 auto; text-align: center; }
-  .dashboard-home .landing-lede { margin-inline: auto; }
-  .hero-actions { justify-content: center; }
-  .pipeline-art { max-width: 760px; margin: 0 auto; }
-  .start-cards { grid-template-columns: 1fr 1fr; gap: 1rem; }
-  .card-arrow { display: none; }
-}
-@media (max-width: 700px) {
-    .dashboard-home h1 { white-space: normal; }
-  .hero-actions { flex-direction: column; align-items: stretch; }
-  .dashboard-home .landing-primary, .quick-demo { min-width: 0; width: 100%; }
-  .pipeline-art { overflow: hidden; min-height: 340px; }
-  .pipeline-row { flex-wrap: wrap; max-width: 420px; margin-inline: auto !important; }
-  .pipeline-row i { font-size: 1rem; }
-  .pipeline-node { width: 78px; min-height: 72px; }
-  .section-heading { align-items: start; flex-direction: column; }
-  .start-cards { grid-template-columns: 1fr; }
-  .start-card { min-height: 10rem; }
-}
-
-
 /* ======================================================= start page (home)
    The page is centred on the viewport and sized by the content, not by the
    window: a workbench on a 27" display should not stretch a paragraph to
@@ -387,7 +315,9 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 
 .landing-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
   gap: clamp(1.5rem, 4vw, 3.5rem); align-items: center; max-width: 100%; margin: 0 auto; }
-.dashboard-home .landing-intro { max-width: 34rem; margin: 0; text-align: left; }
+/* --hero-col is the measure the lede and the actions below it share. */
+.dashboard-home .landing-intro { --hero-col: min(100%, 26rem);
+  max-width: 34rem; margin: 0; text-align: left; }
 .dashboard-home h1 { font-size: clamp(2rem, 4.4vw, 3.4rem); letter-spacing: -.04em;
   white-space: normal; }          /* nowrap clipped the title on narrow windows */
 .dashboard-home h1 span { background: linear-gradient(95deg, #15a34a, #0f8aa8);
@@ -396,23 +326,7 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
   font-size: clamp(1rem, 1.35vw, 1.1rem); }
 
 /* ---- hero actions ---- */
-.hero-actions { display: flex; flex-wrap: wrap; align-items: stretch;
-  gap: .9rem; margin-top: 1.6rem; }
-.dashboard-home .landing-primary { display: inline-flex; align-items: center; gap: .6rem;
-  min-height: 3.6rem; padding-inline: 1.5rem; justify-content: center; font-size: 1rem;
-  border-radius: 11px; box-shadow: 0 9px 18px rgba(22,163,74,.22); }
 .dashboard-home .landing-primary .ico { width: 1rem; height: 1rem; }
-.quick-demo { display: inline-flex; align-items: center; gap: .8rem; text-align: left;
-  padding: .7rem 1.1rem; border: 1px solid var(--color-border); border-radius: 11px;
-  background: var(--color-surface); box-shadow: var(--shadow); color: var(--color-text);
-  font: inherit; cursor: pointer; }
-.quick-demo:hover { border-color: var(--color-primary); }
-.quick-demo .qd-icon { display: grid; place-items: center; width: 2.1rem; height: 2.1rem;
-  flex: none; border-radius: 8px; background: var(--color-primary-lt);
-  color: var(--color-primary-dk); }
-.quick-demo strong, .quick-demo small { display: block; }
-.quick-demo strong { font-size: .95rem; }
-.quick-demo small { color: var(--color-muted); font-size: .8rem; }
 #demo-hint pre { margin-top: .4rem; }
 
 /* ---- pipeline diagram ---- */
@@ -420,8 +334,13 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
   gap: clamp(.9rem, 2.2vw, 1.6rem); padding: 1.5rem 0; min-height: 0; }
 .pipeline-thread { position: absolute; inset: 12% 2% 12% 2%; width: 96%; height: 76%;
   z-index: 0; opacity: .5; }
+/* `wrap`, not `nowrap`: between the stacking breakpoint and a wide desktop the
+   nine stages are wider than the column they sit in, and nowrap let them run
+   off the side of the page rather than fold. Folding is the lesser evil, and
+   it degrades at every width instead of only at a chosen one. */
 .pipeline-row { position: relative; z-index: 1; display: flex; align-items: center;
-  justify-content: center; gap: clamp(.15rem, .7vw, .5rem); flex-wrap: nowrap; }
+  justify-content: center; gap: clamp(.15rem, .7vw, .5rem); flex-wrap: wrap;
+  row-gap: .5rem; z-index: 2; }   /* above the thread drawn behind them */
 .pipeline-row.bottom { justify-content: flex-end; }
 .pipe-arrow { display: grid; place-items: center; color: var(--color-muted); opacity: .55; }
 .pipe-arrow .ico { width: clamp(.8rem, 1.5vw, 1.1rem); height: clamp(.8rem, 1.5vw, 1.1rem); }
@@ -493,8 +412,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 
 @media (max-width: 620px) {
   .dashboard-home { padding-top: 1.75rem; }
-  .hero-actions { flex-direction: column; align-items: stretch; }
-  .quick-demo, .dashboard-home .landing-primary { width: 100%; }
   .start-cards { grid-template-columns: minmax(0, 1fr); }
   .section-heading { flex-direction: column; gap: .75rem; }
 }
@@ -518,7 +435,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
   filter: blur(2px);
 }
 .pipeline-thread { z-index: 1; opacity: .75; }
-.pipeline-row { z-index: 2; }
 
 /* A soft band at the foot of the page, as in the reference. Attached to the
    landing section so it never appears on the wizard or the results tabs.
@@ -542,6 +458,8 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 /* Respect a reader who has asked for less movement and less noise. */
 @media (prefers-reduced-motion: reduce) {
   .pipeline-art::before, .dashboard-home::after { display: none; }
+  /* Hold the mark at its finished state rather than looping it. */
+  .hero-mark * { animation: none !important; opacity: 1 !important; transform: none !important; }
 }
 
 
@@ -557,3 +475,96 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
   .tabs::-webkit-scrollbar { display: none; }
   .tabs button { flex: none; }
 }
+
+
+/* ---- hero: the mark, the lede, and two actions of equal size -------------
+   The actions are a 2-column grid of equal tracks rather than two
+   independently-sized buttons, so they match in width at every viewport, and
+   `align-items: stretch` with a shared min-height matches them in height --
+   including when one wraps to two lines of label and the other does not. */
+
+.hero-title-row { display: flex; align-items: center; gap: clamp(.65rem, 1.6vw, 1.1rem); }
+.hero-title-row h1 { margin: 0; }
+/* Sized to the two-line title it stands beside, not to the text size. */
+.hero-mark { width: clamp(3.3rem, 7vw, 5.4rem); height: clamp(3.3rem, 7vw, 5.4rem);
+  flex: none; overflow: visible; }
+
+/* The lede sits to the same measure as the actions beneath it, so the block
+   reads as one column instead of three different widths stacked up. */
+/* One measure for the whole hero column, declared on the shared parent so the
+   lede and the buttons beneath it line up instead of each finding its own
+   width. `balance` evens the line lengths rather than leaving a short widow,
+   which is what made the old wrap look accidental. */
+.dashboard-home .landing-lede { max-width: var(--hero-col); margin-left: 0;
+  font-size: clamp(1rem, 1.35vw, 1.1rem); text-wrap: balance; }
+
+/* One column, as in the reference: both actions then span the same measure at
+   every viewport, and `stretch` plus a shared min-height matches their height
+   even though one carries a second line of label and the other does not.
+   Side by side they were 244px each and both labels wrapped. */
+.hero-actions { display: grid; grid-template-columns: 1fr; grid-auto-rows: 1fr;
+  justify-items: stretch; align-items: stretch; gap: .75rem; margin-top: 1.6rem;
+  max-width: var(--hero-col); }
+
+.hero-action { display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+  gap: .8rem; min-height: 3.9rem; padding: .8rem 1.15rem; border-radius: 12px;
+  font: inherit; text-align: left; cursor: pointer; }
+.hero-action .ha-icon { display: grid; place-items: center; width: 2.1rem; height: 2.1rem;
+  flex: none; border-radius: 8px; }
+.hero-action .ha-end { display: grid; place-items: center; width: 1.25rem; }
+.hero-action .ha-text { min-width: 0; }
+.hero-action strong { display: block; font-size: .975rem; font-weight: 650; }
+.hero-action small { display: block; color: var(--color-muted); font-size: .8rem;
+  line-height: 1.3; }
+
+.dashboard-home .landing-primary { border: 1px solid transparent;
+  box-shadow: 0 9px 18px rgba(22,163,74,.22); }
+.dashboard-home .landing-primary .ha-icon { background: rgba(255,255,255,.18); }
+.dashboard-home .landing-primary strong { font-size: 1rem; }
+.dashboard-home .landing-primary small { color: rgba(255,255,255,.85); }
+
+.quick-demo { border: 1px solid var(--color-border); background: var(--color-surface);
+  box-shadow: var(--shadow); color: var(--color-text); }
+.quick-demo:hover { border-color: var(--color-primary); }
+.quick-demo .qd-icon { background: var(--color-primary-lt); color: var(--color-primary-dk); }
+
+/* ---- the brand mark's animation -----------------------------------------
+   Carried over from the research webapp. One 5s cycle: red centre, then the
+   green squares, then the orange circles, with the spokes fading in behind
+   them. Everything scales about the SVG's centre. */
+.hero-mark .logo-green  { fill: #5cb85c; }
+.hero-mark .logo-orange { fill: #f5a623; }
+.hero-mark line { stroke: var(--color-muted); stroke-width: 1.8; stroke-linecap: round; }
+
+.hero-mark .logo-red, .hero-mark .logo-green, .hero-mark .logo-orange,
+.hero-mark .logo-line-green, .hero-mark .logo-line-orange {
+  transform-box: view-box; transform-origin: 30px 30px; }
+
+.hero-mark .logo-red    { animation: mark-red 1.5s ease-out .1s both; }
+.hero-mark .logo-green  { animation: mark-green 1.5s ease-out .1s both; }
+.hero-mark .logo-orange { animation: mark-orange 1.5s ease-out .1s both; }
+.hero-mark .logo-line-green  { animation: mark-line-green 1.5s ease-out .1s both; }
+.hero-mark .logo-line-orange { animation: mark-line-orange 1.5s ease-out .1s both; }
+
+@keyframes mark-red {
+  0%   { transform: scale(0); opacity: 0; }
+  8%   { opacity: 1; }
+  34%  { transform: scale(1.3); }
+  52%  { transform: scale(1); }
+  100% { transform: scale(1); opacity: 1; } }
+@keyframes mark-green {
+  0%, 22% { transform: scale(0); opacity: 0; }
+  28%     { opacity: 1; }
+  58%     { transform: scale(1.14); }
+  74%     { transform: scale(1); }
+  100%    { transform: scale(1); opacity: 1; } }
+@keyframes mark-orange {
+  0%, 40% { transform: scale(0); opacity: 0; }
+  46%     { opacity: 1; }
+  76%     { transform: scale(1.14); }
+  90%     { transform: scale(1); }
+  100%    { transform: scale(1); opacity: 1; } }
+@keyframes mark-line-green  { 0%, 40% { opacity: 0; } 100% { opacity: .55; } }
+@keyframes mark-line-orange { 0%, 58% { opacity: 0; } 100% { opacity: .55; } }
+
+
