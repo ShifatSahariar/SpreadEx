@@ -601,7 +601,7 @@ function semanticLine(g, sem, experimental) {
   const hasStructured = !!(sem && sem.structured);
   const others = Object.keys(native).filter(id => id !== g.id);
   if (!hasGuidance && !hasStructured && !Object.keys(native).length) return null;
-  if (native[g.id]) return { tone: "ok", text: `Your ${g.name} constraints are used as written.` };
+  if (native[g.id]) return { tone: "ok", text: `Your ${g.name} constraints are used as written.${hasGuidance ? " Your written guidance is not used by it." : ""}` };
   if (!g.constraints) {
     if (others.length) {
       return { tone: "warn", text: `You supplied ${others.map(id => id === "isla" ? "ISLa" : id[0].toUpperCase() + id.slice(1)).join(" and ")}-specific constraints; ${g.name} cannot use them. It runs from the grammar alone.` };
@@ -1402,7 +1402,7 @@ function semanticSection() {
     <span class="mono">${esc(path)}</span><span class="muted">${esc(gid)}, used as written</span>
     <button type="button" class="linkish" onclick="semDropSlot('native:${esc(gid)}')">Remove</button></div>`).join("");
   return `<section class="sut-sec sem" aria-labelledby="sem-h">
-    <h4 id="sem-h"><span class="num" aria-hidden="true">3</span> Semantic guidance <span class="muted">(optional)</span>
+    <h4 id="sem-h"><span class="num" aria-hidden="true">4</span> Semantic guidance <span class="muted">(optional)</span>
       ${hint("hint-sem", "Rules a grammar cannot say, such as a variable being declared before use. Written once here; step 3 shows what each generator can do with it.")}</h4>
     <p class="muted inp-sub">Describe rules that go beyond syntax. Plain language is fine.</p>
     <div class="sem-card">

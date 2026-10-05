@@ -306,3 +306,9 @@ def test_the_yaml_carries_the_semantics_block_and_edits_survive_rerender():
 def test_step_3_cards_show_the_rule_line_from_the_pure_function():
     g = JS[JS.index("function paintGenerators"):JS.index("// ---", JS.index("function paintGenerators"))]
     assert "semanticLine(g, cfg().semantics" in g and "sem-line" in g
+
+
+def test_a_native_file_does_not_hide_that_written_guidance_goes_unused():
+    both = _line(FAN, '{"native":{"fandango":"spec/c.fan"},"guidance":["spec/s.md"]}')
+    assert both["tone"] == "ok" and "written guidance is not used" in both["text"]
+    assert "guidance" not in _line(FAN, '{"native":{"fandango":"spec/c.fan"}}')["text"]
