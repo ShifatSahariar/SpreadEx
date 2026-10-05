@@ -26,7 +26,7 @@ def test_landing_contains_the_approved_copy_and_no_demo_endpoint():
     for text in (
         "SpreadEx <span>Workbench</span>",
         "Test compilers, interpreters, parsers, and other",
-        "pipeline-art",
+        "workflow-figure",
         "Quick demo",
         "spreadex demo",
         "Get started",
@@ -86,7 +86,7 @@ def test_the_start_page_uses_svg_icons_not_font_glyphs():
     glyphs = set(re.findall(r"[■-◿←-⇿☀-➿❖⬀-⯿]",
                             rendered))
     assert not glyphs, f"decorative glyphs left in the start page: {glyphs}"
-    assert rendered.count("ICONS.") >= 12, "the icon set is barely used"
+    assert rendered.count("ICONS.") >= 8, "the icon set is barely used"
 
 
 def test_every_icon_inherits_colour_and_is_hidden_from_assistive_tech():
@@ -97,9 +97,21 @@ def test_every_icon_inherits_colour_and_is_hidden_from_assistive_tech():
     assert 'aria-hidden="true"' in APP
     assert "focusable=\"false\"" in APP, "IE/Edge focus the SVG without this"
     for name in ("home", "folder", "sliders", "play", "download", "gear",
-                 "book", "arrow", "file", "sparkle", "shield", "chart",
-                 "list", "search", "tag", "report"):
+                 "playSolid", "book", "arrow", "chart"):
         assert f"{name}:" in icons, f"ICONS.{name} is missing"
+
+
+def test_no_icon_is_defined_and_never_used():
+    """The nine-stage diagram used to draw its own icons from this set. When it
+    became one SVG, seven of them were left behind with no caller."""
+    import re
+
+    block = APP[APP.index("const ICONS = {"):].split("};", 1)[0]
+    defined = re.findall(r"^  (\w+):", block, flags=re.M)
+    used_in_js = set(re.findall(r"ICONS\.(\w+)", APP))
+    used_in_html = set(re.findall(r'data-icon="(\w+)"', INDEX))
+    dead = [n for n in defined if n not in used_in_js | used_in_html]
+    assert not dead, f"defined but never used: {dead}"
 
 
 def test_the_page_is_centred_rather_than_pinned_to_the_left():
@@ -210,15 +222,6 @@ def test_the_looping_mark_still_holds_still_for_reduced_motion():
     assert "opacity: 1" in block, "and it must be left visible, not invisible"
 
 
-def test_the_pipeline_folds_rather_than_running_off_the_page():
-    """Between the stacking breakpoint and a wide desktop the nine stages are
-    wider than their column. nowrap let them overflow the page edge."""
-    rule = CSS[CSS.index(".pipeline-row {"):]
-    rule = rule[:rule.index("}") + 1]
-    assert "flex-wrap: wrap" in rule, rule
-    assert "nowrap" not in rule, rule
-
-
 def test_the_landing_styles_are_defined_exactly_once():
     """Two complete definitions of the hero, the pipeline and the cards is how
     a fix comes to need a third: the later block silently won, and editing the
@@ -229,8 +232,126 @@ def test_the_landing_styles_are_defined_exactly_once():
     legitimate override is not mistaken for a duplicate.
     """
     base = [ln for ln in CSS.splitlines() if ln and not ln[0].isspace()]
-    for selector in (".hero-actions {", ".pipeline-row {", ".start-cards {",
+    for selector in (".hero-actions {", ".workflow {", ".start-cards {",
                      ".landing-hero {", ".hero-action {",
                      ".dashboard-home .landing-intro {"):
         hits = [ln for ln in base if ln.startswith(selector)]
         assert len(hits) == 1, f"{selector} has {len(hits)} base rules: {hits}"
+
+
+# ------------------------------------------------------- the workflow diagram
+
+WORKFLOW = APP[APP.index("const WORKFLOW_SVG = `"):].split("`;", 1)[0]
+
+
+def test_the_workflow_is_an_inline_svg_that_scales_with_its_column():
+    """No fixed width or height on the root: the box follows its container and
+    the viewBox supplies the aspect ratio. A fixed size is what would make it
+    overflow a narrow window or sit tiny in a wide one."""
+    import re
+
+    root = re.search(r"<svg[^>]*>", WORKFLOW).group(0)
+    assert "viewBox=" in root
+    assert not re.search(r'\swidth="', root) and not re.search(r'\sheight="', root), root
+    assert 'role="img"' in root and "aria-label=" in root, "it needs a text equivalent"
+    rule = CSS[CSS.index(".workflow {"):]
+    rule = rule[:rule.index("}") + 1]
+    assert "width: 100%" in rule and "height: auto" in rule, rule
+
+
+def test_the_workflow_shows_all_nine_stages_as_real_text():
+    """Real text, not outlines or an image: selectable, searchable, and carried
+    by the page's own font."""
+    for stage in ("Grammar", "Generate", "Check", "Analyze", "Prioritize",
+                  "Execute", "Observe", "Classify", "Save &amp; Report"):
+        assert f">{stage}</text>" in WORKFLOW, stage
+    assert "font-family" not in WORKFLOW, "the diagram should use the page font"
+
+
+def test_every_connector_that_uses_a_gradient_can_actually_be_painted():
+    """The supplied file drew the Prioritize -> Execute -> Observe -> Classify
+    connectors with an objectBoundingBox gradient on perfectly horizontal
+    paths. A zero-height bounding box paints nothing, so they were invisible.
+    Every gradient used as a stroke must be in user space."""
+    import re
+
+    for gid in set(re.findall(r'stroke="url\(#(wf-[\w-]+)\)"', WORKFLOW)):
+        tag = re.search(rf'<linearGradient id="{gid}"[^>]*>', WORKFLOW)
+        assert tag, f"{gid} is used but not defined"
+        assert 'gradientUnits="userSpaceOnUse"' in tag.group(0), (
+            f"{gid} uses bounding-box units; a horizontal line cannot show it"
+        )
+
+
+def test_there_is_an_arrowhead_at_every_hand_off():
+    """Nine stages, eight hand-offs, one chevron on each. The supplied file had
+    four small filled triangles and none into Prioritize or between the bottom
+    row's stages."""
+    import re
+
+    chevrons = re.findall(r'<path d="M[\d.]+ [\d.]+ L[\d.]+ [\d.]+ L[\d.]+ [\d.]+" fill="none"'
+                          r'[^>]*stroke-linejoin="round"/>', WORKFLOW)
+    assert len(chevrons) == 8, len(chevrons)
+    assert "l18 11 -18 11z" not in WORKFLOW, "the old filled triangles are gone"
+
+
+def test_the_workflow_cannot_collide_with_the_pages_own_ids():
+    """Inline SVG shares the document's id namespace, so a gradient called
+    `shadow` or `bg` would silently capture someone else's reference."""
+    import re
+
+    ids = re.findall(r'\bid="([^"]+)"', WORKFLOW)
+    assert ids and all(i.startswith("wf-") for i in ids), ids
+    for ref in re.findall(r"url\(#([^)]+)\)", WORKFLOW):
+        assert ref in ids, f"url(#{ref}) points at nothing"
+
+
+def test_the_workflow_follows_the_theme_in_both_ways_dark_mode_is_reached():
+    """An explicit dark choice, and the system preference with no choice made.
+    Handling only the first leaves anyone on a dark system with glaring cards."""
+    for part in (':root[data-theme="dark"] .workflow .wf-node',
+                 ':root:not([data-theme="light"]) .workflow .wf-node',
+                 ':root[data-theme="dark"] .workflow .wf-labels',
+                 ':root:not([data-theme="light"]) .workflow .wf-labels'):
+        assert part in CSS, part
+    assert WORKFLOW.count('class="wf-node"') == 9, "every card must be themeable"
+
+
+def test_the_workflow_stays_readable_on_a_phone_without_widening_the_page():
+    """Pure scaling would put a phone's labels at ~6px. Below 640px the diagram
+    holds a 600px floor inside its own scroller, so it pans while the page
+    stays put."""
+    phone = CSS[CSS.index("@media (max-width: 640px) {\n  .workflow-figure"):]
+    phone = phone[:phone.index("\n}")]
+    assert "min-width: 600px" in phone
+    assert "overflow-x: auto" in phone
+    assert 'tabindex="0"' in APP[APP.index("workflow-figure"):][:200], (
+        "a scrollable region must be reachable from the keyboard"
+    )
+
+
+def test_the_hero_gives_the_diagram_enough_width_before_it_stacks():
+    """Side by side it needs ~590px for 10px labels; narrower and it falls to
+    8.8px (measured at 1105). So the hero stacks while there is still room."""
+    assert "@media (max-width: 1180px)" in CSS
+    assert "grid-template-columns: minmax(0, 26rem) minmax(0, 1fr)" in CSS
+
+
+def test_the_stylesheet_has_balanced_braces():
+    """A stray `}` makes the parser treat the NEXT rule's selector as invalid
+    and drop it. One was left behind when the logo animation was restored; it
+    was harmless only because it happened to be the last thing in the file."""
+    import re
+
+    clean = re.sub(r"/\*.*?\*/", "", CSS, flags=re.S)
+    assert clean.count("{") == clean.count("}"), (clean.count("{"), clean.count("}"))
+
+
+def test_no_selector_list_is_left_dangling():
+    """Removing the last line of a comma-separated selector list leaves the
+    comma attached to whatever follows, which swallows the next block whole."""
+    import re
+
+    clean = re.sub(r"/\*.*?\*/", "", CSS, flags=re.S)
+    assert not re.search(r",\s*(@|\n\s*@|\Z)", clean), "a selector list ends in a comma"
+    assert not re.search(r",\s*\n\s*\n", clean), "a selector list ends before a blank line"

@@ -313,7 +313,7 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .dashboard-home { width: min(100%, 1180px); margin-inline: auto;
   padding-top: clamp(2rem, 6vh, 4.5rem); text-align: left; }
 
-.landing-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
+.landing-hero { display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
   gap: clamp(1.5rem, 4vw, 3.5rem); align-items: center; max-width: 100%; margin: 0 auto; }
 /* --hero-col is the measure the lede and the actions below it share. */
 .dashboard-home .landing-intro { --hero-col: min(100%, 26rem);
@@ -328,39 +328,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 /* ---- hero actions ---- */
 .dashboard-home .landing-primary .ico { width: 1rem; height: 1rem; }
 #demo-hint pre { margin-top: .4rem; }
-
-/* ---- pipeline diagram ---- */
-.pipeline-art { position: relative; display: grid; align-content: center;
-  gap: clamp(.9rem, 2.2vw, 1.6rem); padding: 1.5rem 0; min-height: 0; }
-.pipeline-thread { position: absolute; inset: 12% 2% 12% 2%; width: 96%; height: 76%;
-  z-index: 0; opacity: .5; }
-/* `wrap`, not `nowrap`: between the stacking breakpoint and a wide desktop the
-   nine stages are wider than the column they sit in, and nowrap let them run
-   off the side of the page rather than fold. Folding is the lesser evil, and
-   it degrades at every width instead of only at a chosen one. */
-.pipeline-row { position: relative; z-index: 1; display: flex; align-items: center;
-  justify-content: center; gap: clamp(.15rem, .7vw, .5rem); flex-wrap: wrap;
-  row-gap: .5rem; z-index: 2; }   /* above the thread drawn behind them */
-.pipeline-row.bottom { justify-content: flex-end; }
-.pipe-arrow { display: grid; place-items: center; color: var(--color-muted); opacity: .55; }
-.pipe-arrow .ico { width: clamp(.8rem, 1.5vw, 1.1rem); height: clamp(.8rem, 1.5vw, 1.1rem); }
-
-.pipeline-node { display: grid; place-items: center; gap: .2rem;
-  width: clamp(3.9rem, 7.2vw, 5.3rem); min-height: clamp(3.6rem, 6.6vw, 4.9rem);
-  padding: .55rem .35rem; border: 1px solid var(--color-border); border-radius: 13px;
-  background: var(--color-surface); color: var(--color-primary);
-  box-shadow: 0 5px 13px rgba(15,23,42,.05); }
-.pipeline-node .ico { width: clamp(1.1rem, 2vw, 1.4rem); height: clamp(1.1rem, 2vw, 1.4rem); }
-.pipeline-node b { color: var(--color-text); font-size: clamp(.58rem, 1vw, .72rem);
-  font-weight: 650; text-align: center; line-height: 1.15; }
-.pipeline-node small { color: var(--color-muted); font-size: clamp(.46rem, .8vw, .56rem);
-  line-height: 1.1; text-align: center; }
-.pipeline-node.grammar { width: clamp(4.6rem, 8.6vw, 6.4rem); }
-.pipeline-node.purple { color: #8b5cf6; background: color-mix(in srgb, var(--color-surface) 90%, #eadcff); }
-.pipeline-node.blue   { color: #3b82f6; background: color-mix(in srgb, var(--color-surface) 90%, #dbeafe); }
-.pipeline-node.orange { color: #ea8a1c; background: color-mix(in srgb, var(--color-surface) 90%, #ffedd5); }
-.pipeline-node.red    { color: #ef4444; background: color-mix(in srgb, var(--color-surface) 90%, #fee2e2); }
-.pipeline-node.green  { color: #16a34a; background: color-mix(in srgb, var(--color-surface) 90%, #dcfce7); }
 
 /* ---- get started ---- */
 .landing-divider { height: 1px; margin: clamp(2.5rem, 7vh, 4.5rem) 0 clamp(1.5rem, 4vh, 2.5rem);
@@ -395,18 +362,16 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .orange-card em { background: #f59e0b; } .orange-card .start-icon { background: #ffedd5; color: #c2690a; }
 .purple-card em { background: #8b5cf6; } .purple-card .start-icon { background: #ede9fe; color: #6d28d9; }
 
-:root[data-theme="dark"] .start-card,
-:root[data-theme="dark"] .pipeline-node { box-shadow: 0 3px 14px rgba(0,0,0,.22); }
+:root[data-theme="dark"] .start-card { box-shadow: 0 3px 14px rgba(0,0,0,.22); }
 
 /* ---- responsive ---- */
-@media (max-width: 1020px) {
-  /* The diagram stops being readable long before the text does, so the hero
-     stacks and the pipeline becomes a full-width band under it. */
+@media (max-width: 1180px) {
+  /* The diagram's labels are the first thing to become too small, long before
+     the text does. Side by side it gets ~590px at this width, which puts its
+     23-unit labels at 10px; any narrower and they fall below that (8.8px at
+     1105). Stacking gives it the full content width -- about 15px. */
   .landing-hero { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
   .dashboard-home .landing-intro { max-width: 46rem; }
-  .pipeline-row, .pipeline-row.bottom { justify-content: center; flex-wrap: wrap;
-    gap: .4rem; }
-  .pipeline-thread { display: none; }   /* it threads a layout that no longer exists */
   .start-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem; }
 }
 
@@ -422,19 +387,9 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 @media (max-width: 1020px) { .topbar { padding-inline: var(--page-pad); } }
 
 
-/* ---- decorative wash -------------------------------------------------
-   Purely ornamental, so it is aria-hidden by being CSS, sits behind the
-   content, and never intercepts a click. */
-.pipeline-art::before {
-  content: ""; position: absolute; inset: -12% -6% -10% -4%; z-index: 0;
-  pointer-events: none; border-radius: 48% 52% 44% 56% / 52% 44% 56% 48%;
-  background:
-    radial-gradient(ellipse at 62% 28%, rgba(139,92,246,.16), transparent 58%),
-    radial-gradient(ellipse at 88% 66%, rgba(46,182,215,.15), transparent 60%),
-    radial-gradient(ellipse at 22% 72%, rgba(244,164,196,.13), transparent 55%);
-  filter: blur(2px);
-}
-.pipeline-thread { z-index: 1; opacity: .75; }
+/* ---- decorative band -------------------------------------------------
+   Purely ornamental, so it is CSS, sits behind the content, and never
+   intercepts a click. */
 
 /* A soft band at the foot of the page, as in the reference. Attached to the
    landing section so it never appears on the wizard or the results tabs.
@@ -453,15 +408,7 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
     color-mix(in srgb, var(--color-primary-lt) 58%, transparent), transparent 72%);
 }
 :root[data-theme="dark"] .dashboard-home::after { opacity: .5; }
-:root[data-theme="dark"] .pipeline-art::before { opacity: .65; }
-
-/* Respect a reader who has asked for less movement and less noise. */
-@media (prefers-reduced-motion: reduce) {
-  .pipeline-art::before, .dashboard-home::after { display: none; }
-  /* Hold the mark at its finished state rather than looping it. */
-  .hero-mark * { animation: none !important; opacity: 1 !important; transform: none !important; }
-}
-
+:root[data-theme="dark"] 
 
 /* On a narrow window the five sections cannot fit, and clipping them hides
    navigation entirely. The row scrolls instead -- every destination stays
@@ -571,6 +518,53 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 @keyframes mark-line-green {
   0%, 16%  { opacity: 0; } 24%, 78% { opacity: .7; } 88%, 100% { opacity: 0; } }
 @keyframes mark-line-orange {
-  0%, 24%  { opacity: 0; } 32%, 78% { opacity: .7; } 88%, 100% { opacity: 0; } } }
+  0%, 24%  { opacity: 0; } 32%, 78% { opacity: .7; } 88%, 100% { opacity: 0; } }
 
 
+
+
+/* Respect a reader who has asked for less movement and less noise. */
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-home::after { display: none; }
+  /* Hold the mark at its finished state rather than looping it. */
+  .hero-mark * { animation: none !important; opacity: 1 !important; transform: none !important; }
+}
+
+/* ============================================================ the workflow
+   One SVG, no fixed size: width follows the column, height follows the
+   viewBox's aspect ratio, so it scales with the window and never overflows. */
+.workflow-figure { margin: 0; min-width: 0; }
+.workflow { display: block; width: 100%; height: auto; overflow: visible; }
+
+/* Light mode is the artwork as drawn. In dark mode the pale card fills would
+   glare, so cards take the page's own surface, text takes the page's colours,
+   and the pastel backdrop is pulled right back. Written for BOTH ways dark
+   mode is reached: an explicit choice, and the system preference with no
+   choice made. */
+:root[data-theme="dark"] .workflow .wf-node { fill: var(--color-surface); fill-opacity: 1; stroke-opacity: .55; }
+:root[data-theme="dark"] .workflow .wf-labels { fill: var(--color-text); }
+:root[data-theme="dark"] .workflow .wf-sub { fill: var(--color-muted); }
+:root[data-theme="dark"] .workflow .wf-backdrop { opacity: .16; }
+:root[data-theme="dark"] .workflow .wf-dots { stroke: var(--color-surface); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .workflow .wf-node { fill: var(--color-surface); fill-opacity: 1; stroke-opacity: .55; }
+  :root:not([data-theme="light"]) .workflow .wf-labels { fill: var(--color-text); }
+  :root:not([data-theme="light"]) .workflow .wf-sub { fill: var(--color-muted); }
+  :root:not([data-theme="light"]) .workflow .wf-backdrop { opacity: .16; }
+  :root:not([data-theme="light"]) .workflow .wf-dots { stroke: var(--color-surface); }
+}
+
+/* On a phone the diagram would scale to ~6px labels and ~5px sublabels, which
+   nobody can read. Below 640px it keeps a 600px floor (labels ~10px) inside its
+   own scroller, so the figure pans while the PAGE stays put. Wider than that
+   it simply scales -- delete this block to scale all the way down instead.
+
+   The block padding gives the backdrop's soft edge somewhere to live: an
+   overflow container clips on both axes, and the artwork bleeds a little past
+   its viewBox. */
+@media (max-width: 640px) {
+  .workflow-figure { overflow-x: auto; overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+    padding-block: 1.5rem; margin-block: -1.5rem; }
+  .workflow { width: 100%; min-width: 600px; }
+}

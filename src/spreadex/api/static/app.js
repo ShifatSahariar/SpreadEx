@@ -97,6 +97,114 @@ const BRAND_MARK = `
     <circle class="logo-red" cx="30" cy="30" r="4.5" fill="#c62828"/>
   </svg>`;
 
+//: The campaign workflow, drawn as one SVG (supplied as spreadex_workflow.svg).
+//: Inlined rather than loaded as an <img> so it follows the page font and
+//: the light/dark theme; the artwork itself is unchanged apart from a
+//: cropped viewBox and prefixed ids. It has no fixed size, so it scales
+//: with its container.
+const WORKFLOW_SVG = `
+<svg class="workflow" xmlns="http://www.w3.org/2000/svg" viewBox="30 55 1345 485" role="img" aria-label="How a SpreadEx campaign runs: a grammar is used to generate inputs, which are checked and analysed; they are then prioritized, executed, observed and classified, and the results are saved and reported.">
+<defs>
+  <linearGradient id="wf-bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#F3EEFF"/><stop offset=".42" stop-color="#F2FBFF"/>
+    <stop offset=".72" stop-color="#F2FFF8"/><stop offset="1" stop-color="#EEF9FF"/>
+  </linearGradient>
+  <filter id="wf-blur"><feGaussianBlur stdDeviation="28"/></filter>
+  <filter id="wf-shadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#64748B" flood-opacity=".10"/>
+  </filter>
+  <linearGradient id="wf-g-top" gradientUnits="userSpaceOnUse" x1="275" y1="0" x2="465" y2="0"><stop offset="0" stop-color="#8B5CF6"/><stop offset="1" stop-color="#1687E8"/></linearGradient>
+  <linearGradient id="wf-g-ret" gradientUnits="userSpaceOnUse" x1="1180" y1="0" x2="360" y2="0"><stop offset="0" stop-color="#12D7EE"/><stop offset=".55" stop-color="#10DCC0"/><stop offset="1" stop-color="#19D49A"/></linearGradient>
+  <linearGradient id="wf-g-pe" gradientUnits="userSpaceOnUse" x1="485" y1="0" x2="535" y2="0"><stop offset="0" stop-color="#F5A524"/><stop offset="1" stop-color="#C99A2E"/></linearGradient>
+  <linearGradient id="wf-g-eo" gradientUnits="userSpaceOnUse" x1="695" y1="0" x2="745" y2="0"><stop offset="0" stop-color="#16B65D"/><stop offset="1" stop-color="#2DD4BF"/></linearGradient>
+  <linearGradient id="wf-g-oc" gradientUnits="userSpaceOnUse" x1="905" y1="0" x2="955" y2="0"><stop offset="0" stop-color="#3B82F6"/><stop offset="1" stop-color="#7C5CF0"/></linearGradient>
+  <linearGradient id="wf-g-cr" gradientUnits="userSpaceOnUse" x1="1115" y1="0" x2="1160" y2="0"><stop offset="0" stop-color="#A78BFA"/><stop offset="1" stop-color="#7C4DE8"/></linearGradient>
+  <linearGradient id="wf-g-down" gradientUnits="userSpaceOnUse" x1="0" y1="290" x2="0" y2="388"><stop offset="0" stop-color="#8B5CF6"/><stop offset=".5" stop-color="#EC4899"/><stop offset="1" stop-color="#F43F5E"/></linearGradient>
+</defs>
+
+<!-- soft backdrop -->
+<path class="wf-backdrop" d="M40 165 C160 15 360 22 490 110 C620 198 725 50 880 74 C1040 99 1050 10 1245 35 C1375 52 1415 182 1365 305 C1310 442 1155 493 1010 455 C840 410 760 562 565 532 C400 507 305 447 160 470 C30 491 -40 377 40 165Z" fill="url(#wf-bg)" opacity=".88"/>
+<ellipse cx="505" cy="155" rx="190" ry="90" fill="#CDB7FF" opacity=".16" filter="url(#wf-blur)"/>
+<ellipse cx="830" cy="330" rx="250" ry="105" fill="#A8F0E1" opacity=".15" filter="url(#wf-blur)"/>
+
+<!-- connectors -->
+<path d="M275 235 H315 Q345 235 345 205 Q345 165 390 165 H456" fill="none" stroke-width="7" stroke-linecap="round" stroke="url(#wf-g-top)"/>
+<path d="M627 165 H676" fill="none" stroke-width="7" stroke-linecap="round" stroke="#1687E8"/>
+<path d="M847 165 H906" fill="none" stroke-width="7" stroke-linecap="round" stroke="#69747A"/>
+<path d="M1075 165 H1130 Q1180 165 1180 215 V240 Q1180 290 1125 290 H360" fill="none" stroke-width="7" stroke-linecap="round" stroke="url(#wf-g-ret)"/>
+<path d="M360 290 Q305 290 305 340 V350 Q305 388 318 388" fill="none" stroke-width="7" stroke-linecap="round" stroke="url(#wf-g-down)"/>
+<path d="M487 410 H526" fill="none" stroke-width="7" stroke-linecap="round" stroke="url(#wf-g-pe)"/>
+<path d="M697 410 H736" fill="none" stroke-width="7" stroke-linecap="round" stroke="url(#wf-g-eo)"/>
+<path d="M907 410 H946" fill="none" stroke-width="7" stroke-linecap="round" stroke="url(#wf-g-oc)"/>
+<path d="M1117 410 H1151" fill="none" stroke-width="7" stroke-linecap="round" stroke="url(#wf-g-cr)"/>
+
+<!-- arrowheads -->
+<path d="M448 152 L462 165 L448 178" fill="none" stroke="#1687E8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M668 152 L682 165 L668 178" fill="none" stroke="#1687E8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M898 152 L912 165 L898 178" fill="none" stroke="#69747A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M308 375 L322 388 L308 401" fill="none" stroke="#F43F5E" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M518 397 L532 410 L518 423" fill="none" stroke="#C99A2E" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M728 397 L742 410 L728 423" fill="none" stroke="#2DD4BF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M938 397 L952 410 L938 423" fill="none" stroke="#7C5CF0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1143 397 L1157 410 L1143 423" fill="none" stroke="#7C4DE8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+
+<!-- nodes -->
+<g class="wf-labels" text-anchor="middle" fill="#111827">
+  <!-- grammar -->
+  <rect class="wf-node" x="65" y="120" width="210" height="235" rx="24" fill="#fff" fill-opacity=".72" stroke="#C9DEFA" stroke-width="2" filter="url(#wf-shadow)"/>
+  <g transform="translate(135 150)" stroke="#4898F2" stroke-width="5" fill="none" stroke-linejoin="round">
+    <path d="M10 0h48l25 25v72H10z"/><path d="M58 0v25h25"/><path d="M28 48h38M28 65h38M28 82h28"/>
+  </g>
+  <text x="170" y="294" font-size="26" font-weight="700">Grammar</text>
+  <text x="170" y="325" class="wf-sub" font-size="18" fill="#64748B">(built-in or custom)</text>
+
+  <!-- generate -->
+  <rect class="wf-node" x="465" y="80" width="160" height="170" rx="22" fill="#FBF8FF" stroke="#E1D6FA" stroke-width="2" filter="url(#wf-shadow)"/>
+  <g transform="translate(525 115)" fill="#7D4DE8"><path d="M20 0l6 15 15 6-15 6-6 15-6-15-14-6 14-6z"/><path d="M50 5l4 9 9 4-9 4-4 9-4-9-9-4 9-4z"/><circle cx="51" cy="46" r="5"/></g>
+  <text x="545" y="216" font-size="23" font-weight="700">Generate</text>
+
+  <!-- check -->
+  <rect class="wf-node" x="685" y="80" width="160" height="170" rx="22" fill="#F7FBFF" stroke="#CBE1FB" stroke-width="2" filter="url(#wf-shadow)"/>
+  <g transform="translate(735 112)" fill="none" stroke="#1677EA" stroke-width="5"><path d="M30 0l30 10v25c0 22-14 38-30 47C14 73 0 57 0 35V10z"/><path d="M16 38l10 10 20-24"/></g>
+  <text x="765" y="216" font-size="23" font-weight="700">Check</text>
+
+  <!-- analyze -->
+  <rect class="wf-node" x="915" y="80" width="160" height="170" rx="22" fill="#FFF9F2" stroke="#F7D7B7" stroke-width="2" filter="url(#wf-shadow)"/>
+  <g transform="translate(960 120)" fill="#FF8A1F"><rect x="0" y="32" width="10" height="35" rx="3"/><rect x="18" y="18" width="10" height="49" rx="3"/><rect x="36" y="0" width="10" height="67" rx="3"/><rect x="54" y="26" width="10" height="41" rx="3"/></g>
+  <text x="995" y="216" font-size="23" font-weight="700">Analyze</text>
+
+  <!-- prioritize -->
+  <rect class="wf-node" x="325" y="345" width="160" height="170" rx="22" fill="#FFF7F8" stroke="#F8CDD4" stroke-width="2" filter="url(#wf-shadow)"/>
+  <g transform="translate(370 380)" fill="#FF3E55"><circle cx="6" cy="8" r="5"/><circle cx="6" cy="28" r="5"/><circle cx="6" cy="48" r="5"/><rect x="20" y="3" width="42" height="10" rx="3"/><rect x="20" y="23" width="42" height="10" rx="3"/><rect x="20" y="43" width="42" height="10" rx="3"/></g>
+  <text x="405" y="480" font-size="23" font-weight="700">Prioritize</text>
+
+  <!-- execute -->
+  <rect class="wf-node" x="535" y="345" width="160" height="170" rx="22" fill="#F5FFF9" stroke="#CBEFDC" stroke-width="2" filter="url(#wf-shadow)"/>
+  <path d="M595 380 L595 438 L645 409 Z" fill="none" stroke="#16B65D" stroke-width="5" stroke-linejoin="round"/>
+  <text x="615" y="480" font-size="23" font-weight="700">Execute</text>
+
+  <!-- observe -->
+  <rect class="wf-node" x="745" y="345" width="160" height="170" rx="22" fill="#F7FBFF" stroke="#CBE1FB" stroke-width="2" filter="url(#wf-shadow)"/>
+  <g transform="translate(790 380)" fill="none" stroke="#086CE5" stroke-width="5"><circle cx="26" cy="26" r="22"/><path d="M42 42l25 25"/></g>
+  <text x="825" y="480" font-size="23" font-weight="700">Observe</text>
+
+  <!-- classify -->
+  <rect class="wf-node" x="955" y="345" width="160" height="170" rx="22" fill="#FBF8FF" stroke="#E3D4FA" stroke-width="2" filter="url(#wf-shadow)"/>
+  <path d="M1013 384h36l29 29-45 45-29-29z" fill="#8347E8"/><circle cx="1028" cy="399" r="5" fill="#fff"/>
+  <text x="1035" y="480" font-size="23" font-weight="700">Classify</text>
+
+  <!-- report -->
+  <rect class="wf-node" x="1160" y="300" width="180" height="215" rx="24" fill="#fff" fill-opacity=".72" stroke="#C9DEFA" stroke-width="2" filter="url(#wf-shadow)"/>
+  <g transform="translate(1212 335)" stroke="#4898F2" stroke-width="5" fill="none" stroke-linejoin="round">
+    <path d="M8 0h45l24 24v78H8z"/><path d="M53 0v24h24"/><path d="M25 80V62M40 80V48M55 80V57"/>
+  </g>
+  <text x="1250" y="480" font-size="23" font-weight="700">Save &amp; Report</text>
+</g>
+
+<!-- dots -->
+<g class="wf-dots" stroke="#fff" stroke-width="3"><circle cx="575" cy="290" r="9" fill="#34D399"/><circle cx="760" cy="290" r="9" fill="#2DD4BF"/><circle cx="945" cy="290" r="9" fill="#22D3EE"/><circle cx="1115" cy="290" r="9" fill="#22D3EE"/><circle cx="1180" cy="240" r="9" fill="#22D3EE"/></g>
+</svg>`;
+
 const ICONS = {
   home:       I(`<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-5.5h5V20"/>`),
   folder:     I(`<path d="M3 7a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.6.8l.9 1.2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`),
@@ -107,14 +215,7 @@ const ICONS = {
   playSolid:  I(`<path d="M7 4.8 19 12 7 19.2z" fill="currentColor" stroke-linejoin="round"/>`, {w: 1.6}),
   book:       I(`<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2.5 2.5 0 0 1 2 1 2.5 2.5 0 0 1 2-1h4.5A1.5 1.5 0 0 1 20 5.5v12a1.5 1.5 0 0 1-1.5 1.5H14a2.5 2.5 0 0 0-2 1 2.5 2.5 0 0 0-2-1H5.5A1.5 1.5 0 0 1 4 17.5z"/><path d="M12 5v15"/>`),
   arrow:      I(`<path d="M4 12h15m0 0-5.5-5.5M19 12l-5.5 5.5"/>`),
-  file:       I(`<path d="M6 3.5h7.5L19 9v11.5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z"/><path d="M13.5 3.5V9H19"/><path d="M8.5 13h7M8.5 16.5h5"/>`),
-  sparkle:    I(`<path d="m12 4 1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/><path d="M18.5 15.5 19.3 18l2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>`),
-  shield:     I(`<path d="M12 3.2 5 6v6c0 4.2 2.9 7.4 7 8.8 4.1-1.4 7-4.6 7-8.8V6z"/><path d="m9 12 2.2 2.2L15.2 10"/>`),
   chart:      I(`<path d="M4.5 20h15"/><rect x="6" y="11" width="3.4" height="6" rx="1"/><rect x="11.3" y="6.5" width="3.4" height="10.5" rx="1"/><rect x="16.6" y="13.5" width="3.4" height="3.5" rx="1"/>`),
-  list:       I(`<path d="M9 6.5h11M9 12h11M9 17.5h11"/><circle cx="5" cy="6.5" r="1.4" fill="currentColor"/><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="5" cy="17.5" r="1.4" fill="currentColor"/>`),
-  search:     I(`<circle cx="11" cy="11" r="6.2"/><path d="m15.6 15.6 4.4 4.4"/>`),
-  tag:        I(`<path d="M3.5 11.3V4.8a1.3 1.3 0 0 1 1.3-1.3h6.5a1.3 1.3 0 0 1 .9.4l8 8a1.3 1.3 0 0 1 0 1.8l-6.5 6.5a1.3 1.3 0 0 1-1.8 0l-8-8a1.3 1.3 0 0 1-.4-.9z"/><circle cx="7.8" cy="7.8" r="1.5"/>`),
-  report:     I(`<path d="M6 3.5h7.5L19 9v11.5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z"/><path d="M13.5 3.5V9H19"/><path d="M8.5 17.5v-3M12 17.5v-5.5M15.5 17.5v-2"/>`),
 };
 
 // ------------------------------------------------------------- navigation
@@ -156,25 +257,6 @@ function copyDemoCommand(button) {
 
 function renderLanding() {
   const readOnly = Boolean(S.project?.read_only);
-
-  // The pipeline, as data. Rendering it from a list keeps the two rows in step
-  // with each other and means a stage cannot be renamed in one place only.
-  const TOP = [
-    { k: "grammar", icon: ICONS.file, label: "Grammar", sub: "built-in or custom" },
-    { k: "purple",  icon: ICONS.sparkle, label: "Generate" },
-    { k: "blue",    icon: ICONS.shield,  label: "Check" },
-    { k: "orange",  icon: ICONS.chart,   label: "Analyze" },
-  ];
-  const BOTTOM = [
-    { k: "red",    icon: ICONS.list,   label: "Prioritize" },
-    { k: "green",  icon: ICONS.playSolid, label: "Execute" },
-    { k: "blue",   icon: ICONS.search, label: "Observe" },
-    { k: "purple", icon: ICONS.tag,    label: "Classify" },
-    { k: "blue",   icon: ICONS.report, label: "Save & Report" },
-  ];
-  const node = n => `<span class="pipeline-node ${n.k}">${n.icon}<b>${n.label}</b>${
-    n.sub ? `<small>${n.sub}</small>` : ""}</span>`;
-  const row = nodes => nodes.map(node).join(`<i class="pipe-arrow">${ICONS.arrow}</i>`);
 
   const STEPS = [
     { n: 1, tone: "green",  icon: ICONS.folder,  title: "Choose a subject",
@@ -220,18 +302,7 @@ function renderLanding() {
           <div id="demo-hint"></div>
         </div>
 
-        <div class="pipeline-art" aria-label="How a SpreadEx campaign runs">
-          <svg class="pipeline-thread" viewBox="0 0 100 100" preserveAspectRatio="none"
-               aria-hidden="true" focusable="false">
-            <path d="M2 26 H78 Q96 26 96 50 Q96 74 78 74 H4"
-                  fill="none" stroke="url(#thread)" stroke-width="1.1" stroke-linecap="round"/>
-            <defs><linearGradient id="thread" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#8b5cf6"/><stop offset=".55" stop-color="#2eb6d7"/>
-              <stop offset="1" stop-color="#16a34a"/></linearGradient></defs>
-          </svg>
-          <div class="pipeline-row top">${row(TOP)}</div>
-          <div class="pipeline-row bottom">${row(BOTTOM)}</div>
-        </div>
+        <figure class="workflow-figure" tabindex="0" role="group" aria-label="Campaign workflow diagram">${WORKFLOW_SVG}</figure>
       </div>
 
       <div class="landing-divider"></div>
