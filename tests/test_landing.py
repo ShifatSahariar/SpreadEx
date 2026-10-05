@@ -109,6 +109,9 @@ def test_no_icon_is_defined_and_never_used():
     block = APP[APP.index("const ICONS = {"):].split("};", 1)[0]
     defined = re.findall(r"^  (\w+):", block, flags=re.M)
     used_in_js = set(re.findall(r"ICONS\.(\w+)", APP))
+    # The wizard's steps name their icon ("icon: \"terminal\"") and look it up at
+    # render time, because ICONS is declared further down the file.
+    used_in_js |= set(re.findall(r'icon: "(\w+)"', APP))
     used_in_html = set(re.findall(r'data-icon="(\w+)"', INDEX))
     dead = [n for n in defined if n not in used_in_js | used_in_html]
     assert not dead, f"defined but never used: {dead}"
@@ -541,7 +544,7 @@ def test_every_card_has_its_own_colour_shade_along_the_bottom():
     """The tinted wave is the design's signature. Each tone defines its own, and
     the wave sits BEHIND the text so it can never reduce a word's contrast."""
     for tone in ("green", "blue", "orange", "purple"):
-        rule = _re.search(rf"^\.{tone}-card\s+\{{[^}}]*\}}", CSS, flags=_re.M).group(0)
+        rule = _re.search(rf"^\.{tone}-card, \.tone-{tone} \{{[^}}]*\}}", CSS, flags=_re.M).group(0)
         for var in ("--tone:", "--badge:", "--tone-wave:", "--tone-edge:"):
             assert var in rule, f"{tone}-card has no {var}"
     wave = CSS[CSS.index(".start-card::after {"):]
@@ -579,3 +582,94 @@ def test_the_tooltip_respects_reduced_motion():
     block = CSS[CSS.index("@media (prefers-reduced-motion: reduce)"):]
     block = block[:block.index("\n}")]
     assert ".sc-tip { transition: none;" in block
+
+
+
+# ---------------------------------------------------------------- the step bar
+
+_GLOBAL = APP[APP.index("const STEPS = ["):].split("];", 1)[0]
+_WIZARD = _re.findall(
+    r'\{ id: "(\w+)",\s*n: (\d), tone: "(\w+)",\s*icon: "(\w+)",\s*t: "([^"]+)",\s*d: "([^"]+)" \}',
+    _GLOBAL)
+_RENDER = APP[APP.index("function renderSteps()"):APP.index("// ------------------------------------------------------ config helpers")]
+
+
+def test_the_wizard_has_five_steps_each_with_its_own_colour_and_icon():
+    assert [(i, n, tone, icon) for i, n, tone, icon, *_ in _WIZARD] == [
+        ("sut", "1", "green", "terminal"), ("grammar", "2", "blue", "doc"),
+        ("generators", "3", "purple", "sliders"), ("strategy", "4", "orange", "shield"),
+        ("run", "5", "blue", "playOutline")]
+
+
+def test_every_step_icon_exists():
+    """Looked up by name at render time, so a typo is a blank tile, not an error."""
+    icons = APP[APP.index("const ICONS = {"):].split("};", 1)[0]
+    for _id, _n, _tone, icon, *_ in _WIZARD:
+        assert f"  {icon}:" in icons, f"ICONS.{icon} is not defined"
+
+
+def test_the_step_icons_are_looked_up_not_referenced_before_they_exist():
+    """STEPS is at the top of the file and ICONS is a const further down, so
+    `icon: ICONS.terminal` would read it in its temporal dead zone and take the
+    whole page down on load."""
+    assert "icon: ICONS." not in _GLOBAL
+    assert "ICONS[s.icon]" in _RENDER
+
+
+def test_the_current_step_is_marked_for_assistive_technology_with_the_right_value():
+    """`aria-current` takes `step` for a step in a sequence. The old bar wrote
+    the string "true"/"false" onto every button, so the page announced all five
+    as current-or-not instead of naming the one that is."""
+    assert "aria-current=\"step\"" in _RENDER
+    assert 'aria-current="${' not in _RENDER, "it must be omitted, not set to false"
+    assert '[aria-current="true"]' not in CSS.split("/* ------------------------------------------------------- wizard steps")[1][:3500]
+    assert '<nav class="steps" id="steps" aria-label="Setup steps">' in INDEX
+    assert '<ol class="steps-row">' in _RENDER and "step-item" in _RENDER
+
+
+def test_a_link_joins_each_pair_of_steps_and_takes_the_earlier_step_s_colour():
+    assert "i < STEPS.length - 1" in _RENDER, "four links between five steps, none after the last"
+    link = CSS[CSS.index(".step-link {"):]
+    link = link[:link.index("}") + 1]
+    assert "background: var(--tone)" in link, link
+    assert 'class="step-item tone-${s.tone}"' in _RENDER, "the link inherits its step's tone"
+
+
+def test_the_current_step_shows_its_own_colour_so_the_highlight_shifts():
+    """Not one fixed green: outline, badge and wash all read the step's tone, so
+    stepping from 1 to 2 turns the highlight from green to blue."""
+    steps = CSS[CSS.index("/* ------------------------------------------------------- wizard steps"):]
+    steps = steps[:steps.index("main {")] if "main {" in steps else steps
+    assert 'color-mix(in srgb, var(--tone) 10%, var(--color-surface))' in steps
+    assert '.step[aria-current="step"] .step-card { border-color: var(--tone);' in steps
+    assert '.step[aria-current="step"] .n { background: var(--badge); color: #fff;' in steps
+    assert "#16a34a" not in steps and "var(--color-primary)" not in steps, (
+        "a hard-coded green would stop the highlight shifting colour"
+    )
+
+
+def test_the_steps_and_the_cards_share_one_set_of_colours():
+    """Defined once. Two copies of the same four tones is how two parts of one
+    page drift into slightly different greens."""
+    for tone in ("green", "blue", "orange", "purple"):
+        assert _re.search(rf"^\.{tone}-card, \.tone-{tone} \{{", CSS, flags=_re.M), tone
+        assert CSS.count(f".tone-{tone} {{") == 1
+
+
+def test_the_step_bar_lines_up_with_the_page_beneath_it():
+    rule = CSS[CSS.index(".steps {"):]
+    rule = rule[:rule.index("}") + 1]
+    assert "max-width: var(--content-max)" in rule and "margin-inline: auto" in rule, rule
+
+
+def test_the_step_bar_gives_way_gracefully_when_narrow():
+    """Five steps with icon tiles need ~1100px. Below that the tile goes; below
+    860px the row scrolls and the current step is kept in view."""
+    assert "@media (max-width: 1100px) { .step-ico { display: none; } }" in CSS
+    narrow = CSS[CSS.index("@media (max-width: 860px) {\n  .steps-row"):]
+    narrow = narrow[:narrow.index("\n}")]
+    assert "overflow-x: auto" in narrow and "flex: 0 0 15.5rem" in narrow
+    assert "row.scrollTo" in _RENDER and "row.scrollLeft = before" in _RENDER, (
+        "a rebuilt row would otherwise snap back to the start on every step"
+    )
+    assert "prefers-reduced-motion: no-preference" in _RENDER

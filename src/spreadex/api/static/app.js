@@ -40,11 +40,13 @@ function toggleTheme() {
 }
 
 const STEPS = [
-  { id: "sut",        n: 1, t: "System under test", d: "The command to run." },
-  { id: "grammar",    n: 2, t: "Inputs",            d: "Where they come from." },
-  { id: "generators", n: 3, t: "Generators",        d: "Who writes the inputs." },
-  { id: "strategy",   n: 4, t: "Testing strategy",  d: "What counts as a failure." },
-  { id: "run",        n: 5, t: "Budget & run",      d: "Review, then launch." },
+  // `icon` is a NAME looked up in ICONS at render time: ICONS is declared
+  // further down, and reading it from here would hit the temporal dead zone.
+  { id: "sut",        n: 1, tone: "green",  icon: "terminal",    t: "System under test", d: "The command to run." },
+  { id: "grammar",    n: 2, tone: "blue",   icon: "doc",         t: "Inputs",            d: "Where they come from." },
+  { id: "generators", n: 3, tone: "purple", icon: "sliders",     t: "Generators",        d: "Who writes the inputs." },
+  { id: "strategy",   n: 4, tone: "orange", icon: "shield",      t: "Testing strategy",  d: "What counts as a failure." },
+  { id: "run",        n: 5, tone: "blue",   icon: "playOutline", t: "Budget & run",      d: "Review, then launch." },
 ];
 
 const S = {
@@ -206,6 +208,10 @@ const WORKFLOW_SVG = `
 </svg>`;
 
 const ICONS = {
+  terminal:    I(`<rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4"/>`),
+  doc:         I(`<path d="M6 3.5h7.5L19 9v11.5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z"/><path d="M13.5 3.5V9H19"/><path d="M8.5 13h7M8.5 16.5h5"/>`),
+  shield:      I(`<path d="M12 3.2 5 6v6c0 4.2 2.9 7.4 7 8.8 4.1-1.4 7-4.6 7-8.8V6z"/>`),
+  playOutline: I(`<path d="M7 4.8 19 12 7 19.2z"/>`),
   info:       I(`<circle cx="12" cy="12" r="9.5"/><path d="M12 11.2v5.3"/><path d="M12 7.7v.01" stroke-width="2.4"/>`),
   home:       I(`<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-5.5h5V20"/>`),
   folder:     I(`<path d="M3 7a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.6.8l.9 1.2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`),
@@ -404,11 +410,33 @@ function showDemoHint() {
 
 
 function renderSteps() {
-  el("steps").innerHTML = STEPS.map(s => `
-    <button class="step" aria-current="${s.id === S.step}" onclick="gotoStep('${s.id}')">
-      <span class="n">${s.n}</span>
-      <span><span class="t">${s.t}</span><br><span class="d">${s.d}</span></span>
-    </button>`).join("");
+  const host = el("steps");
+  // The row is rebuilt on every step change, which would snap a scrolled row
+  // back to the start; carry its position across.
+  const before = host.querySelector(".steps-row")?.scrollLeft || 0;
+
+  host.innerHTML = `<ol class="steps-row">${STEPS.map((s, i) => `
+    <li class="step-item tone-${s.tone}">
+      <button type="button" class="step" onclick="gotoStep('${s.id}')"
+              ${s.id === S.step ? 'aria-current="step"' : ""}>
+        <span class="n">${s.n}</span>
+        <span class="step-card">
+          <span class="step-ico">${ICONS[s.icon]}</span>
+          <span class="step-text"><span class="t">${esc(s.t)}</span><span class="d">${esc(s.d)}</span></span>
+        </span>
+      </button>${i < STEPS.length - 1 ? '<span class="step-link" aria-hidden="true"></span>' : ""}
+    </li>`).join("")}</ol>`;
+
+  // When the row is too narrow to show all five it scrolls; keep the current
+  // step in view rather than leaving it off to one side.
+  const row = host.querySelector(".steps-row");
+  row.scrollLeft = before;
+  const current = row.querySelector('[aria-current="step"]');
+  if (current && row.scrollWidth > row.clientWidth) {
+    const smooth = matchMedia("(prefers-reduced-motion: no-preference)").matches;
+    row.scrollTo({ left: current.offsetLeft - (row.clientWidth - current.offsetWidth) / 2,
+                   behavior: smooth ? "smooth" : "auto" });
+  }
 }
 
 // ------------------------------------------------------ config helpers
