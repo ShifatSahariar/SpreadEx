@@ -59,11 +59,13 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   background: var(--color-surface); border-bottom: 1px solid var(--color-border);
   position: sticky; top: 0; z-index: 20; flex-wrap: wrap;
 }
-.brand-lockup { display: flex; align-items: center; gap: 10px; }
+.brand-lockup { display: flex; align-items: center; gap: 10px; flex: none;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit;
+  cursor: pointer; border-radius: 8px; }
+.brand-lockup:hover .brand-wordmark { color: var(--color-primary-dk); }
+.brand-lockup:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 4px; }
 .brand-logo { width: 34px; height: 34px; }
 .brand-wordmark { font-size: 1.125rem; font-weight: 700; letter-spacing: .2px; }
-.project { color: var(--color-muted); font-size: .75rem; max-width: min(42vw, 34rem);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabs { display: flex; gap: 4px; margin-left: auto; }
 .tabs button {
   background: none; border: 1px solid transparent; color: var(--color-muted);
@@ -245,12 +247,12 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 /* Says where the work happens. Worded to claim exactly what the code does:
    the UI and the engine are local; the opt-in assistant is not, and the
    tooltip says so rather than promising blanket privacy. */
-.local-badge { display: inline-flex; align-items: center; gap: 6px; flex: none;
-  padding: 3px 9px; border: 1px solid var(--color-success-bd);
+.local-badge { display: inline-flex; align-items: center; gap: 5px; flex: none;
+  padding: 2px 7px; border: 1px solid var(--color-success-bd);
   background: var(--color-success-lt); color: var(--color-success);
-  border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .06em;
-  cursor: help; }
-.local-badge .dot { width: 6px; height: 6px; border-radius: 50%;
+  border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .08em;
+  line-height: 1.5; cursor: help; }
+.local-badge .dot { width: 5px; height: 5px; border-radius: 50%;
   background: var(--color-success); }
 
 /* --------------------------------------------------------- empty project */
@@ -278,8 +280,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 
 @media (max-width: 700px) {
   .topbar { gap: 10px; padding: 10px var(--page-pad); }
-  .project { order: 3; flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tabs { margin-left: auto; }
   .landing { margin-top: 30px; }
   .landing-pipeline span { padding: 0 .12em; }
   .landing-cues { grid-template-columns: 1fr; gap: .75rem; margin-top: 2.25rem; text-align: left; }
@@ -287,7 +287,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 
 @media (max-width: 430px) {
   .brand-wordmark { font-size: 16px; }
-  .local-badge { font-size: 10px; padding-inline: 7px; }
   .landing { margin-top: 22px; }
   .landing-pipeline { max-width: 20rem; }
   .command-row { flex-wrap: wrap; justify-content: center; }
@@ -306,8 +305,17 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .tabs button .ico { width: 1.05rem; height: 1.05rem; opacity: .75; }
 .tabs button[aria-selected="true"] .ico { opacity: 1; }
 .icon-button { display: inline-flex; align-items: center; justify-content: center;
-  width: 2.25rem; height: 2.25rem; padding: 0; border-radius: 9px; }
+  width: 2.25rem; height: 2.25rem; padding: 0; border-radius: 9px; cursor: pointer;
+  background: none; border: 1px solid transparent; color: var(--color-muted); }
+.icon-button:hover { color: var(--color-text); background: var(--color-bg); }
 .icon-button .ico { width: 1.15rem; height: 1.15rem; }
+
+.topbar-tools { display: flex; align-items: center; gap: 4px; flex: none; }
+.topbar-sep { width: 1px; height: 1.4rem; margin-right: 8px; background: var(--color-border); }
+.topbar-tools .theme-toggle { width: 2.25rem; height: 2.25rem; border-color: transparent;
+  border-radius: 9px; }
+.topbar-tools .theme-toggle:hover { background: var(--color-bg); border-color: transparent; }
+.topbar-tools .theme-toggle svg { width: 1.15rem; height: 1.15rem; }
 
 /* ---- page frame ---- */
 .dashboard-home { width: min(100%, 1180px); margin-inline: auto;
@@ -408,15 +416,18 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
     color-mix(in srgb, var(--color-primary-lt) 58%, transparent), transparent 72%);
 }
 :root[data-theme="dark"] .dashboard-home::after { opacity: .5; }
-:root[data-theme="dark"] 
-
 /* On a narrow window the five sections cannot fit, and clipping them hides
    navigation entirely. The row scrolls instead -- every destination stays
    reachable, and the scrollbar is hidden because the overflow is obvious
    from the cut-off item. */
-@media (max-width: 760px) {
+@media (max-width: 960px) {
+  /* The one-row header needs ~950px: brand, badge, five sections and the tools
+     come to 823px of content, plus three 18px gaps, 56px of side padding and a
+     15px scrollbar. Below that the menu takes a row of its own rather than
+     letting the tools drop onto a line by themselves. */
   .topbar { flex-wrap: wrap; row-gap: 8px; }
-  .topbar .project { order: 3; flex-basis: 100%; }
+  .topbar-tools { margin-left: auto; }
+  .topbar-sep { display: none; }   /* it divides tools from a menu that is no longer beside them */
   .tabs { order: 4; flex-basis: 100%; margin-left: 0;
     overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .tabs::-webkit-scrollbar { display: none; }

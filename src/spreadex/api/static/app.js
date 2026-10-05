@@ -1497,7 +1497,10 @@ async function showInput(hash, btn) {
 (async function () {
   try {
     S.project = await api("/api/project");
-    el("project").textContent = S.project.root;
+    // The project path used to sit in the header, competing with the menu. It
+    // is one hover away in the badge instead.
+    const badge = el("local-badge");
+    badge.title = `Running locally for ${S.project.root}\n\n${badge.title}`;
     const conf = await api("/api/config");
     S.config = conf.parsed || {};
     await loadRuns();

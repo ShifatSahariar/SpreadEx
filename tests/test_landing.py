@@ -139,7 +139,7 @@ def test_the_layout_adapts_without_hiding_navigation():
     scrolls rather than being clipped -- clipping would hide destinations."""
     assert "@media (max-width: 1020px)" in CSS
     assert "@media (max-width: 620px)" in CSS
-    narrow = CSS[CSS.index("@media (max-width: 760px)"):]
+    narrow = CSS[CSS.index("@media (max-width: 960px)"):]
     assert "overflow-x: auto" in narrow, "the section list must stay reachable"
 
 
@@ -355,3 +355,98 @@ def test_no_selector_list_is_left_dangling():
     clean = re.sub(r"/\*.*?\*/", "", CSS, flags=re.S)
     assert not re.search(r",\s*(@|\n\s*@|\Z)", clean), "a selector list ends in a comma"
     assert not re.search(r",\s*\n\s*\n", clean), "a selector list ends before a blank line"
+
+
+# ------------------------------------------------------------------ the header
+
+def test_no_stub_selector_swallows_the_at_rule_after_it():
+    """A selector with its body deleted -- say `:root[data-theme="dark"] ` --
+    sits directly before the next block, so the parser reads them as ONE
+    qualified rule with an invalid selector and discards the lot. That is how
+    the whole compact-header @media block silently vanished: balanced braces,
+    no trailing comma, and still gone. The only symptom was a layout that did
+    not respond.
+
+    Any top-level prelude with an at-rule buried inside it is the signature.
+    """
+    import re
+
+    clean = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), CSS, flags=re.S)
+    depth, start, bad = 0, 0, []
+    for i, ch in enumerate(clean):
+        if ch == "{":
+            if depth == 0:
+                prelude = clean[start:i].strip()
+                if "@" in prelude and not prelude.startswith("@"):
+                    bad.append((clean[:i].count("\n") + 1, prelude[:70].replace("\n", " ")))
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                start = i + 1
+    assert not bad, f"a stub selector is swallowing the rule after it: {bad}"
+
+
+def test_the_logo_goes_home_by_the_same_route_the_home_button_does():
+    """The same handler, not a lookalike -- so the two cannot drift apart, and
+    both leave the app in the same state (checked in the browser)."""
+    import re
+
+    brand = re.search(r'<button[^>]*id="brand"[^>]*>', INDEX).group(0)
+    home = re.search(r'<button[^>]*id="tab-home"[^>]*>', INDEX).group(0)
+    handler = lambda tag: re.search(r'onclick="([^"]+)"', tag).group(1)
+    assert handler(brand) == handler(home) == "go('landing')", (brand, home)
+
+
+def test_the_logo_is_a_button_with_a_name_and_a_decorative_image():
+    """A button and not a link: a link invites "open in new tab", which lands
+    on a page with no access token. The name is on the button, so the image
+    inside it must not be announced a second time."""
+    import re
+
+    block = INDEX[INDEX.index('id="brand"'):INDEX.index("</button>", INDEX.index('id="brand"'))]
+    assert 'type="button"' in INDEX[INDEX.index('id="brand"') - 80:INDEX.index('id="brand"') + 20]
+    assert 'aria-label="SpreadEx, go to Home"' in INDEX
+    assert 'aria-hidden="true"' in re.search(r'<svg class="brand-logo"[^>]*>', block).group(0)
+    assert "<a " not in block
+
+
+def test_the_project_path_is_out_of_the_header_but_one_hover_away():
+    """Removed from the bar, where it competed with the menu; kept in the
+    badge's tooltip so the information is not lost."""
+    assert 'id="project"' not in INDEX
+    assert ".project" not in CSS
+    assert 'el("project")' not in APP
+    assert "Running locally for ${S.project.root}" in APP
+
+
+def test_the_local_badge_stays_but_is_small():
+    rule = CSS[CSS.index(".local-badge {"):]
+    rule = rule[:rule.index("}") + 1]
+    assert "font-size: 10px" in rule, rule
+    assert "padding: 2px 7px" in rule, rule
+    assert ">LOCAL</span>" in INDEX.replace("\n", "").replace("    ", "")
+
+
+def test_the_header_is_brand_menu_then_tools_in_one_row():
+    """Brand and menu share a row; the divider, theme toggle and settings sit
+    after the menu as in the design -- the theme toggle used to be stuck in
+    front of Home."""
+    order = [INDEX.index(m) for m in ('id="brand"', 'id="local-badge"', '<nav class="tabs"',
+                                      'id="tab-home"', 'id="tab-results"',
+                                      'class="topbar-tools"', 'class="topbar-sep"',
+                                      'id="theme"', 'id="settings"')]
+    assert order == sorted(order), order
+    nav = INDEX[INDEX.index('<nav class="tabs"'):INDEX.index("</nav>")]
+    assert 'id="theme"' not in nav and 'id="settings"' not in nav
+
+
+def test_the_header_wraps_only_when_it_genuinely_cannot_fit():
+    """~950px is what one row needs (measured: 823px of content, three 18px
+    gaps, 56px of padding and a 15px scrollbar). Below 960px the menu takes its
+    own row; wrapping any later strands the tools alone on a line."""
+    block = CSS[CSS.index("@media (max-width: 960px)"):]
+    block = block[:block.index("\n}")]
+    assert ".tabs { order: 4; flex-basis: 100%" in block
+    assert ".topbar-tools { margin-left: auto; }" in block
+    assert ".topbar-sep { display: none; }" in block, "a divider with nothing beside it"
