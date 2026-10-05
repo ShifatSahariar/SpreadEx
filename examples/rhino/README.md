@@ -73,3 +73,9 @@ generators that have no operators. `tests/fixtures/grammars/rhino.g4` is a far
 richer ANTLR grammar of near-complete JavaScript — from it Fandango and
 Grammarinator generate in seconds, while FuzzingBook and ISLa struggle, which
 the budget reports rather than hides.
+
+## Copying this example
+
+The grammar lives one level up, in `examples/grammars/javascript.bnf`, because
+three engines share it. Copy `examples/` as a whole rather than this directory
+alone, or point `grammar.source` at wherever you put the grammar.

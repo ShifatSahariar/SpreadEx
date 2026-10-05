@@ -163,7 +163,8 @@ def load_config(path: Path | None = None) -> Config:
     if not isinstance(sut, dict):
         raise ConfigError(f"{path}: `sut:` must be a mapping, not {type(sut).__name__}.")
 
-    defaults = {"timeout": sut.get("timeout", 5), "memory_mb": sut.get("memory_mb", 2048)}
+    defaults = {"timeout": sut.get("timeout", 5), "memory_mb": sut.get("memory_mb", 2048),
+                "input_mode": sut.get("input_mode", "file")}
 
     if "targets" in sut:
         entries = sut["targets"]
@@ -184,6 +185,12 @@ def load_config(path: Path | None = None) -> Config:
         if "command" not in entry:
             raise ConfigError(f"{path}: sut.targets[{i}] is missing `command:`.")
         entry = _expand_env(entry, path)
+        mode = entry.get("input_mode", defaults["input_mode"])
+        if mode not in ("file", "stdin"):
+            raise ConfigError(
+                f"{path}: sut.targets[{i}].input_mode is {mode!r}; "
+                f"expected 'file' (a path is passed) or 'stdin' (the bytes are piped in)."
+            )
         t = Target.from_config(entry, defaults, base_dir=path.parent)
         if t.name in seen:
             raise ConfigError(f"{path}: duplicate target name {t.name!r}; names must be unique.")

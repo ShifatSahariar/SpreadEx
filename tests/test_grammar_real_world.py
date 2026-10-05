@@ -11,7 +11,9 @@ import pytest
 from spreadex.grammar import adapt, diagnose, expressibility, load, render
 
 FIXTURES = Path(__file__).parent / "fixtures" / "grammars"
-RHINO_BNF = Path(__file__).resolve().parents[1] / "examples" / "rhino" / "grammars" / "rhino.bnf"
+# One JavaScript grammar, shared by the rhino, nashorn and graaljs examples.
+JS_BNF = Path(__file__).resolve().parents[1] / "examples" / "grammars" / "javascript.bnf"
+RHINO_BNF = JS_BNF   # the name these tests have always used
 
 
 @pytest.mark.parametrize("name,expect_pure", [

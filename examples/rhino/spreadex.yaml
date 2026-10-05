@@ -37,8 +37,13 @@ generators: [fuzzingbook, fandango, isla, grammarinator]
 # it: a FuzzingBook dict, plain BNF for ISLa, BNF-with-operators for Fandango,
 # and ANTLRv4 for Grammarinator. Derived files are cached under
 # .spreadex/cache/grammars/, keyed by the source's content.
+#
+# It is also ONE grammar across three engines: examples/nashorn and
+# examples/graaljs point at this same file. Rewriting JavaScript once per
+# engine is exactly the work this tool exists to remove, so the examples do
+# not do it either.
 grammar:
-  source: grammars/rhino.bnf
+  source: ../grammars/javascript.bnf
 
 generation:
   count: 150          # per generator

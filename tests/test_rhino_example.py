@@ -25,9 +25,14 @@ def rhino_project(tmp_path):
         pytest.skip("set RHINO_JAR to a Rhino build to run the golden pipeline")
     if not shutil.which("java"):
         pytest.skip("java not available")
+    # The JavaScript grammar is shared with the nashorn and graaljs examples,
+    # so the example is a tree and not a folder: copy its neighbour too, the
+    # same way a user has to.
     dest = tmp_path / "rhino"
     shutil.copytree(EXAMPLE, dest,
                     ignore=shutil.ignore_patterns(".spreadex", "__pycache__"))
+    shutil.copytree(EXAMPLE.parent / "grammars", tmp_path / "grammars",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     cfg = load_config(dest / "spreadex.yaml")
     cfg.raw.setdefault("generation", {})["count"] = 30   # keep the test short
     cfg.budget.generation_s = 180

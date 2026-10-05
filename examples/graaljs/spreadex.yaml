@@ -1,0 +1,57 @@
+# GraalJS, run from the standalone runtime jars on an ordinary JDK.
+#
+# Point GRAALJS_JARS at a directory of GraalJS runtime jars (graaljs.jar,
+# graal-sdk.jar, truffle-api.jar and friends). A real GraalVM works too --
+# replace the command with `[js, "{input}"]`.
+sut:
+  command: ["java",
+            # Without these two, GraalJS prints seventeen lines of warning on
+            # EVERY run, including successful ones: the Truffle attach notice
+            # and the interpreter-only notice. Silenced at the source rather
+            # than filtered afterwards, because in a differential campaign that
+            # banner is stderr both engines would have to agree on, and it
+            # would make every single input look like a divergence.
+            "-Dpolyglotimpl.AttachLibraryFailureAction=ignore",
+            "-Dpolyglot.engine.WarnInterpreterOnly=false",
+            "-cp", "${GRAALJS_JARS}/*",
+            "com.oracle.truffle.js.shell.JSLauncher", "{input}"]
+  timeout: 15s
+
+oracle:
+  type: crash
+
+  # GraalJS exits 7 for a script it refused and names the error type on
+  # stderr. These are the engine working.
+  rejection_patterns:
+    - "^SyntaxError:"
+    - "^TypeError:"
+    - "^ReferenceError:"
+    - "^RangeError:"
+    - "^Error:"
+
+  # An engine defect surfaces as a host-level failure instead.
+  crash_patterns:
+    - "^Exception in thread"
+    - "^\\s*at com\\.oracle\\.truffle\\."
+    - "^\\s*at org\\.graalvm\\."
+    - "StackOverflowError"
+    - "OutOfMemoryError"
+    - "Internal error"
+
+# The same JavaScript grammar that drives examples/rhino and examples/nashorn.
+grammar:
+  source: ../grammars/javascript.bnf
+
+generators: [fuzzingbook, fandango, isla, grammarinator]
+
+generation:
+  count: 150
+
+budget:
+  generation: 3m
+  execution: 3m
+
+selection_signal: cc
+embedding:
+  model: tfidf
+seed: 42

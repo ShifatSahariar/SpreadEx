@@ -1,0 +1,66 @@
+# JavaBASIC, the ICST 2026 BASIC subject. A stdin-driven interpreter.
+#
+# NOT DISTRIBUTED WITH SPREADEX. JavaBASIC (Chuck McManis, 1996) carries a
+# NON-COMMERCIAL-only permission notice in its source headers and ships no
+# LICENSE file, so we cannot bundle it or fetch it for you. Compile your own
+# copy and point BASIC_CLASSES at the directory holding `basic/*.class`.
+sut:
+  command: ["java", "-cp", "${BASIC_CLASSES}", "basic.BASIC"]
+
+  # THE POINT OF THIS EXAMPLE. JavaBASIC is a REPL: it reads the program from
+  # standard input and ignores arguments entirely. Under the default
+  # `input_mode: file` SpreadEx would append a path the interpreter never
+  # looks at, then wait while it sat at its prompt expecting input that never
+  # arrived -- every single input recorded as a timeout. `stdin` pipes the
+  # bytes in and closes the stream, and the closing matters as much as the
+  # bytes: without EOF the interpreter waits for more.
+  input_mode: stdin
+  timeout: 15s
+
+oracle:
+  type: crash
+
+  # JavaBASIC refusing a program, in all the wordings it uses. Most of what a
+  # grammar produces lands here and none of it is a finding.
+  #
+  # "Runtime Error:" was missing from an earlier version of this list, and the
+  # first run reported 126 crashes because of it -- programs that jumped to a
+  # line number they never defined, which the interpreter diagnoses perfectly
+  # well. One missing pattern is the difference between a usable report and
+  # 126 pieces of noise with one real bug buried in them.
+  rejection_patterns:
+    - "Syntax Error :"
+    - "Runtime Error:"
+    - "^RUNTIME ERROR\\."
+    - "^Error:"
+
+  # An interpreter defect surfaces as a Java-level failure instead. Checked
+  # FIRST, so the broad rules above cannot hide one -- and they would: BASIC
+  # catches these itself, prints "Caught an Exception :" and still exits 0, so
+  # neither the exit code nor the rejection rules would notice.
+  crash_patterns:
+    - "^Exception in thread"
+    - "^Caught an Exception"
+    - "^\\s*at basic\\."
+    - "StackOverflowError"
+    - "OutOfMemoryError"
+
+# The research BASIC grammar. Every program it produces ends in `bye`, which
+# is what makes it suit a REPL: the program is entered, parsed, and the
+# interpreter is then told to quit.
+grammar:
+  source: basic.bnf
+
+generators: [fuzzingbook, fandango, isla, grammarinator]
+
+generation:
+  count: 150
+
+budget:
+  generation: 3m
+  execution: 3m
+
+selection_signal: cc
+embedding:
+  model: tfidf
+seed: 42

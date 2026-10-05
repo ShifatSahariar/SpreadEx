@@ -1,0 +1,45 @@
+# Nashorn, via the small harness the ICST 2026 study used.
+#
+# Nashorn was removed from the JDK in 15, so this runs the standalone engine
+# jars against any modern JDK. Point NASHORN_SUT at a directory holding
+# `runner/` (NashornRunner.class) and `engine/` (nashorn.jar + its asm jars);
+# see README.md for the one javac command that builds the runner.
+sut:
+  command: ["java", "-cp", "${NASHORN_SUT}/runner:${NASHORN_SUT}/engine/*",
+            "NashornRunner", "{input}"]
+  timeout: 10s
+
+oracle:
+  type: crash
+
+  # The harness catches Throwable, prints "Runtime Error: ..." and exits 2.
+  # That covers both a script Nashorn refused to parse and one that threw at
+  # runtime -- both are the engine working, and neither is a finding.
+  rejection_patterns:
+    - "^Runtime Error: "
+
+  # An engine defect escapes the harness instead, as a Java stack trace.
+  # Checked FIRST, so the broad rule above cannot hide one.
+  crash_patterns:
+    - "^Exception in thread"
+    - "^\\s*at org\\.openjdk\\.nashorn\\."
+    - "StackOverflowError"
+    - "OutOfMemoryError"
+
+# The same JavaScript grammar that drives examples/rhino and examples/graaljs.
+grammar:
+  source: ../grammars/javascript.bnf
+
+generators: [fuzzingbook, fandango, isla, grammarinator]
+
+generation:
+  count: 150
+
+budget:
+  generation: 3m
+  execution: 3m
+
+selection_signal: cc
+embedding:
+  model: tfidf
+seed: 42

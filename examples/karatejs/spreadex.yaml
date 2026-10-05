@@ -1,0 +1,47 @@
+# Karate's JavaScript engine (karate-js), via a harness we supply.
+#
+# Karate ships io.karatelabs.js.JsLauncher, but it catches the exception,
+# prints a stack trace and exits 0 anyway -- so a script the engine refused
+# looks exactly like one it ran, and a campaign would report every input as a
+# pass. KarateRunner.java in this directory fixes the exit code; see README.md
+# for the one javac command, then point KARATE_RUNNER and KARATE_JARS at it.
+sut:
+  command: ["java", "-cp", "${KARATE_RUNNER}:${KARATE_JARS}/karate-js-2.0.0.RC1.jar:${KARATE_JARS}/dependency/*",
+            "KarateRunner", "{input}"]
+  timeout: 10s
+
+oracle:
+  type: crash
+
+  # The harness prints one line and exits 2 for anything the engine refused,
+  # whether that is a parse failure or a throw at runtime.
+  rejection_patterns:
+    - "^JS ERROR: "
+
+  # An engine defect escapes the harness as a Java stack trace, or arrives as
+  # an error the harness deliberately does not swallow.
+  crash_patterns:
+    - "^Exception in thread"
+    - "^\\s*at io\\.karatelabs\\."
+    - "StackOverflowError"
+    - "OutOfMemoryError"
+    - "^Harness error: "
+
+# Karate's own dialect, NOT the shared JavaScript grammar: its subset has
+# console.log rather than print. See the header of this file.
+grammar:
+  source: karatejs.bnf
+
+generators: [fuzzingbook, fandango, isla, grammarinator]
+
+generation:
+  count: 150
+
+budget:
+  generation: 3m
+  execution: 3m
+
+selection_signal: cc
+embedding:
+  model: tfidf
+seed: 42

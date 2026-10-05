@@ -1,0 +1,156 @@
+<start> ::= <let_stmt_line> <print_numeric_stmt> <stmts> <bye>
+           | <let_stmt_line> <stmts> <print_numeric_stmt> <bye>
+
+
+<stmts> ::= <stmt> | <stmt> <stmts>
+<stmt> ::= <if_stmt> <newline>
+         | <for_stmt> <newline>
+         | <print_stmt> <newline>
+         | <gosub_statement_with_return> <newline>
+         | <data_read_restore> <newline>
+         | <dimension_statement> <newline>
+         | <on_statement> <newline>
+         | <optional_stmt> <newline>
+
+
+<gosub_statement_with_return> ::= <gosub_statement> <newline> <return_statement>
+
+<return_statement> ::= <line_number> " RETURN"
+<gosub_statement> ::= "GOSUB " <line_number>
+                    | "GOTO " <line_number>
+
+<on_statement> ::= "ON " <NUMERIC_VAR> " " <goto_or_gosub> <line_number>
+
+<let_stmt_numeric> ::= <LET> <NUMERIC_VAR> " = " <numeric_assignment>
+<let_stmt_string> ::= <LET> <STRING_VAR> " = " <string_assignment>
+<let_stmt_line> ::= <let_stmt_numeric> <newline>
+                  | <let_stmt_string> <newline>
+
+<print_stmt> ::= "PRINT " <STRING_VAR> | "PRINT " <NUMERIC_VAR>
+
+<if_stmt> ::= "IF " <var_number_cmp> " THEN " <simple_stat>
+<for_stmt> ::= <for_print_block>
+
+<for_print_block> ::=
+      <for_statement> <print_numeric_stmt> <print_string_stmt_seq> <next_statement>
+    | <print_numeric_stmt> <print_string_stmt_seq> <next_statement>
+    | <for_statement> <print_numeric_stmt> <print_string_stmt_seq>
+
+<print_string_stmt_seq> ::= <print_string_stmt>
+                        | <print_string_stmt> <print_string_stmt>
+
+<for_statement> ::=
+      "FOR " <NUMERIC_VAR> " = " <factor> " TO " <factor>
+    | "FOR " <NUMERIC_VAR> " = " <factor> " TO " <factor> " STEP " <number>
+
+<next_statement> ::= "NEXT " <NUMERIC_VAR>
+
+<print_numeric_stmt> ::=
+      "PRINT " <NUMERIC_VAR> <newline>
+    | "PRINT " <number> <newline>
+    | "PRINT " <NUMERIC_VAR> " + " <NUMERIC_VAR> <newline>
+
+<print_string_stmt> ::=
+      "PRINT " <STRING_VAR> <newline>
+    | "PRINT " <string> <newline>
+
+
+
+<data_read_restore> ::= <data_statement> <read_statement> <restore_statement>
+| <data_statement> <read_statement> 
+| <data_statement> <restore_statement> 
+| <data_statement>
+
+<data_statement> ::= "DATA " <constant>
+<read_statement> ::= "READ " <variable>
+<restore_statement> ::= "RESTORE"
+
+<simple_stat> ::= <let_stmt_line>
+                | <print_stmt>
+                | <goto_statement>
+
+<goto_statement> ::= "GOTO " <line_number>
+
+<dimension_statement> ::= "DIM " <ARRAY_VAR> "(" <digit> ")"
+                        | "DIM " <ARRAY_VAR> "(" <digit> "," <digit> ")"
+                        
+<optional_stmt> ::= <randomize_stmt>
+                   | <rem_stmt>
+                   | <return_statement>
+                   | <troff_statement>
+                   | <tron_statement>
+                   | <resume_statement>
+                   | <end_statement>
+
+<troff_statement> ::= "TROFF"
+<tron_statement> ::= "TRON" | "TRON" "("<string>")"
+<randomize_stmt> ::= "RANDOMIZE"
+<rem_stmt> ::= "REM " <string>
+<resume_statement> ::= "RESUME"
+<end_statement> ::= "END"
+
+<numeric_assignment> ::= <number>
+                       | <numeric_exp>
+                       | <numeric_function_call>
+                       | <function_name_no_args>
+
+
+<numeric_function_call> ::= <function_name_with_single_numeric_exp>"("<numeric_exp>")"
+                          | <function_name_with_two_exp>"("<numeric_exp>"," <numeric_exp>")"
+
+<numeric_exp> ::= <term> | <term> <add_op> <term>
+
+<term> ::= <factor> | <factor> <mul_op> <factor>
+
+<factor> ::= <number> | <NUMERIC_VAR> | <numeric_exp> | <numeric_function_call>
+
+<add_op> ::= "+" | "-"
+<mul_op> ::= "*" | "/"
+
+<function_name_with_two_exp> ::= "MAX" | "MIN"
+<function_name_with_single_numeric_exp> ::= "RND" | "INT" | "SIN" | "COS" | "TAN" | "ATN" | "SQR" | "ABS" | "LOG" | "SGN"
+<function_name_no_args> ::= "FRE"
+
+<string_function_call> ::= <function_name_with_single_string_exp>"("<string_exp>")"
+                         | <string_fn_with_numeric_arg>"("<numeric_exp>")"
+                         | <function_name_with_string_and_exp>"("<STRING_VAR>"," <numeric_exp>")"
+                         | <function_name_with_string_and_two_exp>"("<STRING_VAR>"," <numeric_exp>"," <numeric_exp>")"
+
+
+<function_name_with_single_string_exp> ::= "VAL" | "LEN"
+
+<string_fn_with_numeric_arg> ::= "STR$"| "CHR$"| "SPC$"| "TAB$"
+
+<function_name_with_string_and_exp> ::= "LEFT$"| "RIGHT$"
+
+<function_name_with_string_and_two_exp> ::= "MID$"
+
+<string_assignment> ::= <string_exp> 
+| <string_function_call>
+
+<goto_or_gosub> ::= "GOTO " | "GOSUB "
+
+<var_number_cmp> ::= <NUMERIC_VAR> <comparison_operator> <number>
+<variable> ::= <NUMERIC_VAR> | <STRING_VAR>
+<LET> ::= "LET " | "let" | "Let"
+<LETTER> ::= "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z"
+<UPPER_LETTER> ::= "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+<DIGIT> ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+<comparison_operator> ::= " = " | " < " | " > "
+<string_exp>::= <string>| <STRING_VAR>
+<NUMERIC_VAR> ::= <LETTER>
+<STRING_VAR> ::= <UPPER_LETTER> "$"
+<ARRAY_VAR> ::= <LETTER> <LETTER>
+<digit> ::= <DIGIT>
+<number> ::= <DIGIT> | <DIGIT> <DIGIT> | <DIGIT> <DIGIT> <DIGIT>
+<line_number> ::= "10" | "20" | "30" | "40" | "50" | "60" | "70" | "80" | "90" | "100" | "110" | "120" | "130" | "140" | "150" | "160" | "170" | "180" | "190" | "200"
+
+<CHAR> ::=
+  "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z"
+  | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+  | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+  | " " | "!" | "?" | "." | "," | "_"
+<string> ::= "\"" <CHAR> "\""
+<constant> ::= <number> | <string>
+<newline> ::= "\n"
+<bye> ::= "bye" <newline>

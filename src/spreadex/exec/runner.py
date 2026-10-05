@@ -66,6 +66,12 @@ class Target:
     cwd: str | None = None
     limits: Limits = field(default_factory=Limits)
     base_dir: Path | None = None   # project root; relative paths resolve here
+    #: "file"  -- the input is a path, substituted for {input} or appended.
+    #: "stdin" -- the input's BYTES are piped in and no path is passed. Plenty
+    #: of real interpreters read only stdin; without this they cannot be
+    #: tested at all, and appending a path they ignore makes every input look
+    #: like a hang while they wait for input that never comes.
+    input_mode: str = "file"
 
     def resolved_command(self) -> list[str]:
         """Resolve relative paths in the command against the project root.
@@ -92,11 +98,13 @@ class Target:
         """Substitute {input} in the command template.
 
         If no argument mentions {input}, the path is appended -- the common case
-        for `./parser file.js`.
+        for `./parser file.js`. Under `input_mode: stdin` nothing is appended,
+        because the program is not being given a file; an explicit {input} is
+        still honoured, for a command that wants both.
         """
         command = self.resolved_command()
         if not any("{input}" in part for part in command):
-            return [*command, str(input_path)]
+            return list(command) if self.input_mode == "stdin" else [*command, str(input_path)]
         return [part.replace("{input}", str(input_path)) for part in command]
 
     @classmethod
@@ -107,6 +115,7 @@ class Target:
         return cls(
             name=cfg.get("name", "sut"),
             command=list(cfg["command"]),
+            input_mode=(cfg.get("input_mode") or defaults.get("input_mode") or "file"),
             version=cfg.get("version"),
             env=dict(cfg.get("env", {})),
             cwd=cfg.get("cwd"),
@@ -145,6 +154,15 @@ def run_one(target: Target, input_path: Path, input_hash: str | None = None) -> 
     env = {**os.environ, **target.env}
     limits = target.limits
 
+    # Under stdin mode the program is handed the bytes and then EOF. The EOF
+    # matters as much as the bytes: a REPL given input but no end-of-stream
+    # waits for more and is killed by the timeout, so every input would be
+    # reported as a hang.
+    # In file mode stdin is closed rather than inherited. A SUT that reads
+    # stdin despite being handed a path would otherwise block on the terminal
+    # the campaign was launched from, and be recorded as a timeout.
+    stdin_bytes = input_path.read_bytes() if target.input_mode == "stdin" else b""
+
     timed_out = False
     exit_code: int | None = None
     signal_num: int | None = None
@@ -156,6 +174,7 @@ def run_one(target: Target, input_path: Path, input_hash: str | None = None) -> 
         try:
             proc = subprocess.run(
                 cmd,
+                input=stdin_bytes,
                 capture_output=True,
                 timeout=limits.timeout_s,
                 cwd=cwd,

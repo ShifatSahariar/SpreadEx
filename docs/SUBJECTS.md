@@ -19,7 +19,7 @@ a wheel installed into an empty virtualenv outside this repository.
 
 | Subject | Status | Needs | Notes |
 |---|---|---|---|
-| **rhino** | ✓ **works from clean** (2026-10-05) | a Rhino jar in `RHINO_JAR`, and `spreadex generators install isla` | Full pipeline verified end to end — see below. `tests/test_rhino_example.py` skips without `RHINO_JAR`. |
+| **rhino** | ✓ **works from clean** (2026-10-05) | a Rhino jar in `RHINO_JAR`, and `spreadex generators install isla` | Full pipeline verified end to end — see below. `tests/test_rhino_example.py` skips without `RHINO_JAR`. The other four ClusGram subjects are verified too; see the section below. |
 
 ### The Rhino run, in full
 
@@ -62,28 +62,67 @@ Two things this run corrected in our own documentation:
   v0.1" from a hardcoded list that went stale when ANTLR support landed. It
   produced 142 unique inputs. The hardcoded list is gone.
 
-## ClusGram subjects — the next layer, not v0.1
+## ClusGram subjects
 
-These are the ICST 2026 subjects. None is packaged, and nothing here is a
-promise that it builds today.
+All five ICST 2026 subjects are wired and verified, 2026-10-05, each with a
+campaign run end to end. **We distribute the configuration, never the system
+under test** — every one points at a build you supply through an environment
+variable.
 
-| Subject | What it is | Status | Known blockers |
+| Subject | Status | Run | Needs |
 |---|---|---|---|
-| **rhino** | Mozilla Rhino, JS engine (Java) | ✓ verified, see above | a built jar (not distributable by us) |
-| **nashorn** | Nashorn JS engine (Java) | ✗ not packaged | jars exist in the research tree; no `spreadex.yaml`, never run through this tool |
-| **graaljs** | GraalJS (Java/native) | ✗ not packaged | needs a GraalVM build; the heaviest of the set |
-| **karatejs** | Karate's JS subset (Java) | ✗ not packaged | grammar exists and parses; the SUT side does not |
-| **basic** | a BASIC interpreter (Java) | ✗ **blocked** | **no LICENSE file**; the in-file header permits non-commercial use only, so it cannot be bundled or publicly fetched. It also needs JDK 21 and reads programs on **stdin**, which `exec/runner.py` cannot do — it only substitutes `{input}` or appends a path. Both are fixable; the licence is the one that is not ours to fix. |
-| **CALC** | the research calculator | ✗ not packaged | superseded for demo purposes by the SUT we own |
+| **rhino** | ✓ works | 251 executed · 25 ok · 226 rejected · 0 crashes | `RHINO_JAR` |
+| **nashorn** | ✓ works | 81 executed · 8 ok · 73 rejected · 0 crashes | `NASHORN_SUT` |
+| **graaljs** | ✓ works | 61 executed · 8 ok · 53 rejected · 0 crashes | `GRAALJS_JARS` |
+| **karatejs** | ✓ works | 158 executed · 16 ok · 142 rejected · 0 crashes | `KARATE_JARS`, plus one `javac` for the harness |
+| **basic** | ✓ works | 160 executed · **1 real bug** · 0 false crashes | `BASIC_CLASSES` (non-commercial licence — you compile it) |
+| **rhino-vs-graaljs** | ✓ works | 55 executed · 50 mutual rejections · 0 divergences | both JS engines above |
+| **CALC** | — dropped | — | superseded by the demo SUT we own, which has a documented defect and a licence |
 
-### What has to happen before any of these gets a ✓
+Each lives in `examples/<name>/` with a README giving the exact command.
 
-1. **stdin-driven SUTs.** `Target.render` substitutes `{input}` or appends the
-   path. BASIC needs the file on stdin. Until that exists, a whole class of
-   real systems cannot be tested at all.
-2. **A pack format** (see `docs/PACKS.md`) so adding a subject never means
-   editing core.
-3. **Licence clarity for BASIC**, which blocks distribution and not merely
-   bundling.
-4. **A clean-machine run per subject**, recorded here with its date and
-   command. Nothing moves to ✓ on the strength of code review.
+### One grammar, three engines
+
+`examples/grammars/javascript.bnf` drives rhino, nashorn and graaljs — and
+SpreadEx derives four generator dialects from it. Rewriting JavaScript once
+per engine is the work this tool exists to remove, so the examples do not do
+it either.
+
+`karatejs` is the exception and earns it: Karate's subset has `console.log`
+rather than `print`. One rule of difference is a separate language, and
+feeding it the other grammar measures the grammar instead of the engine.
+
+### What the BASIC run found
+
+A genuine, unreported defect in JavaBASIC:
+
+```
+java.lang.ArrayIndexOutOfBoundsException: Index 256 out of bounds for length 256
+	at basic.LexicalTokenizer.reset(LexicalTokenizer.java:84)
+```
+
+`reset()` copies a source line into a fixed 256-character buffer with no
+bounds check. Any line longer than 255 characters overflows it — verified by
+hand at 252 (fine) and 262 (throws). The campaign reached it at input 3 of 160.
+
+**And the first run of that example reported 126 crashes, of which 125 were
+not crashes at all.** They were programs jumping to an undefined line number,
+which JavaBASIC diagnoses perfectly well as `Runtime Error: GOTO non-existent
+line 80` — a wording missing from `rejection_patterns`. Adding it took the
+report from 127 crashes across 2 signatures to 3 crashes across 1.
+
+That is the whole argument for the oracle being configurable and for
+`crash_patterns` being checked first, in one subject: BASIC *catches* the
+overflow itself, prints `Caught an Exception :` and still exits 0, so neither
+the exit code nor the rejection rules would have found the real one.
+
+### Still open
+
+1. **A pack format** (see `docs/PACKS.md`) so adding a subject never means
+   editing core. These six are plain `spreadex.yaml` files, which works but
+   does not scale to a catalogue.
+2. **BASIC's licence** blocks distribution, not merely bundling. Unchanged,
+   and not ours to fix.
+3. **Longer budgets.** Every run above was minutes, not hours. No crashes in
+   four mature JS engines is the expected outcome at that scale, not evidence
+   they are defect-free.
