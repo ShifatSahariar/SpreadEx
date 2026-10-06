@@ -29,25 +29,89 @@ def _manifest(store: CorpusStore, run_id: str) -> dict[str, Any]:
         return {}
 
 
+def _parse_time(text: str | None):
+    from datetime import datetime, timezone
+    if not text:
+        return None
+    try:
+        t = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _failure_signatures(store: CorpusStore, run_id: str) -> int:
+    return store.conn.execute(
+        """SELECT COUNT(DISTINCT signature) c FROM executions
+           WHERE run_id=? AND verdict IN ('crash','timeout','divergence') AND signature IS NOT NULL""",
+        (run_id,)).fetchone()["c"]
+
+
 def list_runs(state_dir: Path) -> list[dict[str, Any]]:
+    """Every run, newest first, with what the campaigns list shows without opening each one."""
     with CorpusStore(state_dir) as store:
         out = []
         for row in store.list_runs(limit=200):
             summary = store.run_summary(row["run_id"])
             executed = sum(summary.values())
             failures = sum(summary.get(k, 0) for k in ("crash", "timeout", "divergence"))
+            manifest = _manifest(store, row["run_id"])
+            corpus = manifest.get("corpus", {}) or {}
+            targets = manifest.get("targets") or []
+            started, finished = _parse_time(row["started_at"]), _parse_time(row["finished_at"])
             out.append({
                 "run_id": row["run_id"],
+                "number": store.conn.execute("SELECT COUNT(*) c FROM runs WHERE started_at <= ?",
+                                             (row["started_at"],)).fetchone()["c"],
                 "started_at": row["started_at"],
                 "finished_at": row["finished_at"],
+                "duration_s": (finished - started).total_seconds() if started and finished else None,
                 "signal": row["signal_name"],
                 "seed": row["seed"],
                 "executed": executed,
                 "failures": failures,
+                "findings": _failure_signatures(store, row["run_id"]),
                 "verdicts": summary,
                 "complete": bool(row["finished_at"]),
+                "target": (targets[0].get("name") if targets else None),
+                "generators": sorted((corpus.get("generator_counts") or {}).keys()),
             })
         return out
+
+
+def run_progress(state_dir: Path, run_id: str) -> dict[str, Any] | None:
+    """A cheap look at a run that may still be going: what has executed so far and what failed.
+
+    The full overview shuffles the corpus hundreds of times for the random baseline, which is too
+    much to do every second, so the live view polls this instead.
+    """
+    from datetime import datetime, timezone
+    with CorpusStore(state_dir) as store:
+        row = store.conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        summary = store.run_summary(run_id)
+        sigs = store.conn.execute(
+            """SELECT e.signature, e.verdict, MIN(e.rank) first_rank, COUNT(DISTINCT e.blob_hash) n
+               FROM executions e WHERE e.run_id=? AND e.signature IS NOT NULL
+                    AND e.verdict IN ('crash','timeout','divergence')
+               GROUP BY e.signature, e.verdict ORDER BY first_rank""", (run_id,)).fetchall()
+        findings = []
+        for i, r in enumerate(sigs, 1):
+            f = store.conn.execute("SELECT example_stderr FROM failures WHERE signature=?", (r["signature"],)).fetchone()
+            findings.append({"id": f"F-{i:03d}", "verdict": r["verdict"], "inputs": r["n"], "first_rank": r["first_rank"],
+                             "headline": finding_headline(r["verdict"], None, (f["example_stderr"] if f else "") or "")})
+        started = _parse_time(row["started_at"])
+        now = datetime.now(timezone.utc)
+        return {
+            "run_id": run_id,
+            "complete": bool(row["finished_at"]),
+            "started_at": row["started_at"],
+            "elapsed_s": (now - started).total_seconds() if started and not row["finished_at"] else None,
+            "gen_budget_s": row["gen_budget_s"], "exec_budget_s": row["exec_budget_s"],
+            "executed": sum(summary.values()), "verdicts": summary,
+            "findings": findings, "latest": findings[-1] if findings else None,
+        }
 
 
 def run_detail(state_dir: Path, run_id: str) -> dict[str, Any] | None:

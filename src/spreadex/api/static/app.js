@@ -70,7 +70,7 @@ const STEPS = [
 
 const S = {
   tab: "setup", step: "sut", project: null, config: {}, rejects: undefined,
-  rtab: "overview", detail: null,
+  rtab: "overview", rview: "list", live: null, detail: null,
   kind: null, sample: undefined, probe: null,
   generators: [], grammars: [], runs: [], current: null, polling: null,
 };
@@ -320,6 +320,8 @@ function go(tab) {
   el("tab-executions").setAttribute("aria-selected", false);
   el("tab-results").setAttribute("aria-selected", tab === "results");
   el("steps").style.display = tab === "setup" ? "" : "none";
+  // The Results menu opens the campaigns list, except while one is running: then it is that one.
+  if (tab === "results" && S.rview !== "live") S.rview = S.live?.active ? "live" : "list";
   if (tab === "landing") renderLanding();
   else tab === "setup" ? renderStep() : renderResults();
 }
@@ -776,6 +778,25 @@ function pageNumbers(cur, last) {
   return out;
 }
 // ---- end results formatting ----
+
+// ---- live stage (pure) ----
+const STAGES = [["install", "Install"], ["generate", "Generate"], ["rank", "Prioritize"], ["execute", "Execute"], ["finish", "Finish"]];
+function liveStage(lines, done) {
+  if (done) return "finish";
+  // Monotonic: a campaign only moves forward, so a later line that merely LOOKS like an earlier
+  // stage (an install note starts with "- ") must never pull the display back.
+  const order = STAGES.map(x => x[0]);
+  let at = 0;
+  const reach = id => { at = Math.max(at, order.indexOf(id)); };
+  for (const l of lines) {
+    if (/^Installing /.test(l) || /^- /.test(l)) reach("install");
+    if (/^Running:/.test(l) || /^Generating/.test(l)) reach("generate");
+    if (/^Ranking with signal/.test(l)) reach("rank");
+    if (/^Executing against/.test(l)) reach("execute");
+  }
+  return order[at];
+}
+// ---- end live stage ----
 
 const DURATION = /^\d+(\.\d+)?\s*[smh]?$/i;
 // ---- end command line helpers ----------------------------------------------
@@ -3037,17 +3058,13 @@ async function launch() {
     try { S.project = await api("/api/project"); } catch (e) { /* non-fatal */ }
     const started = await api("/api/run", { jobs: runState().jobs || 1, install_missing: true });
     if (started.ok === false) throw new Error(started.error);
-    el("joblog").innerHTML = `<div class="note" style="border-left-color:var(--color-primary);
-      background:var(--color-primary-lt)">Running <span class="mono">${esc(started.command)}</span></div>`;
   } catch (e) {
     el("err").innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
     el("launch").disabled = false;
     return;
   }
-  watchJob(async () => {
-    await loadRuns();
-    go("results");
-  });
+  // Land on the campaign that is running, not on a list: that is the one being waited for.
+  startLive();
 }
 
 // --------------------------------------------------------------- job log
@@ -3172,7 +3189,7 @@ function resultsHeader(d) {
       <div><strong>${num(n)}</strong><span>${label}</span></div></div>`;
   const status = d.complete ? `<span class="rstatus ok">${ICONS.success} Completed</span>` : `<span class="rstatus warn">${ICONS.alert} Not finished</span>`;
   return `<header class="reshead">
-    <button type="button" class="rback" onclick="go('setup'); gotoStep('run')" aria-label="Back to Review &amp; run" title="Back to Review &amp; run">${ICONS.back}</button>
+    <button type="button" class="rback" onclick="showCampaigns()" aria-label="Back to campaigns" title="Back to campaigns">${ICONS.back}</button>
     <div class="rtitle">
       <div class="rtitle-1"><div class="runpick"><button type="button" class="runpick-b" aria-haspopup="listbox" aria-expanded="${!!S.runMenu}" onclick="toggleRunMenu()">
           <h2>${esc(runTitle(d))}</h2>${(S.runs || []).length > 1 ? ICONS.chevron : ""}</button>
@@ -3618,6 +3635,95 @@ function tabCorpus(d) {
     <div class="resgrid corpwork">${resCard("Test inputs", table, { tip: "Every executed input of this run, in the order SpreadEx ran them." })}${details}</div></div>`;
 }
 
+
+// ------- Campaigns: the list Results opens on, and the live view of the one that is running
+
+function showCampaigns() { S.rview = "list"; S.runMenu = S.actMenu = false; renderResults(); }
+function openCampaign(id) { S.current = id; S.rview = "run"; S.rtab = "overview"; S.runMenu = false; renderResults(); }
+
+function campaignsList() {
+  const runs = S.runs || [];
+  const live = S.live?.active && S.live.runId ? runs.find(r => r.run_id === S.live.runId) : null;
+  const status = r => r.complete ? `<span class="rstatus ok">${ICONS.success} Completed</span>`
+    : (live && live.run_id === r.run_id ? `<span class="rstatus live"><span class="pulse" aria-hidden="true"></span> Running</span>` : `<span class="rstatus warn">${ICONS.alert} Not finished</span>`);
+  const rows = runs.map(r => `<tr class="click" tabindex="0" onclick="openCampaign('${esc(r.run_id)}')" onkeydown="if (event.key === 'Enter') openCampaign('${esc(r.run_id)}')">
+      <td><strong>Campaign #${r.number}</strong></td><td>${status(r)}</td>
+      <td>${esc(fmtDate(r.started_at))} <span class="muted">${esc(fmtTime(r.started_at))}</span></td>
+      <td>${esc(r.target || "—")}</td>
+      <td>${(r.generators || []).map(g => `<span class="vtag blue">${esc(g)}</span>`).join(" ") || `<span class="muted">—</span>`}</td>
+      <td>${num(r.executed)}</td>
+      <td>${r.findings ? `<span class="count bad">${r.findings}</span>` : `<span class="muted">none</span>`}</td>
+      <td>${esc(fmtDur(r.duration_s))}</td><td class="chevcell">${ICONS.arrow}</td></tr>`).join("");
+  return `<div class="resws">
+    <div class="listhead"><div><h2>Campaigns</h2><p class="muted">${runs.length} run${runs.length === 1 ? "" : "s"} in this project. Open one to see what happened.</p></div>
+      <button type="button" class="primary" onclick="go('setup'); gotoStep('run')">${ICONS.playOutline} Run a campaign</button></div>
+    ${live ? `<button type="button" class="livebanner" onclick="openCampaign('${esc(live.run_id)}')"><span class="pulse" aria-hidden="true"></span><span><strong>Campaign #${live.number} is running</strong><span class="muted"> — watch it live</span></span>${ICONS.arrow}</button>` : ""}
+    <section class="rescard"><div class="tscroll"><table class="rtable clist"><thead><tr><th>Campaign</th><th>Status</th><th>Started</th><th>SUT</th><th>Generators</th><th>Executed</th><th>Findings</th><th>Duration</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div></section></div>`;
+}
+
+// ---- live: one background job at a time, so what is running is never ambiguous
+
+
+function startLive() {
+  clearInterval(S.livePoll);
+  S.live = { active: true, runId: null, lines: [], total: 0, error: "", done: false, progress: null, startedAt: Date.now() };
+  S.rview = "live";
+  go("results");
+  S.livePoll = setInterval(pollLive, 900);
+  pollLive();
+}
+
+async function pollLive() {
+  const L = S.live; if (!L || !L.active || L.busy) return;
+  L.busy = true;
+  try {
+    const a = await api(`/api/activity?since=${L.total}`);
+    if (!a.idle) {
+      L.lines.push(...(a.lines || [])); L.total = a.total_lines ?? L.total + (a.lines || []).length;
+      const runs = (await api("/api/runs")).runs; S.runs = runs;
+      const mine = L.runId ? runs.find(r => r.run_id === L.runId) : runs.find(r => !r.complete && Date.parse(r.started_at) >= L.startedAt - 5000);
+      if (mine) { L.runId = mine.run_id; L.number = mine.number; L.progress = await api(`/api/runs/${encodeURIComponent(mine.run_id)}/progress`); }
+      if (a.done) {
+        L.done = true; L.active = false; clearInterval(S.livePoll);
+        if (a.ok === false) { L.error = a.error || "The campaign failed."; }
+        else { await loadRuns(); return openCampaign(L.runId || S.runs[0]?.run_id); }
+      }
+    }
+  } catch (e) { /* a missed poll is fine; the next one catches up */ }
+  L.busy = false;
+  if (S.tab === "results" && S.rview === "live") paintLive();
+}
+
+function paintLive() { const h = el("view"); if (h && el("live-root")) el("live-root").innerHTML = liveBody(); else if (h) h.innerHTML = `<div class="resws" id="live-root">${liveBody()}</div>`; }
+
+function liveBody() {
+  const L = S.live || { lines: [], progress: null }, p = L.progress, v = (p && p.verdicts) || {};
+  const stage = liveStage(L.lines, L.done && !L.error), idx = STAGES.findIndex(s => s[0] === stage);
+  const kpi = (tone, icon, n, label) => `<div class="kpi ${tone}"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span><div><strong>${num(n)}</strong><span>${label}</span></div></div>`;
+  const total = p && p.exec_budget_s && p.exec_budget_s < 3600 ? (p.gen_budget_s || 0) + p.exec_budget_s : null;
+  const bar = p && p.elapsed_s != null && total ? Math.min(100, Math.round(100 * p.elapsed_s / total)) : null;
+  const last = p?.latest;
+  return `<header class="reshead live"><button type="button" class="rback" onclick="showCampaigns()" aria-label="Back to campaigns">${ICONS.back}</button>
+      <div class="rtitle"><div class="rtitle-1"><h2>${L.number ? "Campaign #" + L.number : "Starting campaign"}</h2>
+        ${L.error ? `<span class="rstatus bad">${ICONS.error} Failed</span>` : `<span class="rstatus live"><span class="pulse" aria-hidden="true"></span> Running</span>`}</div>
+        <div class="rtitle-3"><span>${ICONS.clock} ${esc(fmtDur((Date.now() - (L.startedAt || Date.now())) / 1000))} since you pressed Run</span></div></div>
+      <div class="kpis">${kpi("blue", "playOutline", p?.executed || 0, "Executed")}${kpi("green", "success", v.ok || 0, "Passed")}${kpi("blue", "doc", v.expected_rejection || 0, "Rejected")}
+        ${kpi("red", "bug", v.crash || 0, "Crashes")}${kpi("amber", "clock", v.timeout || 0, "Timeouts")}</div></header>
+    <div class="stagebar" role="list" aria-label="Campaign stages">${STAGES.map(([id, t], i) => `<div class="stg ${i < idx ? "done" : i === idx ? "now" : ""}" role="listitem" ${i === idx ? 'aria-current="step"' : ""}><span>${i < idx ? ICONS.check : i + 1}</span>${t}</div>`).join("")}</div>
+    ${L.error ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-t">The campaign stopped</div><div class="res-s">${esc(L.error)}</div></div>
+        <button type="button" class="ghost small res-btn" onclick="go('setup'); gotoStep('run')">Back to Review &amp; run</button></div>`
+      : `<section class="rescard"><div class="rescard-h"><h4>Progress</h4></div>
+        ${bar != null ? `<div class="usebar"><span class="o-b"><span style="width:${bar}%;background:#1687F8"></span></span><b>${bar}%</b></div><div class="muted">${esc(fmtDur(p.elapsed_s))} elapsed of up to ${esc(fmtDur(total))} (generation plus execution budget)</div>`
+          : `<div class="indet" aria-hidden="true"><span></span></div><div class="muted">${stage === "install" ? "Installing what is missing, then generating." : "Running; this budget is a number of tests or the whole corpus, so there is no fixed time to count down."}</div>`}</section>`}
+    <div class="resgrid two"><section class="rescard"><div class="rescard-h"><h4>Latest finding</h4></div>
+        ${last ? `<div class="fcard on"><span class="stile ${(VERDICTS[last.verdict] || {}).tone || "red"} sm" aria-hidden="true">${ICONS.bug}</span><span class="fc-m"><strong>${esc(last.headline)}</strong>
+            <span class="fc-tags">${vtag(last.verdict)}<span class="muted">${esc(last.id)} · input #${last.first_rank + 1}</span></span></span></div>
+          <div class="muted livecount">${p.findings.length} finding${p.findings.length === 1 ? "" : "s"} so far</div>`
+        : `<div class="empty">Nothing has failed yet.</div>`}</section>
+      <section class="rescard"><div class="rescard-h"><h4>Log</h4></div><pre class="livelog" aria-live="off">${esc(L.lines.slice(-14).join("\n")) || "Waiting for the first message…"}</pre></section></div>`;
+}
+
 // ------- the page
 
 const RESULTS_PREVIEW = [
@@ -3653,7 +3759,9 @@ function resultsEmpty() {
 
 async function renderResults() {
   const v = el("view");
+  if (S.rview === "live" && S.live) { v.innerHTML = `<div class="resws" id="live-root">${liveBody()}</div>`; return; }
   if (!S.runs.length) { v.innerHTML = resultsEmpty(); return; }
+  if (S.rview !== "run") { v.innerHTML = campaignsList(); return; }
   v.innerHTML = `<div id="detail"><div class="empty">Loading…</div></div>`;
   // The overview is fetched once per run; the tabs read from what came back. (run_detail shuffles
   // the corpus hundreds of times for the random baseline, so it is not cheap.)
@@ -3665,7 +3773,7 @@ async function renderResults() {
   if (S.rtab === "findings") ensureFinding();
 }
 
-function pickRun(id) { S.current = id; S.runMenu = false; renderResults(); }
+function pickRun(id) { openCampaign(id); }
 
 function paintRun() {
   const d = S.detail;
@@ -3698,6 +3806,16 @@ function paintRun() {
     S.run = null;
     await loadRuns();
     renderSteps();
+    // A page refreshed (or opened) while a campaign is running goes straight back to watching it.
+    try {
+      const act = await api("/api/activity");
+      if (!act.idle && !act.done && act.kind === "run") {
+        S.live = { active: true, runId: null, lines: [], total: 0, error: "", done: false, progress: null, startedAt: Date.now() - 1000 };
+        S.rview = "live"; go("results");
+        S.livePoll = setInterval(pollLive, 900); pollLive();
+        return;
+      }
+    } catch (e) { /* no job info is not an error */ }
     go(initialView(S.project, S.runs));
   } catch (e) {
     const noToken = !TOKEN || /token/i.test(e.message);

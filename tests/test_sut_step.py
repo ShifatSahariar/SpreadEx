@@ -27,7 +27,7 @@ def _node(expr: str):
     if not node:
         pytest.skip("node is not installed")
     script = _helpers() + (
-        "\nconst api={splitCommand,joinCommand,parseEnv,envToText,inferKind,DURATION,semanticLine,strategyOracle,parseExitCodes,cleanPatterns,STRATEGY_PRESETS,durationSeconds,suggestRejection,runFromConfig,runProblems,budgetFromRun,runEstimate,fmtSeconds,fmtMs,fmtDur,fmtPct,pageNumbers};"
+        "\nconst api={splitCommand,joinCommand,parseEnv,envToText,inferKind,DURATION,semanticLine,strategyOracle,parseExitCodes,cleanPatterns,STRATEGY_PRESETS,durationSeconds,suggestRejection,runFromConfig,runProblems,budgetFromRun,runEstimate,fmtSeconds,fmtMs,fmtDur,fmtPct,pageNumbers,liveStage,STAGES};"
         f"\nprocess.stdout.write(JSON.stringify({expr}));")
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=20)
     assert out.returncode == 0, out.stderr

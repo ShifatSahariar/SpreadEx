@@ -964,3 +964,17 @@ def test_replay_is_a_post_that_the_read_only_ui_refuses(served, read_only_server
     ro_base, ro_token = read_only_server
     status, _ = post(ro_base + f"/api/runs/{rid}/replay", {"hash": "0" * 64}, ro_token)
     assert status == 403
+
+
+def test_the_progress_route_is_cheap_token_gated_and_404s(served):
+    base, token, rid = _first_run(served)
+    with pytest.raises(HTTPError) as e:
+        get(base + f"/api/runs/{rid}/progress")
+    assert e.value.code == 401
+    _, p = get(base + f"/api/runs/{rid}/progress", token)
+    assert p["complete"] is True and "verdicts" in p and "latest" in p
+    with pytest.raises(HTTPError) as e:
+        get(base + "/api/runs/nope/progress", token)
+    assert e.value.code == 404
+    _, runs = get(base + "/api/runs", token)
+    assert {"number", "target", "generators", "findings", "duration_s"} <= set(runs["runs"][0])

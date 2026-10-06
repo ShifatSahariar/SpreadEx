@@ -287,6 +287,8 @@ class _Handler(BaseHTTPRequestHandler):
                     verdict=(query.get("verdict") or [""])[0], offset=num("offset", 0), limit=num("limit", 10))
             elif sub == "finding":
                 detail = data.finding_detail(state_dir, run_id, (query.get("signature") or [""])[0])
+            elif sub == "progress":
+                detail = data.run_progress(state_dir, run_id)
             elif sub == "export":
                 self._export(run_id)
                 return

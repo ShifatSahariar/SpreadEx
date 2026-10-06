@@ -146,3 +146,85 @@ def test_the_whole_workspace_stacks_on_a_narrow_screen():
     for sel in (".fwork", ".resgrid.corpwork", ".fd-grid", ".reshead", ".outcome"):
         assert sel in narrow, sel
     assert ".tscroll { overflow-x: auto; }" in CSS
+
+
+# ------------------------------------------------ campaigns list and the live view
+
+def _stage(lines, done=False):
+    return _node(f"api.liveStage({json.dumps(lines)},{json.dumps(done)})")
+
+
+def test_the_stage_follows_the_campaigns_own_log_lines():
+    assert _stage([]) == "install"
+    assert _stage(["Installing 1 generator(s) before the run (first time only).", "- ISLa"]) == "install"
+    assert _stage(["Running: python3 sut.py"]) == "generate"
+    assert _stage(["Running: x", "Generating..."]) == "generate"
+    assert _stage(["Running: x", "Generating...", "Ranking with signal 'cc'..."]) == "rank"
+    assert _stage(["Generating...", "Ranking with signal 'cc'...", "Executing against 1 target(s), budget 60s..."]) == "execute"
+    assert _stage(["Executing against 1 target(s)"], done=True) == "finish"
+
+
+def test_a_later_stage_is_never_walked_back_by_an_earlier_looking_line():
+    lines = ["Generating...", "Executing against 2 target(s)", "- something that starts with a dash"]
+    assert _stage(lines) == "execute"
+    assert _stage(["Executing against 1 target(s)", "Installing late note"]) == "execute"
+
+
+def test_the_stages_are_the_five_in_order():
+    assert [s[0] for s in _node("api.STAGES")] == ["install", "generate", "rank", "execute", "finish"]
+
+
+def test_the_results_menu_opens_the_list_unless_a_campaign_is_running():
+    g = JS[JS.index("function go(tab)"):][:900]
+    assert 'tab === "results" && S.rview !== "live"' in g
+    assert 'S.rview = S.live?.active ? "live" : "list"' in g
+
+
+def test_running_a_campaign_lands_on_it_instead_of_a_list():
+    launch = JS[JS.index("async function launch"):]
+    launch = launch[:launch.index("\n}\n")]
+    assert "startLive();" in launch and "watchJob(" not in launch and 'go("results")' not in launch
+
+
+def test_a_refreshed_page_returns_to_watching_the_running_campaign():
+    boot = JS[JS.index("(async function () {"):]
+    assert '"/api/activity"' in boot and '!act.idle && !act.done && act.kind === "run"' in boot
+    assert 'S.rview = "live"' in boot and "setInterval(pollLive" in boot
+
+
+def test_finishing_opens_the_campaign_and_a_failure_stays_visible_with_a_way_back():
+    p = JS[JS.index("async function pollLive"):JS.index("function paintLive")]
+    assert "return openCampaign(" in p and "L.error" in p
+    live = JS[JS.index("function liveBody"):]
+    assert "The campaign stopped" in live and "Back to Review &amp; run" in live
+
+
+def test_the_back_arrow_returns_to_the_list_and_a_campaign_row_opens_it():
+    assert 'onclick="showCampaigns()" aria-label="Back to campaigns"' in JS
+    assert "function showCampaigns" in JS and "function openCampaign" in JS and "function pickRun(id) { openCampaign(id); }" in JS
+    row = JS[JS.index("function campaignsList"):JS.index("// ---- live: one background job")]
+    for col in ("Campaign", "Status", "Started", "SUT", "Generators", "Executed", "Findings", "Duration"):
+        assert f"<th>{col}</th>" in row, col
+    assert "esc(r.target" in row and "esc(g)" in row, "names from the run are escaped"
+
+
+def test_the_live_view_only_counts_down_a_budget_that_is_actually_a_time_budget():
+    live = JS[JS.index("function liveBody"):]
+    assert "p.exec_budget_s < 3600" in live and "indet" in live
+    assert "no fixed time to count down" in live
+
+
+def test_motion_stops_for_people_who_ask():
+    assert "prefers-reduced-motion: reduce) { .pulse, .indet span { animation: none; }" in CSS
+
+
+def test_the_header_is_two_rows_so_the_title_is_never_squeezed():
+    """Six chips beside the title do not fit in a 1200px page; at 1400px the title column fell to
+    221px and the status pill wrapped. The chips now take their own row as an even six-column grid."""
+    assert re.search(r"\.kpis \{ grid-column: 1 / -1; display: grid; grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)", CSS)
+    assert ".reshead { display: grid; grid-template-columns: auto minmax(0, 1fr) auto;" in CSS
+    assert "@media (max-width: 900px) { .kpis { grid-template-columns: repeat(3" in CSS
+
+
+def test_each_header_part_is_pinned_to_its_cell_so_dom_order_cannot_reflow_it():
+    assert ".reshead > .ractions { grid-row: 1; grid-column: 3; }" in CSS and ".reshead > .kpis { grid-row: 2; }" in CSS

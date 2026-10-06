@@ -216,3 +216,96 @@ def test_export_carries_the_failing_inputs_and_the_config(run, tmp_path):
     assert any(n.endswith("manifest.json") for n in names)
     with pytest.raises(ExportError, match="no run"):
         build_export(cfg, "nope", tmp_path / "y.zip")
+
+
+# ------------------------------------------------ the campaigns list and live progress
+
+def test_the_campaigns_list_carries_what_each_row_shows(run):
+    cfg, rid = run
+    rows = data.list_runs(cfg.state_dir)
+    r = next(x for x in rows if x["run_id"] == rid)
+    assert r["number"] == 1 and r["complete"] is True and r["executed"] == len(INPUTS)
+    assert r["findings"] == 2 and r["failures"] == 4          # 2 signatures over 4 failing inputs
+    assert r["target"] and r["duration_s"] is not None and r["duration_s"] >= 0
+    assert isinstance(r["generators"], list)
+
+
+def test_the_list_numbers_runs_in_the_order_they_started(run, tmp_path):
+    cfg, rid = run
+    with CorpusStore(cfg.state_dir) as s:
+        s.conn.execute("INSERT INTO runs(run_id, started_at, config_hash) VALUES (?,?,?)",
+                       ("2099-01-01T00-00-00Z", "2099-01-01T00:00:00+00:00", "x"))
+        s.conn.commit()
+    try:
+        rows = data.list_runs(cfg.state_dir)
+        assert [r["number"] for r in rows][:2] == [2, 1] and rows[0]["run_id"] == "2099-01-01T00-00-00Z"
+        assert rows[0]["complete"] is False and rows[0]["duration_s"] is None
+    finally:
+        with CorpusStore(cfg.state_dir) as s:
+            s.conn.execute("DELETE FROM runs WHERE run_id=?", ("2099-01-01T00-00-00Z",))
+            s.conn.commit()
+
+
+def test_progress_of_a_finished_run_agrees_with_its_overview(run):
+    cfg, rid = run
+    p, d = data.run_progress(cfg.state_dir, rid), data.results_overview(cfg.state_dir, rid)
+    assert p["complete"] is True and p["elapsed_s"] is None and p["executed"] == d["executed"]
+    assert [f["id"] for f in p["findings"]] == [f["id"] for f in d["findings"]]
+    assert [f["headline"] for f in p["findings"]] == [f["stderr_first"] for f in d["findings"]]
+    assert p["latest"]["id"] == d["findings"][-1]["id"]
+
+
+def test_progress_of_a_run_in_flight_reports_so_far_and_elapsed_time(run):
+    cfg, rid = run
+    with CorpusStore(cfg.state_dir) as s:
+        h = [r["blob_hash"] for r in s.conn.execute("SELECT blob_hash FROM inputs LIMIT 3")]
+        s.conn.execute("INSERT INTO runs(run_id, started_at, config_hash, exec_budget_s) VALUES (?,?,?,?)",
+                       ("live-1", data._parse_time("2026-10-06T00:00:00+00:00").isoformat(), "x", 60))
+        for i, (hh, v) in enumerate(zip(h, ("ok", "crash", "expected_rejection"))):
+            s.conn.execute("INSERT INTO executions(run_id, blob_hash, rank, sut_id, verdict, signature, duration_ms) VALUES (?,?,?,?,?,?,?)",
+                           ("live-1", hh, i, "sut", v, "sigX" if v == "crash" else None, 5.0))
+        s.conn.commit()
+    try:
+        p = data.run_progress(cfg.state_dir, "live-1")
+        assert p["complete"] is False and p["elapsed_s"] > 0 and p["executed"] == 3
+        assert p["verdicts"] == {"ok": 1, "crash": 1, "expected_rejection": 1} and p["exec_budget_s"] == 60
+        assert len(p["findings"]) == 1 and p["latest"]["verdict"] == "crash"
+    finally:
+        with CorpusStore(cfg.state_dir) as s:
+            s.conn.execute("DELETE FROM executions WHERE run_id=?", ("live-1",))
+            s.conn.execute("DELETE FROM runs WHERE run_id=?", ("live-1",))
+            s.conn.commit()
+
+
+def test_progress_of_an_unknown_run_is_none(run):
+    cfg, _ = run
+    assert data.run_progress(cfg.state_dir, "nope") is None
+
+
+def test_results_are_committed_often_enough_for_a_live_view(tmp_path):
+    """The live view reads the database while a campaign writes it, so what has executed so far must
+    be visible well before the end. Checked from a second connection in the middle of a run."""
+    import threading
+    import time
+
+    (tmp_path / "slow.py").write_text("import sys, time; time.sleep(0.15); print('ok')\n")
+    (tmp_path / "seeds").mkdir()
+    for i in range(40):
+        (tmp_path / "seeds" / f"s{i}").write_text(f"input {i}")
+    (tmp_path / "spreadex.yaml").write_text(yaml.safe_dump({
+        "sut": {"command": [sys.executable, "slow.py"], "cwd": ".", "timeout": "5s"}, "oracle": {"type": "crash"},
+        "generators": [], "corpus": {"path": "seeds"}, "budget": {"generation": "5s", "execution": "60s"}}))
+    cfg = load_config(tmp_path / "spreadex.yaml")
+    seen = []
+    t = threading.Thread(target=lambda: Campaign(cfg, log=lambda *_: None).run(jobs=1))
+    t.start()
+    while t.is_alive():
+        time.sleep(0.4)
+        try:
+            runs = data.list_runs(cfg.state_dir)
+        except Exception:
+            continue
+        if runs and not runs[0]["complete"]:
+            seen.append(runs[0]["executed"])
+    t.join()
+    assert any(0 < n < 40 for n in seen), f"never saw a partial count: {seen}"

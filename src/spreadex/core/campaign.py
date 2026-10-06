@@ -201,7 +201,9 @@ class Campaign:
                     if judgement.signature:
                         sigs_so_far.add(judgement.signature)
                 result.budget_curve.append((result.executed, len(sigs_so_far)))
-                if result.executed % 50 == 0:
+                # Often enough that the UI's live view (which reads the database) moves, rarely enough
+                # that committing is not the cost of an execution.
+                if result.executed % 10 == 0:
                     store.commit()
 
             if jobs <= 1:
