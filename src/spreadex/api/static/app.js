@@ -65,7 +65,7 @@ const STEPS = [
   { id: "grammar",    n: 2, tone: "blue",   icon: "doc",         t: "Inputs",            d: "What does it accept?" },
   { id: "generators", n: 3, tone: "purple", icon: "sliders",     t: "Generators",        d: "Choose who writes inputs." },
   { id: "strategy",   n: 4, tone: "orange", icon: "shield",      t: "Testing strategy",  d: "What counts as a failure?" },
-  { id: "run",        n: 5, tone: "blue",   icon: "playOutline", t: "Budget & run",      d: "Review and launch." },
+  { id: "run",        n: 5, tone: "red",    icon: "playOutline", t: "Review & run",      d: "Review and launch." },
 ];
 
 const S = {
@@ -693,6 +693,72 @@ function suggestRejection(probe) {
 }
 // ---- end testing strategy ------------------------------------------------------
 
+// ---- review & run (pure) -----------------------------------------------------
+//
+// What the budget controls mean to the engine. In equal-time mode only `per_generator` is used (the
+// total `generation` figure is recorded, not enforced), so the total is DERIVED here as
+// per-generator x generators instead of being a second field that could disagree. In equal-count
+// mode each generator is given `generation / generators` seconds as a ceiling; 120 s each keeps
+// that ceiling from cutting a normal run short. Execution stops at whichever limit applies:
+// a time limit, a number of executions, or (no limit) every prioritised input, bounded by 24 h.
+const GEN_CEILING_S = 120, MAX_EXEC_S = 86400;
+
+function runFromConfig(c) {
+  const g = c.generation || {}, b = c.budget || {};
+  const per = durationSeconds(g.per_generator ?? "30s");
+  const execS = durationSeconds(b.execution ?? "1m");
+  const r = { genMode: g.mode === "time" || g.count == null ? "time" : "count",
+              perGen: per && per > 0 ? per : 30, count: Number.isInteger(g.count) && g.count > 0 ? g.count : 200,
+              execMode: "time", execMinutes: execS && execS > 0 ? execS / 60 : 1, execCount: 500,
+              signal: c.selection_signal === "random" ? "random" : "cc", model: (c.embedding || {}).model || "tfidf", jobs: 4 };
+  if (b.max_inputs) { r.execMode = "count"; r.execCount = b.max_inputs; }
+  else if (execS && execS >= MAX_EXEC_S) r.execMode = "corpus";
+  return r;
+}
+
+function runProblems(r) {
+  const out = [];
+  if (r.genMode === "time" && !(r.perGen > 0)) out.push("Seconds per generator must be more than zero.");
+  if (r.genMode === "count" && !(Number.isInteger(r.count) && r.count >= 1)) out.push("Inputs per generator must be a whole number, 1 or more.");
+  if (r.execMode === "time" && !(r.execMinutes > 0)) out.push("The time limit must be more than zero.");
+  if (r.execMode === "count" && !(Number.isInteger(r.execCount) && r.execCount >= 1)) out.push("Number of tests must be a whole number, 1 or more.");
+  return out;
+}
+
+// The config keys these choices mean. `nGens` is how many generators are selected; `timeoutS` is the
+// per-input timeout (the worst case for a count-limited run).
+function budgetFromRun(r, nGens, timeoutS) {
+  const n = Math.max(1, nGens || 0);
+  const generation = r.genMode === "time" ? { mode: "time", per_generator: `${r.perGen}s` } : { count: r.count };
+  const genTotal = r.genMode === "time" ? Math.ceil(r.perGen * n) : GEN_CEILING_S * n;
+  const budget = { generation: `${genTotal}s` };
+  if (r.execMode === "time") budget.execution = `${Math.round(r.execMinutes * 60)}s`;
+  else if (r.execMode === "count") {
+    budget.max_inputs = r.execCount;
+    budget.execution = `${Math.min(MAX_EXEC_S, Math.max(60, Math.ceil(r.execCount * (timeoutS || 5))))}s`;
+  } else budget.execution = `${MAX_EXEC_S}s`;
+  return { generation, budget };
+}
+
+// Honest about what is known: a time limit is exact, a count or "everything" is an upper bound or
+// open-ended, and the estimate says which.
+function runEstimate(r, nGens, timeoutS) {
+  const n = nGens || 0;
+  const genS = n === 0 ? 0 : (r.genMode === "time" ? r.perGen * n : GEN_CEILING_S * n);
+  const genExact = n === 0 || r.genMode === "time";
+  let execS = null, execExact = false;
+  if (r.execMode === "time") { execS = r.execMinutes * 60; execExact = true; }
+  else if (r.execMode === "count") execS = r.execCount * (timeoutS || 5);
+  return { genS, genExact, execS, execExact, totalS: execS === null ? null : genS + execS, exact: genExact && execExact };
+}
+function fmtSeconds(s) {
+  if (s < 90) return `${Math.round(s)} s`;
+  const m = s / 60;
+  if (m < 90) return `${(Math.round(m * 10) / 10).toString().replace(/\.0$/, "")} minutes`;
+  return `${(Math.round(m / 6) / 10).toString().replace(/\.0$/, "")} hours`;
+}
+// ---- end review & run -----------------------------------------------------------
+
 const DURATION = /^\d+(\.\d+)?\s*[smh]?$/i;
 // ---- end command line helpers ----------------------------------------------
 
@@ -768,6 +834,7 @@ function buildYaml() {
   lines.push("", "budget:",
     `  generation: ${c.budget?.generation || "1m"}`,
     `  execution: ${c.budget?.execution || "1m"}`);
+  if (c.budget?.max_inputs) lines.push(`  max_inputs: ${c.budget.max_inputs}`);
   lines.push("", `selection_signal: ${c.selection_signal || "cc"}`,
     "embedding:", `  model: ${c.embedding?.model || "tfidf"}`,
     "", `seed: ${c.seed ?? 42}`, "");
@@ -1109,7 +1176,7 @@ function stepStrategy() {
     <div id="err"></div>
     <div class="actions inp-actions">
       <button type="button" class="ghost" onclick="stashStrat(); gotoStep('generators')">${ICONS.back} Back to Generators</button>
-      <button type="button" class="primary" onclick="commitStrategy()">Continue to Budget &amp; run ${ICONS.arrow}</button>
+      <button type="button" class="primary" onclick="commitStrategy()">Continue to Review &amp; run ${ICONS.arrow}</button>
     </div>
    </div>
 
@@ -2486,10 +2553,10 @@ function paintGenerators() {
       <h4><span class="h-ico purple">${ICONS.stats}</span> Generator selection</h4>
       <div class="gsel-opt"><span class="gsel-dot" aria-hidden="true"></span>
         <span><strong>Automatic recommendation</strong>
-          <span class="muted gsel-sub">${sig === "cc" ? "Cluster Coverage" : esc(sig)} ${hint("hint-cc", "SpreadEx ranks generated inputs by how much new input space each adds (Cluster Coverage) before running them. You can change the signal in Budget & run.")}</span></span></div>
+          <span class="muted gsel-sub">${sig === "cc" ? "Cluster Coverage" : esc(sig)} ${hint("hint-cc", "SpreadEx ranks generated inputs by how much new input space each adds (Cluster Coverage) before running them. You can change the signal in Review & run.")}</span></span></div>
       <details class="gsel-adv"><summary>${ICONS.gear} Advanced settings</summary>
-        <p class="muted">The selection signal and the embedding model are set in Budget &amp; run.</p>
-        <button type="button" class="linkish" onclick="gotoStep('run')">Open Budget &amp; run</button></details>
+        <p class="muted">The selection signal and the embedding model are set in Review &amp; run.</p>
+        <button type="button" class="linkish" onclick="gotoStep('run')">Open Review &amp; run</button></details>
     </div>
     <div class="side-card">
       <div class="gsel-h"><h4>Selected generators <span class="muted">(${sel.length})</span></h4>
@@ -2736,143 +2803,207 @@ function commitGenerators() {
   gotoStep("strategy");
 }
 
+// ------------------------------------------------- step 5: review & run
+
+function runState() {
+  if (!S.run) S.run = runFromConfig(cfg());
+  return S.run;
+}
+function nGenerators() { return (cfg().generators || []).length; }
+function timeoutSecs() { return durationSeconds(sut().timeout || "5s") || 5; }
+
+// Write the choices to the config. Called after every edit, so the YAML preview, the summary and
+// the saved file can never disagree with what is on screen.
+function syncRun() {
+  const r = runState(), b = budgetFromRun(r, nGenerators(), timeoutSecs());
+  S.config.generation = b.generation;
+  S.config.budget = b.budget;
+  S.config.selection_signal = r.signal;
+  S.config.embedding = { model: r.model };
+  return r;
+}
+
+// Typing updates the state and the panels beside it, but never re-renders the inputs themselves
+// (that would drop focus on every keystroke).
+function runInput(key, value, integer) {
+  const r = runState();
+  const n = Number(value);
+  r[key] = value === "" || Number.isNaN(n) ? NaN : (integer ? Math.trunc(n) : n);
+  if (!runProblems(r).length) syncRun();
+  refreshRunPanels();
+}
+function runSet(key, value) { runState()[key] = value; if (!runProblems(runState()).length) syncRun(); stepRun(); }
+function refreshRunPanels() {
+  if (el("run-ready")) el("run-ready").innerHTML = readyCard();
+  if (el("run-summary")) el("run-summary").innerHTML = summaryCard();
+  if (el("run-est")) el("run-est").innerHTML = estimateLines();
+  if (el("preview")) el("preview").textContent = runProblems(runState()).length ? "Fix the highlighted values to see the file." : buildYaml();
+  const b = el("launch"); if (b) b.disabled = !readiness().ready;
+}
+
+function readiness() {
+  const c = cfg(), r = runState();
+  const items = [
+    { id: "sut", t: "SUT", ok: targets().some(t => (t.command || []).length), fix: "sut", why: "Add the command that runs your program." },
+    { id: "grammar", t: "Grammar", ok: !!(c.grammar?.source || c.corpus?.path), fix: "grammar", why: "Choose a grammar, or a folder of inputs." },
+    { id: "generators", t: "Generators", ok: !!((c.generators || []).length || c.corpus?.path), fix: "generators", why: "Select at least one generator." },
+    { id: "strategy", t: "Strategy", ok: !!c.oracle, fix: "strategy", why: "Choose what to detect." },
+    { id: "budget", t: "Budget", ok: !runProblems(r).length, fix: null, why: runProblems(r)[0] || "" },
+    { id: "storage", t: "Storage", ok: S.project?.writable !== false, fix: null, why: "SpreadEx cannot write to this project folder." },
+  ];
+  return { items, ready: items.every(i => i.ok) };
+}
+
+function estimateLines() {
+  const e = runEstimate(runState(), nGenerators(), timeoutSecs());
+  const r = runState();
+  const gen = nGenerators() === 0 ? "no generation (existing inputs)" : `${e.genExact ? "~" : "up to "}${fmtSeconds(e.genS)} generation`;
+  const ex = r.execMode === "corpus" ? "until every input has run" : `${e.execExact ? "" : "up to "}${fmtSeconds(e.execS)} execution`;
+  const total = e.totalS === null ? "Time depends on the number of inputs" : `${e.exact ? "~" : "Up to ~"}${fmtSeconds(e.totalS)}`;
+  return `<div class="est-total"><span class="est-ico" aria-hidden="true">${ICONS.clock}</span><strong>${esc(total)}</strong>
+      ${hint("hint-est", "Generation plus execution. A time limit is exact; a number of tests is the worst case (every input using its full timeout); running the whole corpus has no fixed length.")}</div>
+    <div class="est-row">${ICONS.doc}<span>${esc(gen)}</span></div>
+    <div class="est-row">${ICONS.playOutline}<span>${esc(ex)}</span></div>`;
+}
+
+function readyCard() {
+  const { items, ready } = readiness();
+  const bad = items.filter(i => !i.ok);
+  return `<div class="ready-l ${ready ? "ok" : "warn"}">
+      <span class="ready-ico" aria-hidden="true">${ready ? ICONS.success : ICONS.alert}</span>
+      <div><h4>${ready ? "Ready to run" : "Not ready yet"} ${hint("hint-ready", "Each item is checked from what you set in the earlier steps. A problem names the step to fix.")}</h4>
+        ${ready ? "" : `<div class="ready-why" role="status">${bad.map(i => `${esc(i.why)}${i.fix ? ` <button type="button" class="linkish" onclick="gotoStep('${i.fix}')">Fix</button>` : ""}`).join("<br>")}</div>`}</div></div>
+    <ul class="ready-list">${items.map(i => `<li class="${i.ok ? "ok" : "bad"}"><span aria-hidden="true">${i.ok ? ICONS.success : ICONS.error}</span>${esc(i.t)}</li>`).join("")}</ul>
+    <div class="ready-est" id="run-est">${estimateLines()}</div>`;
+}
+
+function summaryCard() {
+  const c = cfg(), r = runState(), t = targets()[0];
+  const row = (tone, icon, title, body, step) => `<div class="sum-row"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span>
+      <div class="sum-t"><strong>${esc(title)}</strong><span class="muted">${body}</span></div>
+      <button type="button" class="linkish" onclick="gotoStep('${step}')">Edit</button></div>`;
+  const cmd = t ? (t.command || []).slice(0, 2).join(" ") : "Not set";
+  const d = inpState();
+  const inputs = c.grammar?.source ? `${d.lang ? esc(langById(d.lang).t) + " · " : ""}<span class="mono">${esc(c.grammar.source.split("/").pop())}</span>`
+    : c.corpus?.path ? `Folder <span class="mono">${esc(c.corpus.path)}</span>` : "Not chosen";
+  const gens = (c.generators || []).map(id => ((S.generators || []).find(g => g.id === id) || { name: id }).name);
+  const o = c.oracle || {};
+  const checks = ["Crash", "Timeout"].concat((o.rejection_patterns || []).length || (o.expected_exit_codes || []).length ? ["Rejection"] : [],
+    (o.crash_patterns || []).length ? ["Signatures"] : [], o.type === "differential" ? ["Differential"] : []);
+  const budget = `${r.genMode === "time" ? `${r.perGen} s / generator` : `${r.count} inputs / generator`} &middot; ${r.execMode === "time" ? `${esc(String(r.execMinutes))} min` : r.execMode === "count" ? `${r.execCount} tests` : "whole corpus"}`;
+  const pending = (S.generators || []).filter(isPending).map(g => g.name);
+  return `${row("red", "terminal", "System under test", `<span class="mono">${esc(cmd)}</span>`, "sut")}
+    ${row("blue", "doc", "Inputs", inputs, "grammar")}
+    ${row("purple", "sliders", `Generators (${gens.length})`, gens.length ? esc(gens.join(", ")) : "None (existing inputs only)", "generators")}
+    ${row("orange", "shield", "Testing strategy", esc(checks.join(", ")), "strategy")}
+    ${row("green", "stats", "Test ordering", r.signal === "random" ? "Random (baseline)" : "SpreadEx prioritization", "run")}
+    ${row("slate", "clock", "Budget", budget, "run")}
+    ${pending.length ? `<div class="sum-pend">${ICONS.download}<span>Installed on first run: ${pending.map(esc).join(", ")}. Downloaded from PyPI into ${pending.length > 1 ? "their own environments" : "its own environment"} before the clock starts.</span></div>` : ""}`;
+}
+
+function runNumber(id, key, value, min, integer, unit, aria) {
+  const bad = Number.isNaN(value) || value < min;
+  return `<span class="unitbox rn ${bad ? "bad" : ""}"><input id="${id}" type="number" min="${min}" step="${integer ? 1 : "any"}" class="sut-cmd"
+      value="${Number.isNaN(value) ? "" : esc(String(value))}" aria-label="${esc(aria)}" aria-invalid="${bad}" oninput="runInput('${key}', this.value, ${integer})"><span class="unit">${esc(unit)}</span></span>`;
+}
+
+function runOption({ on, title, tag, body, onclick, group }) {
+  return `<div class="ropt ${on ? "on" : ""}"><label class="ropt-h"><input type="radio" name="${group}" ${on ? "checked" : ""} onchange="${onclick}">
+      <span class="rdot" aria-hidden="true"></span><strong>${title}</strong>${tag ? `<span class="tag pend">${tag}</span>` : ""}</label>
+      ${on && body ? `<div class="ropt-b">${body}</div>` : ""}</div>`;
+}
+
 async function stepRun(current = () => true) {
   if (!S.generators) { try { S.generators = (await api("/api/generators")).generators; } catch (e) { /* the summary just omits the row */ } }
-  const c = cfg();
-  if (!c.generation) c.generation = { mode: "time", per_generator: "30s" };
+  if (S.project?.writable === undefined) { try { S.project = await api("/api/project"); } catch (e) { /* non-fatal */ } }
+  if (!current()) return;
+  if (!cfg().generation) S.config.generation = { mode: "time", per_generator: "30s" };
+  const r = runState();
+  syncRun();
+  const grp = (name, o) => runOption({ ...o, group: name });
   el("view").innerHTML = `
-  <div class="card">
-    <h3>Budget</h3>
-    <p class="why">SpreadEx spends what you give it and no more. Generation and execution are
-      budgeted separately, because they fail in different ways.</p>
-    <div class="row">
-      <div><label for="bgen">Generation</label><input id="bgen" type="text" value="${esc(c.budget?.generation || "1m")}"></div>
-      <div><label for="bexec">Execution</label><input id="bexec" type="text" value="${esc(c.budget?.execution || "1m")}"></div>
-      <div><label for="genmode">How generators are compared</label>
-        <select id="genmode" onchange="redrawBudget()">
-          <option value="time" ${(c.generation?.mode || "time") === "time" ? "selected" : ""}>Equal time &mdash; recommended</option>
-          <option value="count" ${(c.generation?.mode || "time") !== "time" ? "selected" : ""}>Equal number of inputs</option>
-        </select></div>
-      ${(c.generation?.mode || "time") === "time"
-        ? `<div><label for="pergen">Seconds per generator</label>
-             <input id="pergen" type="text" value="${esc(c.generation?.per_generator || "30s")}"></div>`
-        : `<div><label for="count">Inputs per generator</label>
-             <input id="count" type="number" min="1" value="${c.generation?.count || 200}"></div>`}
-    </div>
-    <div class="row">
-      <div><label for="signal">Selection signal</label>
-        <select id="signal">
-          <option value="cc" ${c.selection_signal !== "random" ? "selected" : ""}>Cluster coverage (recommended)</option>
-          <option value="random" ${c.selection_signal === "random" ? "selected" : ""}>Random (baseline)</option>
-        </select></div>
-      <div><label for="model">Embedding</label>
-        <select id="model">
-          <option value="tfidf" ${(c.embedding?.model || "tfidf") === "tfidf" ? "selected" : ""}>TF-IDF (no GPU, no key)</option>
-          <option value="unixcoder" ${c.embedding?.model === "unixcoder" ? "selected" : ""}>UniXcoder (needs spreadex[neural])</option>
-        </select></div>
-      <div><label for="jobs">Parallel executions</label><input id="jobs" type="number" min="1" max="32" value="4"></div>
-    </div>
-    <div class="note">${(c.generation?.mode || "time") === "time"
-      ? `<strong>Equal time</strong> gives every generator the same number of seconds, so the
-         comparison answers "who makes better use of a budget". They will produce different
-         numbers of inputs &mdash; that is the measurement, not a flaw. Note that cluster
-         coverage is computed over the pooled inputs, so a much faster generator contributes
-         more of that pool and scores higher partly for that reason; the results say so when
-         it happens.`
-      : `<strong>Equal number of inputs</strong> is reproducible and is what the ICST&nbsp;2026
-         experiments used, but it is not resource-fair: on this project's own JavaScript
-         grammar the same 150 inputs cost Fandango 2.5&thinsp;s and ISLa 44.8&thinsp;s. Prefer
-         equal time when you are deciding where budget should go.`}</div>
-    <div class="note">More than one parallel execution is faster, but makes durations noisier and
-      can time out an input that would have passed on its own.</div>
-  </div>
+  <div class="sut runpage">
+   <div class="sut-main">
+    <header class="sut-head">
+      <span class="sut-badge red" aria-hidden="true">5</span>
+      <div><h3>Review &amp; run</h3>
+        <p class="why">Set the budget, review your configuration, and launch the campaign.</p></div>
+    </header>
 
-  <div class="card">
-    <h3>Review</h3>
-    <p class="why">This is what will happen. It is written to
-      <span class="mono">spreadex.yaml</span>, and the campaign runs exactly this &mdash;
-      nothing else.</p>
-    <div id="summary">${reviewSummary()}</div>
-    <details>
-      <summary>The file that will be written</summary>
-      <pre id="preview">${esc(buildYaml())}</pre>
-    </details>
-    <div class="actions">
-      <button class="ghost" onclick="gotoStep('strategy')">Back</button>
-      <button class="ghost" onclick="refreshPreview()">Refresh preview</button>
-      <button class="primary" id="launch" onclick="launch()">Save &amp; run</button>
+    <div class="rbudgets">
+      <section class="rcard purple" aria-labelledby="rg-h">
+        <h4 id="rg-h"><span class="stile purple" aria-hidden="true">${ICONS.doc}</span> Generation budget
+          ${hint("hint-gen", "How much each generator is given to produce inputs. Equal time answers \\u201cwho makes better use of a budget\\u201d; they will produce different numbers of inputs, and that is the measurement.")}</h4>
+        <div class="ropts two">
+          ${grp("gm", { on: r.genMode === "time", title: "Equal time", tag: "Recommended", onclick: "runSet('genMode','time')",
+            body: `${runNumber("run-pergen", "perGen", r.perGen, 0.1, false, "s / generator", "Seconds per generator")}
+                   <p class="muted">Every generator gets the same time. Cluster coverage is computed over the pooled inputs, so a much faster generator contributes more of that pool.</p>` })}
+          ${grp("gm", { on: r.genMode === "count", title: "Equal count", onclick: "runSet('genMode','count')",
+            body: `${runNumber("run-count", "count", r.count, 1, true, "inputs / generator", "Inputs per generator")}
+                   <p class="muted">Reproducible, but not resource-fair: the same number of inputs can cost one generator seconds and another minutes.</p>` })}
+        </div>
+      </section>
+
+      <section class="rcard blue" aria-labelledby="re-h">
+        <h4 id="re-h"><span class="stile blue" aria-hidden="true">${ICONS.playOutline}</span> Execution budget
+          ${hint("hint-exec", "When to stop running inputs against your system. Whichever you choose, each input still has its own timeout from the Testing strategy step.")}</h4>
+        <div class="ropts">
+          ${grp("em", { on: r.execMode === "time", title: "Time limit", onclick: "runSet('execMode','time')",
+            body: runNumber("run-execmin", "execMinutes", r.execMinutes, 0.1, false, "minutes", "Execution time limit in minutes") })}
+          ${grp("em", { on: r.execMode === "count", title: "Number of tests", onclick: "runSet('execMode','count')",
+            body: runNumber("run-execcount", "execCount", r.execCount, 1, true, "executions", "Number of executions") })}
+          ${grp("em", { on: r.execMode === "corpus", title: "Entire corpus", onclick: "runSet('execMode','corpus')",
+            body: `<p class="muted">Run every input that was generated, however long it takes (stopped at 24 hours).</p>` })}
+        </div>
+      </section>
     </div>
+
+    <section class="rcard green wide" aria-labelledby="ro-h">
+      <h4 id="ro-h"><span class="stile green" aria-hidden="true">${ICONS.table}</span> Test ordering
+        ${hint("hint-order", "Which generated inputs run first. SpreadEx puts the most different ones first (cluster coverage); random order is the baseline to compare against.")}</h4>
+      <div class="ropts two">
+        ${grp("so", { on: r.signal === "cc", title: "SpreadEx prioritization", tag: "Recommended", onclick: "runSet('signal','cc')",
+          body: `<p class="muted">Cluster coverage: the most different inputs first.</p>` })}
+        ${grp("so", { on: r.signal === "random", title: "Random order", onclick: "runSet('signal','random')",
+          body: `<p class="muted">The baseline. Useful to see what prioritization is worth.</p>` })}
+      </div>
+      <details class="sut-adv"><summary><span><strong>Advanced</strong></span><span class="muted">Embedding model and parallel executions</span></summary>
+        <div class="sut-adv-body"><div class="row">
+          <div><label for="run-model">Embedding</label><select id="run-model" onchange="runSet('model', this.value)">
+            <option value="tfidf" ${r.model === "tfidf" ? "selected" : ""}>TF-IDF (no GPU, no key)</option>
+            <option value="unixcoder" ${r.model === "unixcoder" ? "selected" : ""}>UniXcoder (needs spreadex[neural])</option></select></div>
+          <div><label for="jobs">Parallel executions</label><input id="jobs" type="number" min="1" max="32" value="${r.jobs}" oninput="runState().jobs = Math.max(1, Number(this.value) || 1)"></div>
+        </div><p class="muted">More than one parallel execution is faster, but makes durations noisier and can time out an input that would have passed on its own.</p></div>
+      </details>
+    </section>
+
+    <section class="rcard ready" id="run-ready" aria-live="polite">${readyCard()}</section>
+
+    <details class="sut-adv"><summary><span><strong>The file that will be written</strong></span><span class="muted">spreadex.yaml &mdash; you can also edit it by hand</span></summary>
+      <div class="sut-adv-body"><pre id="preview">${esc(runProblems(r).length ? "Fix the highlighted values to see the file." : buildYaml())}</pre></div></details>
+
     <div id="err"></div>
     <div id="joblog"></div>
+    <div class="actions inp-actions"><button type="button" class="ghost" onclick="gotoStep('strategy')">${ICONS.back} Back to Testing strategy</button></div>
+   </div>
+
+   <aside class="sut-side" aria-label="Summary">
+    <div class="side-card sumcard">
+      <div class="gsel-h"><h4><span class="stile slate" aria-hidden="true">${ICONS.doc}</span> Campaign summary</h4>
+        <button type="button" class="ghost small" onclick="gotoStep('sut')">${ICONS.edit} Edit all</button></div>
+      <div id="run-summary">${summaryCard()}</div>
+    </div>
+    <div class="side-card runcard">
+      <button type="button" class="primary runbtn" id="launch" onclick="launch()" ${readiness().ready ? "" : "disabled"}>${ICONS.playOutline} Run campaign</button>
+      <p class="muted runnote">${ICONS.shield}<span>Your inputs and results stay on this machine.${(S.generators || []).some(isPending) ? " Missing generators are downloaded from PyPI first." : ""}</span></p>
+    </div>
+   </aside>
   </div>`;
-  ["bgen", "bexec", "count", "pergen", "signal", "model"].forEach(id =>
-    el(id) && el(id).addEventListener("change", refreshPreview));
-}
-
-// Names the downloads before they happen: this row is the user's chance to say no.
-function pendingInstallRow(row) {
-  const names = (S.generators || []).filter(isPending).map(g => g.name);
-  if (!names.length) return "";
-  return row("Installed on first run", `${names.map(esc).join(", ")}
-    <span class="muted">&mdash; downloaded from PyPI into ${names.length > 1 ? "their own environments" : "its own environment"}
-    when you press Run. The time budget starts after.</span>`);
-}
-
-function reviewSummary() {
-  // The same facts as the YAML, in the order someone would ask about them.
-  const c = cfg(), t = targets();
-  const gens = c.generators || [];
-  const src = c.grammar?.source ? `the grammar <span class="mono">${esc(c.grammar.source)}</span>`
-            : c.corpus?.path ? `the inputs already in <span class="mono">${esc(c.corpus.path)}</span>`
-            : "<span class=\"bad\">nothing yet &mdash; go back to step 2</span>";
-  const checks = ["crashes and hangs"];
-  if (c.oracle?.type === "differential") checks.push("disagreement between implementations");
-  const nrej = (c.oracle?.rejection_patterns || []).length;
-  if (nrej) checks.push(nrej === 1 ? "one message that means a deliberate rejection"
-                                   : `${nrej} messages that mean a deliberate rejection`);
-  const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
-  return `<table class="summary">
-    ${row(t.length > 1 ? "Testing" : "Testing under",
-          t.map(x => `<span class="mono">${esc((x.command || []).join(" "))}</span>`).join("<br>"))}
-    ${row("Inputs from", src)}
-    ${row("Written by", gens.length
-        ? gens.map(esc).join(", ")
-        : (c.corpus?.path ? "nobody &mdash; existing inputs only"
-                          : "<span class=\"bad\">no generator selected</span>"))}
-    ${pendingInstallRow(row)}
-    ${row("Reported as failures", checks.join("; "))}
-    ${row("Budget", `${esc(c.budget?.generation || "1m")} generating,
-           ${esc(c.budget?.execution || "1m")} executing &mdash; and no more`)}
-    ${row("Generators compared", (c.generation?.mode === "time")
-        ? `by equal time &mdash; ${esc(c.generation.per_generator || "30s")} each`
-        : `by equal input count &mdash; ${c.generation?.count || 200} each, `
-          + `<span class="muted">which is reproducible but not resource-fair</span>`)}
-    ${row("Ordered by", (c.selection_signal === "random")
-        ? "random (the baseline)" : "cluster coverage, most different first")}
-  </table>`;
-}
-
-function redrawBudget() { collectRunConfig(); stepRun(); }
-
-function collectRunConfig() {
-  S.config.budget = { generation: el("bgen").value, execution: el("bexec").value };
-  // The two modes are mutually exclusive on purpose: a config carrying both a
-  // count and a time budget does not say which one was honoured.
-  const mode = el("genmode") ? el("genmode").value : (cfg().generation?.mode || "count");
-  S.config.generation = mode === "time"
-    ? { mode: "time", per_generator: (el("pergen") && el("pergen").value) || "30s" }
-    : { count: Number(el("count") && el("count").value) || 200 };
-  S.config.selection_signal = el("signal").value;
-  S.config.embedding = { model: el("model").value };
-}
-function refreshPreview() {
-  collectRunConfig();
-  el("preview").textContent = buildYaml();
-  el("summary").innerHTML = reviewSummary();
 }
 
 async function launch() {
-  collectRunConfig();
+  if (!readiness().ready) return;
+  syncRun();
   el("launch").disabled = true;
   el("err").innerHTML = "";
   try {
@@ -2886,7 +3017,7 @@ async function launch() {
     // The server adopts the file we just wrote; re-read so the header and the
     // steps reflect the project that now exists.
     try { S.project = await api("/api/project"); } catch (e) { /* non-fatal */ }
-    const started = await api("/api/run", { jobs: Number(el("jobs").value) || 1, install_missing: true });
+    const started = await api("/api/run", { jobs: runState().jobs || 1, install_missing: true });
     if (started.ok === false) throw new Error(started.error);
     el("joblog").innerHTML = `<div class="note" style="border-left-color:var(--color-primary);
       background:var(--color-primary-lt)">Running <span class="mono">${esc(started.command)}</span></div>`;
@@ -3157,6 +3288,7 @@ async function showInput(hash, btn) {
     S.inp = null;
     S.gen = null;
     S.strat = null;
+    S.run = null;
     await loadRuns();
     renderSteps();
     go(initialView(S.project, S.runs));

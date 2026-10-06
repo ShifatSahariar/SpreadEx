@@ -255,6 +255,9 @@ class _Handler(BaseHTTPRequestHandler):
                 "signal": self.config.signal,
                 "oracle": self.config.oracle.get("type"),
                 "experimental": getattr(self.server, "spreadex_experimental", False),
+                # Can a run write its results? The review screen's Storage check. Looks at the state
+                # directory if it exists, otherwise at the project folder that would contain it.
+                "writable": _can_write(self.config.state_dir),
             })
             return
         if route == "/api/runs":
@@ -346,6 +349,16 @@ def _emit(line: str = "") -> None:
     import sys
 
     print(line, flush=True, file=sys.stdout)
+
+
+def _can_write(state_dir) -> bool:
+    import os
+    from pathlib import Path
+
+    p = Path(state_dir)
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return os.access(p, os.W_OK | os.X_OK)
 
 
 TOKEN_FILE = "ui-token"

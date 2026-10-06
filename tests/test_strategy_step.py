@@ -115,7 +115,7 @@ def test_the_page_has_the_designed_parts():
     for t in ("What do you want to detect?", "Use a preset", "Crashes & timeouts",
               "Expected rejections", "Failure signatures", "Differential testing", "Configuration",
               "Set up the selected checks.", "Quick tip", "Presets", "Compiler / Parser", "Interpreter",
-              "Selected checks", "Clear all", "Add reference", "Back to Generators", "Continue to Budget"):
+              "Selected checks", "Clear all", "Add reference", "Back to Generators", "Continue to Review"):
         assert t in JS, t
 
 

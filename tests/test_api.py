@@ -888,3 +888,18 @@ def test_an_oversized_request_is_refused_before_it_is_read(served):
     status, payload = post(base + "/api/spec/extract",
                            {"name": "a.txt", "data": "A" * 13_000_000}, token)
     assert status == 413
+
+
+def test_project_info_says_whether_results_can_be_written(served, tmp_path):
+    from spreadex.api.server import _can_write
+    base, token, _ = served
+    status, body = get(base + "/api/project", token)
+    assert body["writable"] is True
+    assert _can_write(tmp_path / "does" / "not" / "exist" / ".spreadex") is True      # nearest existing parent decides
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o500)
+    try:
+        assert _can_write(ro / ".spreadex") is False
+    finally:
+        ro.chmod(0o700)

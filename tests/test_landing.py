@@ -616,7 +616,7 @@ def test_the_wizard_has_five_steps_each_with_its_own_colour_and_icon():
     assert [(i, n, tone, icon) for i, n, tone, icon, *_ in _WIZARD] == [
         ("sut", "1", "green", "terminal"), ("grammar", "2", "blue", "doc"),
         ("generators", "3", "purple", "sliders"), ("strategy", "4", "orange", "shield"),
-        ("run", "5", "blue", "playOutline")]
+        ("run", "5", "red", "playOutline")]
 
 
 def test_every_step_icon_exists():
