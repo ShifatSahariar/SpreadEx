@@ -489,6 +489,52 @@ def save_spec(config, body: dict) -> dict[str, Any]:
     return {"ok": True, "written": rel}
 
 
+# ------------------------------------------------------------------ replay one input
+
+def replay_input(config, run_id: str, blob_hash: str) -> dict[str, Any]:
+    """Run one recorded input again against the project's CURRENT command and oracle, and say whether
+    the original result came back. Nothing is written: a replay is an observation, not a new run.
+
+    It uses the same Target, input naming (extension) and oracle a campaign uses, so "reproduced"
+    means what it would mean in a campaign. A flaky or fixed bug shows up as "not reproduced".
+    """
+    from ..corpus.store import CorpusStore
+    from ..exec.inputs import InputFiles
+    from ..exec.oracle import make_oracle
+    from ..exec.runner import run_one
+
+    if not blob_hash or not blob_hash.isalnum():
+        return {"ok": False, "error": "bad input hash"}
+    if not config.targets:
+        return {"ok": False, "error": "this project has no command to run yet"}
+    with CorpusStore(config.state_dir) as store:
+        rows = store.conn.execute(
+            "SELECT verdict, signature, duration_ms FROM executions WHERE run_id=? AND blob_hash=?",
+            (run_id, blob_hash)).fetchall()
+        if not rows:
+            return {"ok": False, "error": "that input was not executed in this run"}
+        path = store.blob_path(blob_hash)
+        if not path.exists():
+            return {"ok": False, "error": "the input file is no longer in the corpus"}
+        original = {"verdict": rows[0]["verdict"], "signature": rows[0]["signature"],
+                    "duration_ms": max((r["duration_ms"] or 0) for r in rows)}
+        files = InputFiles(config.input_extension)
+        try:
+            observations = [run_one(t, files.path(blob_hash, path), input_hash=blob_hash) for t in config.targets]
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc).split("\n")[0]}
+        judgement = make_oracle(config.oracle).judge(observations)
+    first = observations[0]
+    return {
+        "ok": True, "original": original,
+        "replay": {"verdict": judgement.verdict.value, "signature": judgement.signature,
+                   "duration_ms": max(o.duration_ms for o in observations), "exit_code": first.exit_code,
+                   "signal": first.signal, "timed_out": first.timed_out,
+                   "stderr": (first.stderr_preview or "")[:1500]},
+        "reproduced": judgement.verdict.value == original["verdict"],
+    }
+
+
 # ------------------------------------------------------- command verification
 
 #: A ceiling on what the connection test may ask for, whatever the config says.

@@ -903,3 +903,64 @@ def test_project_info_says_whether_results_can_be_written(served, tmp_path):
         assert _can_write(ro / ".spreadex") is False
     finally:
         ro.chmod(0o700)
+
+
+# ------------------------------------------------ results workspace routes
+
+def _first_run(served):
+    base, token, _ = served
+    runs = get(base + "/api/runs", token)[1]["runs"]
+    return base, token, runs[0]["run_id"]
+
+
+def test_the_workspace_routes_need_the_token_and_404_cleanly(served):
+    base, token, rid = _first_run(served)
+    for path in (f"/api/runs/{rid}", f"/api/runs/{rid}/inputs", f"/api/runs/{rid}/finding?signature=x",
+                 f"/api/runs/{rid}/export"):
+        with pytest.raises(HTTPError) as e:
+            get(base + path)
+        assert e.value.code == 401, path
+    for path in ("/api/runs/nope", "/api/runs/nope/inputs", f"/api/runs/{rid}/finding?signature=nope",
+                 "/api/runs/nope/export", f"/api/runs/{rid}/bogus"):
+        with pytest.raises(HTTPError) as e:
+            get(base + path, token)
+        assert e.value.code == 404, path
+
+
+def test_the_overview_inputs_and_finding_routes_return_what_the_data_layer_does(served):
+    base, token, rid = _first_run(served)
+    _, d = get(base + f"/api/runs/{rid}", token)
+    assert d["number"] == 1 and d["complete"] and "by_generator" in d and "timeline" in d and "findings" in d
+    _, page = get(base + f"/api/runs/{rid}/inputs?limit=3&verdict=ok", token)
+    assert len(page["items"]) <= 3 and all(i["verdict"] == "ok" for i in page["items"])
+    _, odd = get(base + f"/api/runs/{rid}/inputs?limit=abc&offset=x", token)
+    assert odd["limit"] == 10 and odd["offset"] == 0, "junk numbers fall back to the defaults"
+    if d["findings"]:
+        sig = d["findings"][0]["signature"]
+        _, f = get(base + f"/api/runs/{rid}/finding?signature={sig}", token)
+        assert f["id"] == "F-001" and f["input"] is not None
+
+
+def test_export_downloads_a_zip_with_the_right_headers(served):
+    import io
+    import zipfile
+    base, token, rid = _first_run(served)
+    req = Request(base + f"/api/runs/{rid}/export")
+    req.add_header("X-SpreadEx-Token", token)
+    with urlopen(req, timeout=20) as r:
+        assert r.headers["Content-Type"] == "application/zip"
+        assert f"spreadex-{rid}.zip" in r.headers["Content-Disposition"]
+        names = zipfile.ZipFile(io.BytesIO(r.read())).namelist()
+    assert "spreadex.yaml" in names
+
+
+def test_replay_is_a_post_that_the_read_only_ui_refuses(served, read_only_server):
+    base, token, rid = _first_run(served)
+    with pytest.raises(HTTPError) as e:
+        get(base + f"/api/runs/{rid}/replay", token)           # a GET must not replay
+    assert e.value.code == 404
+    status, body = post(base + f"/api/runs/{rid}/replay", {"hash": "0" * 64}, token)
+    assert status == 200 and body["ok"] is False
+    ro_base, ro_token = read_only_server
+    status, _ = post(ro_base + f"/api/runs/{rid}/replay", {"hash": "0" * 64}, ro_token)
+    assert status == 403

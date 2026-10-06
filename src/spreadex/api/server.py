@@ -200,6 +200,11 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             self._json(setup.assist(self.config, body))
             return
+        if route.startswith("/api/runs/") and route.endswith("/replay"):
+            from . import setup
+            run_id = route[len("/api/runs/"):-len("/replay")]
+            self._json(setup.replay_input(self.config, run_id, str(body.get("hash") or "")))
+            return
         if route == "/api/spec/extract":
             self._json(setup.extract_document(self.config, body))
             return
@@ -264,10 +269,31 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"runs": data.list_runs(state_dir) if self._has_corpus() else []})
             return
         if route.startswith("/api/runs/"):
-            run_id = route[len("/api/runs/"):]
-            detail = data.run_detail(state_dir, run_id) if self._has_corpus() else None
-            if detail is None:
+            parts = route[len("/api/runs/"):].split("/")
+            run_id, sub = parts[0], (parts[1] if len(parts) > 1 else "")
+            if not self._has_corpus():
                 self._error(HTTPStatus.NOT_FOUND, f"no run {run_id!r}")
+                return
+            if sub == "":
+                detail = data.results_overview(state_dir, run_id)
+            elif sub == "inputs":
+                def num(name, default):
+                    try:
+                        return int((query.get(name) or [default])[0])
+                    except ValueError:
+                        return default
+                detail = data.run_inputs(
+                    state_dir, run_id, q=(query.get("q") or [""])[0], generator=(query.get("generator") or [""])[0],
+                    verdict=(query.get("verdict") or [""])[0], offset=num("offset", 0), limit=num("limit", 10))
+            elif sub == "finding":
+                detail = data.finding_detail(state_dir, run_id, (query.get("signature") or [""])[0])
+            elif sub == "export":
+                self._export(run_id)
+                return
+            else:
+                detail = None
+            if detail is None:
+                self._error(HTTPStatus.NOT_FOUND, f"no {sub or 'run'} {run_id!r}")
                 return
             self._json(detail)
             return
@@ -330,6 +356,30 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.send_header("Content-Security-Policy", CSP)
         self.end_headers()
+
+    def _export(self, run_id: str) -> None:
+        """Send a run as a zip. Built in a temp directory and read back, so nothing is left behind."""
+        import tempfile
+        from ..core.export import ExportError, build_export
+
+        if not run_id.replace("-", "").replace(":", "").isalnum():
+            self._error(HTTPStatus.BAD_REQUEST, "bad run id")
+            return
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                _, out = build_export(self.config, run_id, Path(tmp) / "campaign.zip")
+            except (ExportError, OSError) as exc:
+                self._error(HTTPStatus.NOT_FOUND, str(exc))
+                return
+            body = out.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", f'attachment; filename="spreadex-{run_id}.zip"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _static(self, name: str) -> None:
         # Resolve inside STATIC_DIR so a crafted path cannot escape it.

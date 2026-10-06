@@ -555,46 +555,11 @@ def cmd_export(args) -> int:
     # positional that is plainly a filename is taken as the destination.
     if run_id and output is None and run_id.endswith(".zip"):
         run_id, output = None, run_id
-    out = Path(output or "campaign.zip").resolve()
-    with CorpusStore(config.state_dir) as store:
-        run_id = run_id or store.latest_run_id()
-        if not run_id:
-            _die("no runs to export")
-        run_dir = store.run_dir(run_id)
-        if not run_dir.is_dir():
-            _die(f"no run {run_id!r}. `spreadex results --all` lists them.", code=1)
-
-    import tempfile, zipfile
-    with tempfile.TemporaryDirectory() as tmp:
-        stage = Path(tmp) / "campaign"
-        stage.mkdir()
-        shutil.copytree(run_dir, stage / "run", dirs_exist_ok=True)
-        shutil.copy2(config.project_root / "spreadex.yaml", stage / "spreadex.yaml")
-
-        # Ship the actual inputs behind each failure: a manifest that names a
-        # hash nobody else can resolve is not a reproduction.
-        with CorpusStore(config.state_dir) as store:
-            rows = store.conn.execute(
-                """SELECT DISTINCT blob_hash, signature, verdict FROM executions
-                   WHERE run_id=? AND verdict IN ('crash','timeout','divergence')""",
-                (run_id,),
-            ).fetchall()
-            if rows:
-                fdir = stage / "failing_inputs"
-                fdir.mkdir()
-                index = []
-                for r in rows:
-                    data = store.get_blob(r["blob_hash"])
-                    fname = f"{r['verdict']}-{(r['signature'] or 'none')[:12]}-{r['blob_hash'][:8]}"
-                    (fdir / fname).write_bytes(data)
-                    index.append({"file": fname, **dict(r)})
-                (stage / "failing_inputs" / "index.json").write_text(
-                    json.dumps(index, indent=2)
-                )
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-            for p in stage.rglob("*"):
-                if p.is_file():
-                    z.write(p, p.relative_to(stage))
+    from ..core.export import ExportError, build_export
+    try:
+        run_id, out = build_export(config, run_id, Path(output or "campaign.zip"))
+    except ExportError as exc:
+        _die(str(exc), code=1)
     print(f"Exported {run_id} -> {out}")
     print("  contains: manifest.json, results.jsonl, spreadex.yaml, failing inputs")
     return 0

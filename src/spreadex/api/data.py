@@ -250,3 +250,268 @@ def _report_for(config, path: Path) -> dict[str, Any]:
         ],
         "support": support,
     }
+
+
+# ===================================================================== results workspace
+#
+# Everything below is derived from what a run actually recorded: the executions table, the inputs it
+# ran, the failures table and the manifest. Nothing is estimated and nothing is invented; a number
+# the run did not record (coverage, mutation score, cost) is simply not here.
+
+FAILURES = ("crash", "timeout", "divergence")
+
+
+def _exec_rows(store: CorpusStore, run_id: str) -> list[dict[str, Any]]:
+    """One row per executed input, in execution order. With several targets an input has several
+    rows; they share a verdict, and the slowest duration is the one that matters."""
+    rows = store.conn.execute(
+        """SELECT e.blob_hash, e.rank, e.verdict, e.signature, e.detail, e.exit_code, e.signal,
+                  e.timed_out, e.duration_ms, e.sut_id, i.generator, i.size_bytes
+           FROM executions e JOIN inputs i ON i.blob_hash = e.blob_hash
+           WHERE e.run_id=? ORDER BY e.rank, e.sut_id""", (run_id,)).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        cur = out.get(r["blob_hash"])
+        if cur is None:
+            out[r["blob_hash"]] = dict(r)
+        elif (r["duration_ms"] or 0) > (cur["duration_ms"] or 0):
+            cur["duration_ms"] = r["duration_ms"]
+    return sorted(out.values(), key=lambda d: d["rank"])
+
+
+def _findings(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Failures grouped by signature, numbered F-001... in the order they were first reached."""
+    groups: dict[str, dict[str, Any]] = {}
+    for pos, r in enumerate(rows):
+        if r["verdict"] not in FAILURES or not r["signature"]:
+            continue
+        g = groups.get(r["signature"])
+        if g is None:
+            groups[r["signature"]] = {
+                "signature": r["signature"], "verdict": r["verdict"], "count": 1, "position": pos,
+                "first_rank": r["rank"], "example": r["blob_hash"], "generator": r["generator"],
+                "duration_ms": r["duration_ms"], "detail": r["detail"], "generators": {r["generator"]},
+            }
+        else:
+            g["count"] += 1
+            g["generators"].add(r["generator"])
+    ordered = sorted(groups.values(), key=lambda g: g["position"])
+    for i, g in enumerate(ordered, 1):
+        g["id"] = f"F-{i:03d}"
+        g["generators"] = sorted(g["generators"])
+    return ordered
+
+
+def _generator_breakdown(rows: list[dict[str, Any]], manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    corpus = manifest.get("corpus", {}) or {}
+    scores = corpus.get("generator_scores", {}) or {}
+    counts = corpus.get("generator_counts", {}) or {}
+    stats = {s.get("generator"): s for s in (corpus.get("generation_stats") or [])}
+    names = sorted(set(scores) | set(counts) | set(stats) | {r["generator"] for r in rows})
+    findings = _findings(rows)
+    out = []
+    for name in names:
+        mine = [r for r in rows if r["generator"] == name]
+        by = {v: sum(1 for r in mine if r["verdict"] == v)
+              for v in ("ok", "expected_rejection", "crash", "timeout", "divergence")}
+        st = stats.get(name) or {}
+        out.append({
+            "name": name,
+            "generated": st.get("produced", counts.get(name, 0)),
+            "valid": counts.get(name, 0),
+            "executed": len(mine),
+            "verdicts": by,
+            "findings": sum(1 for f in findings if f["generator"] == name),
+            "pass_rate": (by["ok"] / len(mine)) if mine else None,
+            "cc": scores.get(name),
+            "gen_requested_s": st.get("requested_seconds"),
+            "gen_elapsed_s": st.get("elapsed_s"),
+            "avg_ms": (sum((r["duration_ms"] or 0) for r in mine) / len(mine)) if mine else None,
+        })
+    return sorted(out, key=lambda g: -g["executed"])
+
+
+def _timeline(rows: list[dict[str, Any]], bins: int = 40) -> list[dict[str, Any]]:
+    """Outcomes in execution ORDER. Executions can run in parallel, so this is position, not wall time."""
+    if not rows:
+        return []
+    size = max(1, -(-len(rows) // bins))
+    out = []
+    for start in range(0, len(rows), size):
+        chunk = rows[start:start + size]
+        c = {v: sum(1 for r in chunk if r["verdict"] == v)
+             for v in ("ok", "expected_rejection", "crash", "timeout", "divergence")}
+        out.append({"from": start + 1, "to": start + len(chunk), **c})
+    return out
+
+
+def _prioritization(rows: list[dict[str, Any]], findings: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(rows)
+    if not n or not findings:
+        return {"executed": n, "findings": len(findings), "first_at": None, "by_quarter": None, "by_half": None, "all_at": None}
+    pos = sorted(f["position"] + 1 for f in findings)      # 1-based position of each first sighting
+    return {"executed": n, "findings": len(findings), "first_at": pos[0],
+            "by_quarter": sum(1 for p in pos if p <= n / 4), "by_half": sum(1 for p in pos if p <= n / 2),
+            "all_at": pos[-1], "all_pct": round(100 * pos[-1] / n)}
+
+
+def results_overview(state_dir: Path, run_id: str) -> dict[str, Any] | None:
+    """The workspace payload: everything the five tabs show, computed once."""
+    base = run_detail(state_dir, run_id)
+    if base is None:
+        return None
+    with CorpusStore(state_dir) as store:
+        manifest = _manifest(store, run_id)
+        rows = _exec_rows(store, run_id)
+        stderr = {r["signature"]: r["example_stderr"] for r in store.conn.execute(
+            "SELECT signature, example_stderr FROM failures").fetchall()}
+        all_runs = [r["run_id"] for r in store.conn.execute("SELECT run_id FROM runs ORDER BY started_at").fetchall()]
+    findings = _findings(rows)
+    for f in findings:
+        f["stderr_first"] = ((stderr.get(f["signature"]) or "").strip().splitlines() or [""])[0]
+    started, finished = base.get("started_at"), base.get("finished_at")
+    duration = None
+    if started and finished:
+        from datetime import datetime
+        try:
+            duration = (datetime.fromisoformat(finished) - datetime.fromisoformat(started)).total_seconds()
+        except ValueError:
+            duration = None
+    corpus = manifest.get("corpus", {}) or {}
+    base.update({
+        "number": all_runs.index(run_id) + 1 if run_id in all_runs else None,
+        "complete": bool(finished),
+        "duration_s": duration,
+        "findings": findings,
+        "by_generator": _generator_breakdown(rows, manifest),
+        "timeline": _timeline(rows),
+        "prioritization": _prioritization(rows, findings),
+        "generation_stats": corpus.get("generation_stats") or [],
+        "generation_mode": corpus.get("generation_mode"),
+        "oracle": (manifest.get("config") or {}).get("oracle") or {},
+        "exec_cpu_s": sum((r["duration_ms"] or 0) for r in rows) / 1000,
+        "runs": all_runs,
+    })
+    return base
+
+
+def run_inputs(state_dir: Path, run_id: str, *, q: str = "", generator: str = "", verdict: str = "",
+               offset: int = 0, limit: int = 10) -> dict[str, Any] | None:
+    """The executed inputs of a run, filterable. Inputs that were generated but never reached are
+    counted in the overview, not listed: a run does not record which of the corpus's inputs it
+    considered, only which it executed."""
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    with CorpusStore(state_dir) as store:
+        if store.conn.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone() is None:
+            return None
+        rows = _exec_rows(store, run_id)
+        ids = {f["signature"]: f["id"] for f in _findings(rows)}
+        facets = {"generators": {}, "verdicts": {}}
+        for r in rows:
+            facets["generators"][r["generator"]] = facets["generators"].get(r["generator"], 0) + 1
+            facets["verdicts"][r["verdict"]] = facets["verdicts"].get(r["verdict"], 0) + 1
+        picked = [r for r in rows if (not generator or r["generator"] == generator)
+                  and (not verdict or r["verdict"] == verdict)]
+        needle = (q or "").strip().lower()
+
+        def text_of(h: str) -> str:
+            try:
+                return store.get_blob(h).decode("utf-8", errors="replace")
+            except OSError:
+                return ""
+
+        if needle:
+            hit = []
+            for r in picked[:5000]:                     # a bounded scan: inputs are small, but not unlimited
+                if r["blob_hash"].startswith(needle) or needle in text_of(r["blob_hash"]).lower():
+                    hit.append(r)
+            picked = hit
+        page = picked[offset:offset + limit]
+        items = [{
+            "rank": r["rank"], "hash": r["blob_hash"], "generator": r["generator"], "verdict": r["verdict"],
+            "finding": ids.get(r["signature"]) if r["verdict"] in FAILURES else None,
+            "size": r["size_bytes"], "duration_ms": r["duration_ms"],
+            "preview": " ".join(text_of(r["blob_hash"])[:90].split()),
+        } for r in page]
+    return {"total": len(picked), "all": len(rows), "offset": offset, "limit": limit, "items": items, "facets": facets}
+
+
+def classification_evidence(oracle: dict, f: dict[str, Any], stderr: str) -> list[dict[str, str]]:
+    """WHY the engine called this what it did, in the engine's own order. Read from the recorded
+    verdict and detail plus the configured patterns -- no model, nothing guessed."""
+    import re
+
+    verdict, detail = f["verdict"], f.get("detail") or ""
+    timed_out = verdict == "timeout"
+    signalled = verdict == "crash" and detail.startswith("signal")
+    crash_pats = [p for p in (oracle.get("crash_patterns") or []) if isinstance(p, str)]
+    rej_pats = [p for p in (oracle.get("rejection_patterns") or []) if isinstance(p, str)]
+
+    def hits(pats):
+        out = []
+        for p in pats:
+            try:
+                if re.search(p, stderr or "", re.IGNORECASE | re.MULTILINE):
+                    out.append(p)
+            except re.error:
+                pass
+        return out
+
+    checks: list[dict[str, str]] = []
+    checks.append({"rule": "Timeout", "status": "matched" if timed_out else "no",
+                   "note": (detail or "No answer in time") if timed_out else "Not a timeout"})
+    if verdict == "divergence":
+        checks.append({"rule": "Implementations disagree", "status": "matched", "note": detail})
+        return checks
+    checks.append({"rule": "Killed by a signal", "status": "matched" if signalled else "no",
+                   "note": detail if signalled else "No signal"})
+    crash_hit = "matched a crash pattern" in detail
+    matched = hits(crash_pats) if crash_hit else []
+    checks.append({"rule": "Crash pattern", "status": "matched" if crash_hit else "no",
+                   "note": (matched[0] if matched else "matched in the output") if crash_hit
+                   else ("No match" if crash_pats else "None configured")})
+    rej = hits(rej_pats)
+    checks.append({"rule": "Expected rejection", "status": "no",
+                   "note": "No match" if rej_pats else "None configured"} if not rej else
+                  {"rule": "Expected rejection", "status": "no", "note": f"{rej[0]} matched, but a failure rule came first"})
+    if verdict == "crash" and not (timed_out or signalled or crash_hit):
+        checks.append({"rule": "Unexpected non-zero exit", "status": "matched",
+                       "note": f"{detail or 'non-zero exit'} is not an expected exit code"})
+    return checks
+
+
+def finding_detail(state_dir: Path, run_id: str, signature: str) -> dict[str, Any] | None:
+    with CorpusStore(state_dir) as store:
+        if store.conn.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone() is None:
+            return None
+        manifest = _manifest(store, run_id)
+        rows = _exec_rows(store, run_id)
+        findings = _findings(rows)
+        f = next((x for x in findings if x["signature"] == signature), None)
+        if f is None:
+            return None
+        row = store.conn.execute("SELECT example_stderr FROM failures WHERE signature=?", (signature,)).fetchone()
+        stderr = (row["example_stderr"] if row else "") or ""
+        ex = next(r for r in rows if r["blob_hash"] == f["example"])
+        similar = [r for r in rows if r["signature"] == signature and r["blob_hash"] != f["example"]]
+        text = store.get_blob(f["example"]).decode("utf-8", errors="replace")
+        oracle = (manifest.get("config") or {}).get("oracle") or {}
+        sims = []
+        for r in similar[:5]:
+            try:
+                prev = " ".join(store.get_blob(r["blob_hash"]).decode("utf-8", errors="replace")[:70].split())
+            except OSError:
+                prev = ""
+            sims.append({"hash": r["blob_hash"], "rank": r["rank"], "generator": r["generator"], "preview": prev})
+        index = findings.index(f)
+    return {
+        "id": f["id"], "number": index + 1, "of": len(findings), "signature": signature, "verdict": f["verdict"],
+        "headline": (stderr.strip().splitlines() or [f["detail"] or f["verdict"]])[0],
+        "detail": f["detail"], "count": f["count"], "generator": f["generator"], "generators": f["generators"],
+        "first_rank": f["first_rank"], "hash": f["example"], "input": text[:20000],
+        "exit_code": ex["exit_code"], "signal": ex["signal"], "timed_out": bool(ex["timed_out"]),
+        "duration_ms": ex["duration_ms"], "stderr": stderr[:8000], "size": ex["size_bytes"],
+        "evidence": classification_evidence(oracle, {**f, "detail": f["detail"]}, stderr),
+        "similar": sims, "similar_total": len(similar),
+    }
