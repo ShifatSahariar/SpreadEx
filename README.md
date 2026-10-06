@@ -167,17 +167,28 @@ expressibility.
 
 ```bash
 cd my-project
-spreadex ui          # http://127.0.0.1:8777 — same address every time
+spreadex             # or: spreadex ui — no flags needed
 ```
 
 It opens the browser for you, so the usual day looks like `spreadex run` then
 `spreadex ui`, and you never type a URL at all.
 
-The address is fixed and the token is per project and persistent, so the link is
-worth bookmarking — it still works after a restart, a reboot, or a week away.
-`--port` moves it if 8777 is taken; `--new-token` rotates the token and
-invalidates saved links. The token lives in `.spreadex/ui-token`, owner-readable
-only, in a directory SpreadEx keeps out of version control.
+Each project gets its own address and token, chosen for you and kept stable: the
+same project comes back on the same port with the same token after a restart, a
+reboot, or a week away, so the link is worth bookmarking. Run it in several
+projects at once and each takes its own port; if a project's usual port is busy,
+the next free one is used and the banner says so. Running it again in a project
+that already has a Workbench just reopens that one.
+
+```bash
+spreadex ui --list   # every Workbench running now, with its project and address
+spreadex ui --stop   # stop this project's Workbench
+```
+
+`--port N` is only for when you need a specific port (it fails if taken);
+`--new-token` rotates the token and invalidates saved links. Tokens are stored
+under `~/.spreadex` (owner-readable only), not in your project, and an
+unconfigured folder is left untouched.
 
 Each project has its own token, so a link saved for one project cannot open
 another's corpus. Two halves: a **setup

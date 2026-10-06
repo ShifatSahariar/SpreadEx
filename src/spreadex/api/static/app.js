@@ -6,12 +6,17 @@
 // The token is handed over once in the URL, then kept for this tab only, so it
 // stops sitting in the address bar, in history, and in anything we later link.
 const incoming = new URL(location.href);
+// The token comes from the link once. It is kept for this tab AND for this address: the token is the
+// same on every launch of a project, and each project keeps its own port, so a new tab or a bookmark
+// of the plain address keeps working.
+const tokenStore = { get: k => { try { return sessionStorage.getItem(k) || localStorage.getItem(k) || ""; } catch (e) { return ""; } },
+                     set: (k, v) => { try { sessionStorage.setItem(k, v); localStorage.setItem(k, v); } catch (e) { /* private mode */ } } };
 if (incoming.searchParams.get("token")) {
-  sessionStorage.setItem("spreadex-token", incoming.searchParams.get("token"));
+  tokenStore.set("spreadex-token", incoming.searchParams.get("token"));
   incoming.searchParams.delete("token");
   history.replaceState({}, "", incoming.pathname);
 }
-const TOKEN = sessionStorage.getItem("spreadex-token") || "";
+const TOKEN = tokenStore.get("spreadex-token");
 
 async function api(path, body) {
   const opts = { headers: { "X-SpreadEx-Token": TOKEN } };
@@ -36,10 +41,9 @@ function failureCard(e) {
   if (e && (e.unauthorized || !TOKEN)) {
     return `<div class="card" role="alert"><h3>This tab can no longer reach SpreadEx</h3>
       <p class="why">${TOKEN
-        ? "Its access token is out of date &mdash; most likely <span class=\"mono\">spreadex ui</span> was restarted since this tab was opened."
+        ? "Its access token no longer matches this server &mdash; usually because this address now belongs to a different project."
         : "It was opened without an access token."}
-        Your work in the terminal is safe. Open the link <span class="mono">spreadex ui</span>
-        printed (it ends in <span class="mono">?token=&hellip;</span>), or run it again to get a fresh tab.</p>
+        Run this in the project folder. It reopens the right Workbench, with a working link:</p>
       <pre>spreadex ui</pre></div>`;
   }
   return `<div class="card"><div class="note bad">${esc((e && e.message) || e)}</div></div>`;

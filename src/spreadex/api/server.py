@@ -420,29 +420,31 @@ MAX_DRAIN = 64_000_000
 
 
 def project_token(config, rotate: bool = False) -> str:
-    """A token that survives restarts, so the UI has a URL worth bookmarking.
+    """The project's access token: the same one every launch, so no link or tab goes stale.
 
-    A fresh token per launch meant the address changed every time and nothing
-    could be saved. The token is kept per project in `.spreadex/ui-token`, owner
-    readable only, inside a directory `spreadex init` already git-ignores.
-
-    The trade is deliberate: a token on disk is readable by anything already
-    running as this user, which is a much smaller problem than the alternatives
-    -- no token at all, or a URL nobody can keep. `--new-token` rotates it, and
-    the file can simply be deleted.
+    It lives with the user (see registry.py), not in the project, so an unconfigured folder still
+    gets a stable token and still leaves nothing behind. A configured project's own
+    `.spreadex/ui-token` (written by earlier versions, and still written) wins if present, and the two
+    are kept in agreement. `--new-token` rotates both.
     """
-    if not config.configured:
-        # Nothing on disk yet, and nothing should be: someone who opens the UI
-        # in the wrong directory and closes it must leave no trace. The token
-        # is persisted by reload_project() the moment a project exists.
-        return secrets.token_urlsafe(32)
+    from . import registry
 
-    path = config.state_dir / TOKEN_FILE
-    if not rotate and path.is_file():
-        existing = path.read_text().strip()
-        if existing:
-            return existing
-    return persist_token(config, secrets.token_urlsafe(32))
+    root = config.project_root
+    if rotate:
+        token = registry.token_for(root, rotate=True)
+        if config.configured:
+            persist_token(config, token)
+        return token
+
+    if config.configured:
+        path = config.state_dir / TOKEN_FILE
+        if path.is_file():
+            existing = path.read_text().strip()
+            if existing:
+                registry.remember_token(root, existing)
+                return existing
+        return persist_token(config, registry.token_for(root))
+    return registry.token_for(root)
 
 
 def persist_token(config, token: str) -> str:
@@ -481,18 +483,32 @@ def reload_project(server) -> None:
         persist_token(config, server.spreadex_token)
 
 
-def serve(config, host: str = "127.0.0.1", port: int = 8777,
+def serve(config, host: str = "127.0.0.1", port: int | None = None,
           open_browser: bool = True, verbose: bool = False,
           read_only: bool = False, new_token: bool = False, experimental: bool = False,
           token: str | None = None, log=_emit) -> None:
     """Run the UI until interrupted. Foreground on purpose.
 
-    A foreground server cannot be orphaned, cannot collide with a forgotten
-    instance, and leaves no "which server am I looking at?" question -- the
-    problems `jupyter server list` exists to solve.
+    With no `port`, the project's own preferred port is tried first and the next free one after it,
+    so a second project, or a forgotten server, never needs `--port`. A port the user NAMES is
+    honoured alone: if it is taken, that is an error to report.
     """
+    import errno
+
+    from . import registry
+
     token = token or project_token(config, rotate=new_token)
-    httpd = ThreadingHTTPServer((host, port), _Handler)
+    httpd, last = None, None
+    for candidate in registry.candidate_ports(config.project_root, port):
+        try:
+            httpd = ThreadingHTTPServer((host, candidate), _Handler)
+            break
+        except OSError as exc:
+            last = exc
+            if port or exc.errno not in (errno.EADDRINUSE, errno.EACCES):
+                raise
+    if httpd is None:
+        raise last
     httpd.spreadex_config = config
     httpd.spreadex_token = token
     httpd.spreadex_verbose = verbose
@@ -508,13 +524,14 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
     plain = f"http://{shown_host}:{actual_port}"
     url = f"{plain}/?token={token}"
     log(f"\nSpreadEx UI for {config.project_root}\n")
-    # Print the link that works. Leading with the bare address looked tidier but
-    # sent people to a URL that cannot authorise a tab: opening it in a tab that
-    # still holds the token of a previous launch gives "token out of date".
-    log(f"  Open this link (it carries this session's access token):\n  {url}\n")
-    log(f"  Bare address {plain} only works in a tab that was already opened from this link.\n")
+    log(f"  Workbench:  {url}\n")
+    log("  The link carries this project's access token. It stays the same across restarts,")
+    log("  and your browser remembers it for this address, so a bookmark keeps working.")
+    wanted = registry.preferred_port(config.project_root)
+    if not port and actual_port != wanted:
+        log(f"  (this project's usual port {wanted} was busy, so {actual_port} is in use)")
+    log("")
     if config.configured:
-        log("  Same address every time, so it is worth bookmarking.")
         log("  Rotate the token with --new-token if you ever need to.")
     else:
         log("  No spreadex.yaml here yet -- the UI will walk you through making one.")
@@ -529,6 +546,7 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
         log("  your system under test. Start it with --read-only to forbid that.")
     log("  Press Ctrl-C to stop.\n")
 
+    registry.register(config.project_root, actual_port, host)
     if open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
     try:
@@ -537,3 +555,4 @@ def serve(config, host: str = "127.0.0.1", port: int = 8777,
         log("\nstopped")
     finally:
         httpd.server_close()
+        registry.unregister(config.project_root)
