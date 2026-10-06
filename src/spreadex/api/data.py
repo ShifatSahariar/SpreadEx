@@ -368,7 +368,7 @@ def results_overview(state_dir: Path, run_id: str) -> dict[str, Any] | None:
         all_runs = [r["run_id"] for r in store.conn.execute("SELECT run_id FROM runs ORDER BY started_at").fetchall()]
     findings = _findings(rows)
     for f in findings:
-        f["stderr_first"] = ((stderr.get(f["signature"]) or "").strip().splitlines() or [""])[0]
+        f["stderr_first"] = finding_headline(f["verdict"], f["detail"], stderr.get(f["signature"]) or "")
     started, finished = base.get("started_at"), base.get("finished_at")
     duration = None
     if started and finished:
@@ -481,6 +481,16 @@ def classification_evidence(oracle: dict, f: dict[str, Any], stderr: str) -> lis
     return checks
 
 
+def finding_headline(verdict: str, detail: str | None, stderr: str) -> str:
+    """One line a person can scan: what the system said, else what kind of failure it was."""
+    first = next((ln.strip() for ln in (stderr or "").splitlines() if ln.strip()), "")
+    if first:
+        return first
+    if verdict == "timeout":
+        return "Execution timeout"
+    return detail or verdict
+
+
 def finding_detail(state_dir: Path, run_id: str, signature: str) -> dict[str, Any] | None:
     with CorpusStore(state_dir) as store:
         if store.conn.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone() is None:
@@ -507,7 +517,7 @@ def finding_detail(state_dir: Path, run_id: str, signature: str) -> dict[str, An
         index = findings.index(f)
     return {
         "id": f["id"], "number": index + 1, "of": len(findings), "signature": signature, "verdict": f["verdict"],
-        "headline": (stderr.strip().splitlines() or [f["detail"] or f["verdict"]])[0],
+        "headline": finding_headline(f["verdict"], f["detail"], stderr),
         "detail": f["detail"], "count": f["count"], "generator": f["generator"], "generators": f["generators"],
         "first_rank": f["first_rank"], "hash": f["example"], "input": text[:20000],
         "exit_code": ex["exit_code"], "signal": ex["signal"], "timed_out": bool(ex["timed_out"]),

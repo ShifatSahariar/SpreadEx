@@ -201,11 +201,10 @@ def test_results_with_no_run_is_a_page_not_a_one_line_card():
 def test_the_empty_results_page_describes_the_real_tabs_and_shows_no_made_up_numbers():
     tabs = JS[JS.index("const RESULTS_PREVIEW"):JS.index("function resultsEmpty")]
     names = re.findall(r'\["\w+", "\w+", "(\w+)"', tabs)
-    assert names == ["Overview", "Generators", "Budget", "Failures", "Corpus"]
-    # the real results page has the same five tabs
-    real = JS[JS.index("function paintRun"):][:1500]
+    assert names == ["Overview", "Generators", "Budget", "Findings", "Corpus"]
+    real = JS[JS.index("const RESULT_TABS"):][:600]
     for n in names:
-        assert n in real, n
+        assert f't: "{n}"' in real, n
     e = JS[JS.index("function resultsEmpty"):JS.index("async function renderResults")]
     assert not re.search(r">\s*\d{2,}\s*<", e), "no sample figures on an empty page"
 

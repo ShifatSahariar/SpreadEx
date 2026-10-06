@@ -759,6 +759,24 @@ function fmtSeconds(s) {
 }
 // ---- end review & run -----------------------------------------------------------
 
+// ---- results formatting (pure) ----
+function fmtMs(ms) { if (ms == null) return "—"; return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1).replace(/\.?0+$/, "")} s`; }
+function fmtDur(s) {
+  if (s == null) return "\u2014";
+  s = Math.round(s);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), r = s % 60;
+  return r ? `${m}m ${r}s` : `${m}m`;
+}
+function fmtPct(n, d, digits = 1) { return d ? `${(100 * n / d).toFixed(digits)}%` : "—"; }
+function pageNumbers(cur, last) {
+  const set = new Set([1, last, cur - 1, cur, cur + 1].filter(n => n >= 1 && n <= last));
+  const out = []; let prev = 0;
+  [...set].sort((a, b) => a - b).forEach(n => { if (n - prev > 1) out.push("…"); out.push(n); prev = n; });
+  return out;
+}
+// ---- end results formatting ----
+
 const DURATION = /^\d+(\.\d+)?\s*[smh]?$/i;
 // ---- end command line helpers ----------------------------------------------
 
@@ -3057,6 +3075,11 @@ function watchJob(onDone) {
 }
 
 // --------------------------------------------------------------- results
+//
+// One workspace over one run, answering in order: did anything fail, what should I investigate, was
+// the testing effective, which generator contributed, can I reproduce it. Every number is read from
+// what the run recorded. What a run did not record (coverage, mutation score, cost, cluster
+// assignments) is not shown, rather than estimated.
 
 async function loadRuns() {
   const r = await api("/api/runs");
@@ -3064,50 +3087,545 @@ async function loadRuns() {
   if (!S.current || !S.runs.some(x => x.run_id === S.current)) S.current = S.runs[0]?.run_id || null;
 }
 
-function budgetChart(actual, random, total) {
-  if (!actual || actual.length < 2) return "";
-  if (!actual.some(p => p[1] > 0)) {
-    return `<div class="empty">No failures in ${num(total)} executed inputs, so there is no curve
-      to draw.<br><span style="font-size:12.5px">For a mature system under test this is the expected
-      outcome, not a missing measurement.</span></div>`;
-  }
-  const W = 620, H = 180, P = { l: 34, r: 12, t: 10, b: 24 };
-  const maxY = Math.max(1, ...actual.map(p => p[1]), ...(random || []).map(p => p[1]));
-  const x = i => P.l + (i / Math.max(1, total - 1)) * (W - P.l - P.r);
-  const y = v => H - P.b - (v / maxY) * (H - P.t - P.b);
-  const line = pts => pts.map((p, i) => `${i ? "L" : "M"}${x(p[0] - 1).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
-  const ticks = [...new Set([0, Math.round(maxY / 2), maxY])];
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img"
-      aria-label="distinct failure signatures against inputs executed">
-    ${ticks.map(t => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}"
-       stroke="var(--color-border)" stroke-dasharray="2 3"/>
-      <text x="${P.l - 7}" y="${y(t) + 4}" font-size="10" fill="var(--color-muted)" text-anchor="end">${t}</text>`).join("")}
-    <text x="${W - P.r}" y="${H - 6}" font-size="10" fill="var(--color-muted)" text-anchor="end">${total} executed</text>
-    ${random?.length ? `<path d="${line(random)}" fill="none" stroke="var(--color-muted)" stroke-width="1.5" stroke-dasharray="4 3"/>` : ""}
-    <path d="${line(actual)}" fill="none" stroke="var(--series-0)" stroke-width="2"/>
-  </svg>
-  <div class="legend"><span><span class="swatch" style="background:var(--series-0)"></span>this ordering</span>
-  ${random?.length ? `<span><span class="swatch" style="background:var(--color-muted)"></span>random ordering (mean of 200 shuffles)</span>` : ""}</div>`;
+const VERDICTS = {
+  ok:                 { label: "Passed",             color: "#16A34A", tone: "green" },
+  expected_rejection: { label: "Expected rejection", color: "#1687F8", tone: "blue" },
+  crash:              { label: "Crash",              color: "#EF4444", tone: "red" },
+  timeout:            { label: "Timeout",            color: "#F59E0B", tone: "amber" },
+  divergence:         { label: "Divergence",         color: "#9333EA", tone: "purple" },
+};
+const VORDER = ["ok", "expected_rejection", "crash", "timeout", "divergence"];
+const vtag = v => `<span class="vtag ${(VERDICTS[v] || {}).tone || ""}">${esc((VERDICTS[v] || { label: v }).label)}</span>`;
+const GEN_COLORS = ["#1687F8", "#9333EA", "#F59E0B", "#16A34A", "#EF4444", "#64748B"];
+const genColor = (name, all) => GEN_COLORS[Math.max(0, all.indexOf(name)) % GEN_COLORS.length];
+
+function fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+}
+function fmtTime(iso) { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
+
+// ------- small SVG charts (no library; they follow the theme through currentColor and tokens)
+
+function donut(parts, total, centre, sub) {
+  const R = 52, C = 2 * Math.PI * R;
+  let acc = 0;
+  const arcs = parts.filter(p => p.n > 0).map(p => {
+    const len = (p.n / total) * C, seg = `<circle cx="70" cy="70" r="${R}" fill="none" stroke="${p.color}" stroke-width="16"
+      stroke-dasharray="${Math.max(0.5, len - (parts.filter(q => q.n > 0).length > 1 ? 1.5 : 0))} ${C}" stroke-dashoffset="${-acc}" transform="rotate(-90 70 70)"><title>${esc(p.label)}: ${p.n}</title></circle>`;
+    acc += len;
+    return seg;
+  }).join("");
+  return `<svg class="donut" viewBox="0 0 140 140" role="img" aria-label="${esc(centre)} ${esc(sub)}">
+    <circle cx="70" cy="70" r="${R}" fill="none" stroke="var(--color-border)" stroke-width="16"/>${arcs}
+    <text x="70" y="68" text-anchor="middle" class="donut-n">${esc(centre)}</text>
+    <text x="70" y="86" text-anchor="middle" class="donut-s">${esc(sub)}</text></svg>`;
+}
+
+// Vertical stacked columns over a list of bins; `keys` are the stacked series, in drawing order.
+function stackedColumns(bins, keys, colors, xLabel) {
+  if (!bins.length) return `<div class="empty">Nothing was executed.</div>`;
+  const W = 640, H = 190, P = { l: 34, r: 8, t: 8, b: 26 };
+  const max = Math.max(1, ...bins.map(b => keys.reduce((s, k) => s + (b[k] || 0), 0)));
+  const bw = (W - P.l - P.r) / bins.length;
+  const y = v => H - P.b - (v / max) * (H - P.t - P.b);
+  const ticks = [0, 0.5, 1].map(f => Math.round(max * f));
+  const bars = bins.map((b, i) => {
+    let base = 0;
+    return keys.map((k, j) => {
+      const v = b[k] || 0; if (!v) return "";
+      const rect = `<rect x="${P.l + i * bw + 1}" y="${y(base + v)}" width="${Math.max(1, bw - 2)}" height="${y(base) - y(base + v)}" fill="${colors[j]}"><title>inputs ${b.from}–${b.to}: ${k.replace("_", " ")} ${v}</title></rect>`;
+      base += v; return rect;
+    }).join("");
+  }).join("");
+  const last = bins[bins.length - 1].to;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Outcomes in execution order">
+    ${ticks.map(t => `<g><line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" class="grid"/><text x="${P.l - 5}" y="${y(t) + 3}" text-anchor="end" class="axis">${t}</text></g>`).join("")}
+    ${bars}
+    <text x="${P.l}" y="${H - 8}" class="axis">1</text><text x="${(W + P.l) / 2}" y="${H - 8}" text-anchor="middle" class="axis">${esc(xLabel || "inputs, in execution order")}</text><text x="${W - P.r}" y="${H - 8}" text-anchor="end" class="axis">${last}</text></svg>`;
+}
+
+// Horizontal bars, one per row; `max` fixes the scale so rows can be compared.
+function hbars(rows, max, fmt) {
+  return `<div class="hbars">${rows.map(r => `<div class="hbar"><span class="hb-l">${esc(r.label)}</span>
+    <span class="hb-t"><span class="hb-f" style="width:${max ? Math.max(0, Math.min(100, 100 * r.value / max)) : 0}%;background:${r.color}"></span></span>
+    <span class="hb-v">${esc(fmt ? fmt(r.value) : String(r.value))}</span></div>`).join("")}</div>`;
+}
+
+function legend(items) {
+  return `<div class="legend">${items.map(i => `<span><i style="background:${i.color}"></i>${esc(i.label)}</span>`).join("")}</div>`;
+}
+
+function resCard(title, body, { tip, right, cls = "" } = {}) {
+  return `<section class="rescard ${cls}"><div class="rescard-h"><h4>${esc(title)}${tip ? " " + hint("hint-r-" + title.replace(/\W+/g, ""), tip) : ""}</h4>${right || ""}</div>${body}</section>`;
+}
+
+// ------- the header every tab shares
+
+function runTitle(d) { return `Campaign #${d.number ?? "?"}`; }
+
+function resultsHeader(d) {
+  const v = d.verdicts || {}, c = d.corpus || {};
+  const t = (d.targets || [])[0] || {};
+  const kpi = (tone, icon, n, label) => `<div class="kpi ${tone}"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span>
+      <div><strong>${num(n)}</strong><span>${label}</span></div></div>`;
+  const status = d.complete ? `<span class="rstatus ok">${ICONS.success} Completed</span>` : `<span class="rstatus warn">${ICONS.alert} Not finished</span>`;
+  return `<header class="reshead">
+    <button type="button" class="rback" onclick="go('setup'); gotoStep('run')" aria-label="Back to Review &amp; run" title="Back to Review &amp; run">${ICONS.back}</button>
+    <div class="rtitle">
+      <div class="rtitle-1"><div class="runpick"><button type="button" class="runpick-b" aria-haspopup="listbox" aria-expanded="${!!S.runMenu}" onclick="toggleRunMenu()">
+          <h2>${esc(runTitle(d))}</h2>${(S.runs || []).length > 1 ? ICONS.chevron : ""}</button>
+          ${S.runMenu ? `<div class="runmenu" role="listbox">${S.runs.map((r, i) => `<button type="button" role="option" aria-selected="${r.run_id === S.current}" onclick="pickRun('${esc(r.run_id)}')">
+            <strong>#${S.runs.length - i}</strong><span>${esc(fmtDate(r.started_at))} ${esc(fmtTime(r.started_at))}</span><span class="${r.failures ? "bad" : "muted"}">${r.failures ? r.failures + " failing" : "no failures"}</span></button>`).join("")}</div>` : ""}</div>
+        ${status}</div>
+      <div class="rtitle-2"><strong>${esc(t.name || "sut")}</strong>${t.version ? ` <span class="muted">${esc(String(t.version).split("\n")[0].slice(0, 40))}</span>` : ""}</div>
+      <div class="rtitle-3"><span>${ICONS.clock} ${esc(fmtDate(d.started_at))} · ${esc(fmtTime(d.started_at))}</span><span>${ICONS.playOutline} ${esc(fmtDur(d.duration_s))}</span><span>seed ${esc(String(d.seed))}</span></div>
+    </div>
+    <div class="kpis">
+      ${kpi("blue", "doc", c.generated ?? 0, "Generated")}
+      ${kpi("green", "success", c.valid ?? 0, "Valid inputs")}
+      ${kpi("blue", "playOutline", d.executed, "Executed")}
+      ${kpi("red", "bug", v.crash || 0, "Crashes")}
+      ${kpi("amber", "clock", v.timeout || 0, "Timeouts")}
+      ${kpi("purple", "scale", v.divergence || 0, "Divergences")}
+    </div>
+    <div class="ractions">
+      <div class="runpick"><button type="button" class="ghost rmore" aria-haspopup="menu" aria-expanded="${!!S.actMenu}" aria-label="More actions" onclick="toggleActMenu()">${ICONS.dots}</button>
+        ${S.actMenu ? `<div class="runmenu right" role="menu">
+          <button type="button" role="menuitem" onclick="copyReplayCommand()">Copy replay command</button>
+          <button type="button" role="menuitem" onclick="S.actMenu = false; go('setup'); gotoStep('run')">Run again…</button></div>` : ""}</div>
+      <button type="button" class="ghost rexport" onclick="exportRun()">${ICONS.download} Export</button>
+    </div></header>`;
+}
+
+function toggleRunMenu() { S.runMenu = !S.runMenu; S.actMenu = false; paintRun(); }
+function toggleActMenu() { S.actMenu = !S.actMenu; S.runMenu = false; paintRun(); }
+function copyReplayCommand() {
+  S.actMenu = false; paintRun();
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(`spreadex replay ${S.current}`).catch(() => {});
+}
+// The export needs the token header, so it is fetched and saved rather than linked.
+async function exportRun() {
+  try {
+    const r = await fetch(`/api/runs/${encodeURIComponent(S.current)}/export`, { headers: { "X-SpreadEx-Token": TOKEN } });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+    const url = URL.createObjectURL(await r.blob());
+    const a = Object.assign(document.createElement("a"), { href: url, download: `spreadex-${S.current}.zip` });
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  } catch (e) { S.exportError = String(e.message || e); paintRun(); }
 }
 
 const RESULT_TABS = [
-  { id: "overview",   t: "Overview"   },
-  { id: "generators", t: "Generators" },
-  { id: "budget",     t: "Budget"     },
-  { id: "failures",   t: "Failures"   },
-  { id: "corpus",     t: "Corpus"     },
+  { id: "overview", t: "Overview", icon: "chart" },
+  { id: "generators", t: "Generators", icon: "grid" },
+  { id: "budget", t: "Budget", icon: "clock" },
+  { id: "findings", t: "Findings", icon: "bug" },
+  { id: "corpus", t: "Corpus", icon: "database" },
 ];
 
-function pickResultTab(id) { S.rtab = id; paintRun(); }
+function pickResultTab(id) { S.rtab = id; S.runMenu = S.actMenu = false; paintRun(); if (id === "corpus") loadCorpus(); if (id === "findings") ensureFinding(); }
 
-// What Results is for, shown before there is anything to show. These are descriptions of the real
-// tabs, not sample numbers: nothing here pretends a run has happened.
+// ------- Overview: what happened
+
+function tabOverview(d) {
+  const v = d.verdicts || {}, total = d.executed || 0;
+  const parts = VORDER.map(k => ({ key: k, n: v[k] || 0, label: VERDICTS[k].label, color: VERDICTS[k].color }));
+  const outcome = `<div class="outcome">${donut(parts, total || 1, num(total), "executed")}
+    <div class="outrows">${parts.map(p => `<div class="outrow"><i style="background:${p.color}"></i><span class="o-l">${p.label}</span><strong>${num(p.n)}</strong>
+      <span class="o-p">${fmtPct(p.n, total)}</span><span class="o-b"><span style="width:${total ? 100 * p.n / total : 0}%;background:${p.color}"></span></span></div>`).join("")}</div></div>`;
+
+  const fs = d.findings || [];
+  const top = fs.length ? `<table class="rtable"><thead><tr><th>#</th><th>Type</th><th>Signature</th><th>Generator</th><th>First seen</th></tr></thead><tbody>
+      ${fs.slice(0, 5).map((f, i) => `<tr class="click" onclick="openFinding('${esc(f.signature)}')"><td>${i + 1}</td><td>${vtag(f.verdict)}</td>
+        <td class="sig">${esc(f.stderr_first)}</td><td>${esc(f.generator)}</td><td>input #${f.position + 1}</td></tr>`).join("")}</tbody></table>
+      ${fs.length > 5 ? `<button type="button" class="linkish" onclick="pickResultTab('findings')">${fs.length - 5} more finding${fs.length - 5 > 1 ? "s" : ""}</button>` : ""}`
+    : `<div class="empty">No failures in ${num(total)} executed inputs. For a mature system under test that is the expected outcome, not a missing measurement.</div>`;
+
+  const p = d.prioritization || {};
+  const prio = p.findings ? `<div class="mini3">
+      <div><strong>${num(p.first_at)}</strong><span>First finding at input</span></div>
+      <div><strong>${p.by_quarter} / ${p.findings}</strong><span>Findings in the first 25%</span></div>
+      <div><strong>${p.all_pct}%</strong><span>of the run when the last one appeared</span></div></div>
+      <div class="rnote">${ICONS.info}<div>Inputs run in SpreadEx's priority order. Budget compares this with a random order of the same inputs.
+        <button type="button" class="linkish" onclick="pickResultTab('budget')">See Budget</button></div></div>`
+    : `<div class="empty">Nothing failed, so there is no discovery order to report.</div>`;
+
+  const gens = d.by_generator || [];
+  const gtable = `<div class="tscroll"><table class="rtable"><thead><tr><th>Generator</th><th>Generated</th><th>Valid</th><th>Executed</th><th>Findings</th><th>Pass rate</th></tr></thead><tbody>
+    ${gens.map(g => `<tr><td><i class="dotc" style="background:${genColor(g.name, gens.map(x => x.name))}"></i>${esc(g.name)}</td><td>${num(g.generated)}</td><td>${num(g.valid)}</td><td>${num(g.executed)}</td>
+      <td>${g.findings ? `<span class="count bad">${g.findings}</span>` : `<span class="muted">0</span>`}</td>
+      <td class="passcell"><span>${g.pass_rate == null ? "—" : (100 * g.pass_rate).toFixed(1) + "%"}</span><span class="o-b"><span style="width:${100 * (g.pass_rate || 0)}%;background:#16A34A"></span></span></td></tr>`).join("")}
+    <tr class="total"><td>Total</td><td>${num(d.corpus?.generated)}</td><td>${num(d.corpus?.valid)}</td><td>${num(d.executed)}</td><td><span class="count bad">${fs.length}</span></td>
+      <td>${total ? ((100 * (v.ok || 0) / total).toFixed(1) + "%") : "—"}</td></tr></tbody></table>`;
+
+  return `<div class="resgrid">
+    ${resCard("Campaign outcome", outcome, { tip: "How every executed input was judged. A refusal the system makes on purpose is an expected rejection, not a failure." })}
+    ${resCard("Prioritization", prio, { tip: "When the findings were reached, against how many inputs were executed. Only what this run recorded." })}
+    ${resCard("Top findings", top, { right: fs.length ? `<button type="button" class="ghost small" onclick="pickResultTab('findings')">View all ${ICONS.arrow}</button>` : "", cls: "wide-l" })}
+    ${resCard("Generator contribution", gtable, { tip: "Per generator, from the inputs it produced and the verdicts they received.", cls: "wide-r" })}
+    ${resCard("Execution outcome over time", stackedColumns(d.timeline || [], VORDER, VORDER.map(k => VERDICTS[k].color), "inputs, in execution order")
+      + legend(VORDER.map(k => ({ label: VERDICTS[k].label, color: VERDICTS[k].color }))), { tip: "Outcomes in the order inputs were executed. With parallel executions this is position, not wall-clock time.", cls: "wide-l" })}
+    ${resCard("Campaign details", detailsTable(d), { right: `<button type="button" class="ghost small" onclick="go('setup')">${ICONS.edit} Edit setup</button>`, cls: "wide-r" })}
+  </div>`;
+}
+
+function detailsTable(d) {
+  const t = (d.targets || [])[0] || {}, b = d.budgets || {}, o = d.oracle || {};
+  const checks = ["Crash", "Timeout"].concat((o.rejection_patterns || []).length || (o.expected_exit_codes || []).length ? ["Rejection"] : [],
+    (o.crash_patterns || []).length ? ["Signatures"] : [], o.type === "differential" ? ["Differential"] : []);
+  const row = (k, v) => `<div class="drow"><span class="muted">${k}</span><span>${v}</span></div>`;
+  const exec = b.max_inputs ? `${num(b.max_inputs)} executions` : (b.execution_s ? fmtDur(b.execution_s) : "—");
+  return `<div class="dgrid">${row("SUT", esc(t.name || "sut"))}${row("Command", `<span class="mono">${esc((t.command || []).join(" "))}</span>`)}
+    ${row("Generators", esc((d.by_generator || []).map(g => g.name).join(", ") || "—"))}${row("Testing strategy", esc(checks.join(", ")))}
+    ${row("Test ordering", d.signal === "random" ? "Random (baseline)" : "SpreadEx prioritization")}${row("Execution budget", esc(exec))}</div>`;
+}
+
+// ------- Generators: who contributed
+
+function groupedBars(rows, series, colors) {
+  const W = 560, H = 190, P = { l: 38, r: 8, t: 10, b: 28 };
+  const max = Math.max(1, ...rows.flatMap(r => series.map(s => r[s] || 0)));
+  const gw = (W - P.l - P.r) / Math.max(1, rows.length), bw = Math.min(26, (gw - 14) / series.length);
+  const y = v => H - P.b - (v / max) * (H - P.t - P.b);
+  const ticks = [0, 0.5, 1].map(f => Math.round(max * f));
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Grouped bars per generator">
+    ${ticks.map(t => `<g><line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" class="grid"/><text x="${P.l - 5}" y="${y(t) + 3}" text-anchor="end" class="axis">${t}</text></g>`).join("")}
+    ${rows.map((r, i) => {
+      const x0 = P.l + i * gw + (gw - bw * series.length) / 2;
+      return series.map((s, j) => `<rect x="${x0 + j * bw}" y="${y(r[s] || 0)}" width="${bw - 2}" height="${y(0) - y(r[s] || 0)}" fill="${colors[j]}"><title>${esc(r.name)} ${s}: ${r[s] || 0}</title></rect>
+        <text x="${x0 + j * bw + (bw - 2) / 2}" y="${y(r[s] || 0) - 3}" text-anchor="middle" class="axis">${r[s] || 0}</text>`).join("")
+        + `<text x="${P.l + i * gw + gw / 2}" y="${H - 9}" text-anchor="middle" class="axis">${esc(r.name)}</text>`;
+    }).join("")}</svg>`;
+}
+
+function tabGenerators(d) {
+  const gens = d.by_generator || [], names = gens.map(g => g.name);
+  const sorts = { executed: g => -g.executed, findings: g => -g.findings, pass: g => -(g.pass_rate ?? -1), cc: g => -(g.cc ?? -1) };
+  const key = S.gsort || "executed";
+  const rows = [...gens].sort((a, b) => sorts[key](a) - sorts[key](b));
+  const fv = g => ["crash", "timeout", "divergence"].map(k => g.verdicts[k] ? `<span class="count ${VERDICTS[k].tone}" title="${VERDICTS[k].label}">${g.verdicts[k]}</span>` : "").join("") || `<span class="muted">0</span>`;
+  const ccMax = Math.max(1, ...gens.map(g => g.cc || 0));
+  const table = `<div class="tscroll"><table class="rtable"><thead><tr><th>Generator</th><th>Generated</th><th>Valid</th><th>Executed</th><th>Failing inputs</th><th>Pass rate</th><th>Cluster coverage ${hint("hint-cc-col", "How much of the pooled input space this generator's inputs reach. It is relative to the pool in this run: add or remove a generator and every score changes.")}</th></tr></thead><tbody>
+    ${rows.map(g => `<tr><td><i class="dotc" style="background:${genColor(g.name, names)}"></i>${esc(g.name)}</td><td>${num(g.generated)}</td><td>${num(g.valid)}</td><td>${num(g.executed)}</td><td>${fv(g)}</td>
+      <td class="passcell"><span>${g.pass_rate == null ? "—" : (100 * g.pass_rate).toFixed(1) + "%"}</span><span class="o-b"><span style="width:${100 * (g.pass_rate || 0)}%;background:#16A34A"></span></span></td>
+      <td class="passcell"><span>${g.cc == null ? "—" : g.cc.toFixed(3)}</span><span class="o-b"><span style="width:${g.cc == null ? 0 : 100 * g.cc / ccMax}%;background:#1687F8"></span></span></td></tr>`).join("")}</tbody></table></div>`;
+  const sortSel = `<label class="sortby">Sort by <select onchange="S.gsort = this.value; paintRun()">${[["executed", "Executed inputs"], ["findings", "Findings"], ["pass", "Pass rate"], ["cc", "Cluster coverage"]]
+    .map(([v, t]) => `<option value="${v}" ${key === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>`;
+
+  const executedChart = groupedBars(gens, ["generated", "valid", "executed"], ["#cbd5e1", "#1687F8", "#16A34A"]) + legend([{ label: "Generated", color: "#cbd5e1" }, { label: "Valid", color: "#1687F8" }, { label: "Executed", color: "#16A34A" }]);
+  const failChart = groupedBars(gens.map(g => ({ name: g.name, crash: g.verdicts.crash, timeout: g.verdicts.timeout, divergence: g.verdicts.divergence })), ["crash", "timeout", "divergence"], ["#EF4444", "#F59E0B", "#9333EA"])
+    + legend([{ label: "Crash", color: "#EF4444" }, { label: "Timeout", color: "#F59E0B" }, { label: "Divergence", color: "#9333EA" }]);
+  const ccRows = gens.filter(g => g.cc != null).sort((a, b) => b.cc - a.cc).map(g => ({ label: g.name, value: g.cc, color: genColor(g.name, names) }));
+  const outcomeBars = `<div class="stack100">${gens.map(g => { const t = g.executed || 1; return `<div class="s100"><span class="hb-l">${esc(g.name)}</span><span class="s100-t">${VORDER.map(k =>
+    g.verdicts[k] ? `<span style="width:${100 * g.verdicts[k] / t}%;background:${VERDICTS[k].color}" title="${VERDICTS[k].label}: ${g.verdicts[k]}">${100 * g.verdicts[k] / t >= 9 ? (100 * g.verdicts[k] / t).toFixed(1) + "%" : ""}</span>` : "").join("")}</span></div>`; }).join("")}</div>`
+    + legend(VORDER.map(k => ({ label: VERDICTS[k].label, color: VERDICTS[k].color })));
+
+  const pick = (fn, cmp) => gens.filter(fn).reduce((a, g) => (a === null || cmp(g, a) ? g : a), null);
+  const topF = pick(g => g.findings > 0, (g, a) => g.findings > a.findings), topP = pick(g => g.pass_rate != null, (g, a) => g.pass_rate > a.pass_rate), topC = pick(g => g.cc != null, (g, a) => g.cc > a.cc);
+  const hl = (g, icon, tag, big, sub) => g ? `<div class="hl"><div class="hl-h"><i class="dotc" style="background:${genColor(g.name, names)}"></i><strong>${esc(g.name)}</strong></div>
+      <span class="vtag ${tag}">${icon} ${big}</span><div class="muted">${sub}</div></div>` : "";
+  const highlights = [hl(topF, ICONS.bug, "red", "Most findings", `${topF?.findings} finding${topF?.findings > 1 ? "s" : ""}`),
+    hl(topP, ICONS.success, "green", "Highest pass rate", topP ? (100 * topP.pass_rate).toFixed(1) + "%" : ""),
+    hl(topC, ICONS.grid, "blue", "Broadest coverage", topC ? `Cluster coverage ${topC.cc.toFixed(3)}` : "")].filter(Boolean);
+
+  const totalValid = gens.reduce((s, g) => s + (g.valid || 0), 0), big = gens.reduce((a, g) => (!a || g.valid > a.valid ? g : a), null);
+  const notes = [...(d.corpus?.signal_caveats || [])];
+  if (gens.length > 1 && big && totalValid && big.valid / totalValid > 0.5) notes.push(`${big.name} contributed ${fmtPct(big.valid, totalValid, 0)} of the comparison pool, so pool-relative cluster coverage favours it partly for that reason. Interpret the scores with care.`);
+  const basis = d.generation_mode === "time" ? "Equal time" : d.generation_mode === "count" ? "Equal count" : "";
+  const rec = ccRows.length > 1 ? `<div class="rec"><span class="stile green" aria-hidden="true">${ICONS.stats}</span><div><strong>SpreadEx recommendation</strong>
+      <p>Under this campaign's configuration${basis ? ` (${basis.toLowerCase()})` : ""}, <strong>${esc(ccRows[0].label)}</strong> reached the broadest region of the pooled input space (cluster coverage ${ccRows[0].value.toFixed(3)}). That makes it a reasonable generator to give more budget next time. It does not make it the best generator in general.</p></div></div>` : "";
+
+  if (!gens.length) return `<div class="empty">This run recorded no generator breakdown.</div>`;
+  return `<div class="resgrid one">
+    ${resCard("Generator comparison", `${basis ? `<div class="muted rbasis">Comparison basis: ${basis}</div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
+    ${rec}
+    <div class="resgrid three">
+      ${resCard("Executed inputs per generator", executedChart)}
+      ${resCard("Failing inputs by generator", failChart)}
+      ${resCard("Cluster coverage", ccRows.length ? hbars(ccRows, 1, v => v.toFixed(3)) : `<div class="empty">Not computed for this run.</div>`, { tip: "Pool-relative: it compares generators against each other within this run." })}
+    </div>
+    <div class="resgrid two">
+      ${resCard("Execution outcome per generator", outcomeBars)}
+      ${resCard("Generator highlights", highlights.length ? `<div class="hls">${highlights.join("")}</div>` : `<div class="empty">Nothing stands out.</div>`)}
+    </div></div>`;
+}
+
+// ------- Budget: was the budget well spent
+
+function budgetCurveChart(d) {
+  const a = d.budget_curve || [], r = d.random_curve || [], total = d.executed;
+  if (!a.length || !a.some(p => p[1] > 0)) return `<div class="empty">No failures were found, so there is no discovery curve to draw.</div>`;
+  const W = 620, H = 200, P = { l: 34, r: 12, t: 10, b: 28 };
+  const maxY = Math.max(1, ...a.map(p => p[1]), ...r.map(p => p[1]));
+  const x = i => P.l + (i / Math.max(1, total)) * (W - P.l - P.r), y = v => H - P.b - (v / maxY) * (H - P.t - P.b);
+  const step = pts => pts.map((p, i) => `${i ? "L" : "M"}${x(p[0])},${y(p[1])}`).join(" ");
+  const ticks = Array.from({ length: Math.min(maxY, 5) + 1 }, (_, i) => Math.round(i * maxY / Math.min(maxY, 5)));
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Findings discovered as inputs were executed">
+    ${ticks.map(t => `<g><line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" class="grid"/><text x="${P.l - 5}" y="${y(t) + 3}" text-anchor="end" class="axis">${t}</text></g>`).join("")}
+    ${r.length ? `<path d="${step(r)}" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4"/>` : ""}
+    <path d="${step([[0, 0], ...a])}" fill="none" stroke="#16A34A" stroke-width="2.5"/>
+    <text x="${P.l}" y="${H - 8}" class="axis">0</text><text x="${(W + P.l) / 2}" y="${H - 8}" text-anchor="middle" class="axis">inputs executed</text><text x="${W - P.r}" y="${H - 8}" text-anchor="end" class="axis">${num(total)}</text></svg>
+    ${legend([{ label: "SpreadEx order", color: "#16A34A" }, ...(r.length ? [{ label: "Random order of the same inputs (average)", color: "#94a3b8" }] : [])])}`;
+}
+
+function tabBudget(d) {
+  const b = d.budgets || {}, gens = d.by_generator || [], names = gens.map(g => g.name), p = d.prioritization || {};
+  const row = (k, v) => `<div class="drow"><span class="muted">${k}</span><strong>${v}</strong></div>`;
+  const timeMode = d.generation_mode === "time";
+  const genReq = gens.reduce((s, g) => s + (g.gen_requested_s || 0), 0), genAct = gens.reduce((s, g) => s + (g.gen_elapsed_s || 0), 0);
+  const cfgGen = `<div class="dgrid one">${row("Allocation", timeMode ? "Equal time" : "Equal count")}${timeMode ? row("Time per generator", fmtDur(gens[0]?.gen_requested_s)) : ""}
+    ${row("Generators", gens.length)}${row(timeMode ? "Total generation time" : "Generation ceiling", genReq ? "up to " + fmtDur(genReq) : fmtDur(b.generation_s))}</div>`;
+  const mode = b.max_inputs ? "Number of tests" : (b.execution_s >= 86400 ? "Entire corpus" : "Time limit");
+  const cfgExec = `<div class="dgrid one">${row("Mode", mode)}${row("Time limit", b.execution_s >= 86400 ? "—" : fmtDur(b.execution_s))}${row("Max executions", b.max_inputs ? num(b.max_inputs) : "—")}
+    ${row("Prioritization", d.signal === "random" ? "Random" : "SpreadEx")}</div>`;
+  const cfg = `<div class="resgrid two tight">
+      <div class="subcard"><div class="subcard-h"><span class="stile purple" aria-hidden="true">${ICONS.doc}</span><strong>Generation budget</strong></div>${cfgGen}</div>
+      <div class="subcard"><div class="subcard-h"><span class="stile blue" aria-hidden="true">${ICONS.playOutline}</span><strong>Execution budget</strong></div>${cfgExec}</div></div>
+      <button type="button" class="linkish" onclick="go('setup'); gotoStep('run')">Edit for the next run</button>`;
+
+  const genPct = genReq ? Math.min(100, Math.round(100 * genAct / genReq)) : null;
+  const prioritized = d.corpus?.prioritized, execPct = prioritized ? Math.min(100, Math.round(100 * d.executed / prioritized)) : null;
+  const usage = `<div class="resgrid two tight">
+      <div class="subcard"><div class="subcard-h"><span class="stile purple" aria-hidden="true">${ICONS.doc}</span><strong>Generation</strong></div>
+        <div class="big2"><div><strong>${genAct ? fmtDur(genAct) : "—"}</strong><span>Total time</span></div><div><strong>${num(d.corpus?.generated)}</strong><span>Inputs produced</span></div></div>
+        ${genPct == null ? "" : `<div class="usebar"><span class="o-b"><span style="width:${genPct}%;background:#9333EA"></span></span><b>${genPct}%</b></div><div class="muted">of the time it was given</div>`}</div>
+      <div class="subcard"><div class="subcard-h"><span class="stile blue" aria-hidden="true">${ICONS.playOutline}</span><strong>Execution</strong></div>
+        <div class="big2"><div><strong>${fmtDur(d.exec_cpu_s)}</strong><span>Time inside the SUT</span></div><div><strong>${num(d.executed)}</strong><span>Executed inputs</span></div></div>
+        ${execPct == null ? "" : `<div class="usebar"><span class="o-b"><span style="width:${execPct}%;background:#1687F8"></span></span><b>${execPct}%</b></div><div class="muted">of the prioritized corpus (${num(prioritized)}) was reached</div>`}</div></div>`;
+
+  const genTime = gens.some(g => g.gen_requested_s != null)
+    ? groupedBars(gens.map(g => ({ name: g.name, actual: Math.round((g.gen_elapsed_s || 0) * 10) / 10, configured: g.gen_requested_s || 0 })), ["actual", "configured"], ["#9333EA", "#cbd5e1"])
+      + legend([{ label: "Actual time (s)", color: "#9333EA" }, { label: "Configured time (s)", color: "#cbd5e1" }])
+    : `<div class="empty">This run did not record per-generator generation time.</div>`;
+
+  const table = `<div class="tscroll"><table class="rtable"><thead><tr><th>Generator</th><th>Generated</th><th>Valid</th><th>Executed</th><th>Generation time</th><th>Avg time / input</th></tr></thead><tbody>
+    ${gens.map(g => `<tr><td><i class="dotc" style="background:${genColor(g.name, names)}"></i>${esc(g.name)}</td><td>${num(g.generated)}</td><td>${num(g.valid)}</td><td>${num(g.executed)}</td>
+      <td>${g.gen_elapsed_s == null ? "—" : g.gen_elapsed_s.toFixed(1) + " s"}</td><td>${g.avg_ms == null ? "—" : fmtMs(g.avg_ms)}</td></tr>`).join("")}
+    <tr class="total"><td>Total</td><td>${num(d.corpus?.generated)}</td><td>${num(d.corpus?.valid)}</td><td>${num(d.executed)}</td><td>${genAct ? genAct.toFixed(1) + " s" : "—"}</td><td>${d.executed ? fmtMs(1000 * d.exec_cpu_s / d.executed) : "—"}</td></tr></tbody></table>`;
+
+  // Statements the numbers support, and nothing more.
+  const take = [];
+  if (genReq && genAct) take.push([genAct <= genReq * 1.02 ? "ok" : "warn", genAct <= genReq * 1.02 ? "Generation finished within its budget" : "Generation ran over its budget", `${fmtDur(genAct)} total (limit ${fmtDur(genReq)})`]);
+  if (prioritized) take.push([d.executed >= prioritized ? "ok" : "info", d.executed >= prioritized ? "Every prioritized input was executed" : "The budget ended before the corpus did", `${num(d.executed)} of ${num(prioritized)} prioritized inputs ran`]);
+  if (p.findings) take.push(["ok", `${p.by_quarter} of ${p.findings} finding${p.findings > 1 ? "s" : ""} appeared in the first 25% of executions`, `The last appeared at input ${num(p.all_at)} (${p.all_pct}% of the run)`]);
+  const prod = gens.filter(g => g.generated).sort((a, c) => c.generated - a.generated);
+  if (timeMode && prod.length > 1 && prod[0].generated >= 2 * prod[prod.length - 1].generated) take.push(["info", "Generator throughput varies", `${prod[prod.length - 1].name} produced ${num(prod[prod.length - 1].generated)} inputs in the time ${prod[0].name} produced ${num(prod[0].generated)}. That is the measurement of equal-time comparison, not a flaw.`]);
+  const takeaways = take.length ? `<div class="takes">${take.map(([k, t, s]) => `<div class="take ${k}"><span aria-hidden="true">${ICONS[k === "ok" ? "success" : k === "warn" ? "alert" : "info"]}</span><div><strong>${esc(t)}</strong><span>${esc(s)}</span></div></div>`).join("")}</div>` : `<div class="empty">Nothing notable.</div>`;
+
+  return `<div class="resgrid one">
+    <div class="resgrid two">${resCard("Budget configuration", cfg, { tip: "What this run was given. It is the configuration recorded in the run, not the project's current setup." })}
+      ${resCard("Actual resource usage", usage, { tip: "What the run actually spent. Time inside the SUT is the sum of each execution's duration; executions can overlap." })}</div>
+    <div class="resgrid two">${resCard("Findings discovered", budgetCurveChart(d), { tip: "Distinct failure signatures found as inputs were executed, against the average of random orderings of the same inputs." })}
+      ${resCard("Execution timeline", stackedColumns(d.timeline || [], VORDER, VORDER.map(k => VERDICTS[k].color), "inputs, in execution order") + legend(VORDER.map(k => ({ label: VERDICTS[k].label, color: VERDICTS[k].color }))))}</div>
+    <div class="resgrid two">${resCard("Generation time per generator", genTime)}${resCard("Key takeaways", takeaways)}</div>
+    ${resCard("Resource usage by generator", table)}
+  </div>`;
+}
+
+// ------- Findings: what broke, and why SpreadEx says so
+
+function rfState() { if (!S.rf) S.rf = { filter: "all", q: "", sort: "first", sel: null, detail: null, replay: null, busy: false, loading: false, err: "" }; return S.rf; }
+
+function visibleFindings(d) {
+  const st = rfState(), q = st.q.trim().toLowerCase();
+  let fs = (d.findings || []).filter(f => st.filter === "all" || f.verdict === st.filter)
+    .filter(f => !q || [f.id, f.signature, f.stderr_first, f.detail, f.generator, f.verdict].join(" ").toLowerCase().includes(q));
+  if (st.sort === "count") fs = [...fs].sort((a, b) => b.count - a.count);
+  else if (st.sort === "type") fs = [...fs].sort((a, b) => a.verdict.localeCompare(b.verdict) || a.position - b.position);
+  return fs;
+}
+
+function openFinding(signature) { rfState().sel = signature; S.rtab = "findings"; rfState().replay = null; paintRun(); ensureFinding(true); }
+function setFindingFilter(f) { rfState().filter = f; rfState().sel = null; paintRun(); ensureFinding(); }
+function findingSearch(v) { const st = rfState(); st.q = v; st.sel = null; clearTimeout(S.fq); S.fq = setTimeout(() => { paintRun(); ensureFinding(); el("f-search")?.focus(); const i = el("f-search"); if (i) i.setSelectionRange(i.value.length, i.value.length); }, 250); }
+function findingSort(v) { rfState().sort = v; rfState().sel = null; paintRun(); ensureFinding(); }
+function stepFinding(delta) {
+  const d = S.detail, list = visibleFindings(d), st = rfState();
+  const i = list.findIndex(f => f.signature === st.sel);
+  const next = list[(i + delta + list.length) % list.length];
+  if (next) openFinding(next.signature);
+}
+
+async function ensureFinding(force) {
+  const d = S.detail, st = rfState(), list = visibleFindings(d);
+  if (!list.length) { st.detail = null; return paintRun(); }
+  if (!st.sel || !list.some(f => f.signature === st.sel)) st.sel = list[0].signature;
+  if (!force && st.detail && st.detail.signature === st.sel) return;
+  const want = st.sel; st.loading = true; st.detail = null; st.err = ""; paintRun();
+  try { const f = await api(`/api/runs/${encodeURIComponent(S.current)}/finding?signature=${encodeURIComponent(want)}`); if (st.sel === want) st.detail = f; }
+  catch (e) { st.err = String(e.message || e); }
+  st.loading = false; paintRun();
+}
+
+function codeBlock(text) {
+  const lines = String(text).split("\n"); if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return `<pre class="codeb"><code>${lines.map((l, i) => `<span class="ln">${i + 1}</span>${esc(l) || " "}`).join("\n")}</code></pre>`;
+}
+function copyText(text, btn) {
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => { if (btn) { btn.classList.add("copied"); setTimeout(() => btn.classList.remove("copied"), 1200); } }).catch(() => {});
+}
+function saveText(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+async function replayFinding() {
+  const st = rfState(), f = st.detail; if (!f || st.busy) return;
+  st.busy = true; st.replay = null; paintRun();
+  try { st.replay = await api(`/api/runs/${encodeURIComponent(S.current)}/replay`, { hash: f.hash }); }
+  catch (e) { st.replay = { ok: false, error: String(e.message || e) }; }
+  st.busy = false; paintRun();
+}
+
+function replayPanel(f) {
+  const st = rfState(), r = st.replay;
+  if (st.busy) return `<div class="rnote">${ICONS.info}<div>Running this input again…</div></div>`;
+  if (!r) return "";
+  if (!r.ok) return `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-s">${esc(r.error)}</div></div></div>`;
+  const o = r.original, n = r.replay;
+  return `<div class="res ${r.reproduced ? "good" : "warn"}" role="status"><span class="res-ico" aria-hidden="true">${r.reproduced ? ICONS.success : ICONS.alert}</span>
+    <div class="res-main"><div class="res-t">${r.reproduced ? "Reproduced" : "Not reproduced"}</div>
+      <div class="res-s">${r.reproduced ? "The same result came back." : "The result was different this time. It may be flaky or nondeterministic, or the system may have been fixed."}</div>
+      <dl class="res-facts"><div><dt>Original</dt><dd>${esc((VERDICTS[o.verdict] || {}).label || o.verdict)} · ${esc(fmtMs(o.duration_ms))}</dd></div>
+        <div><dt>Replay</dt><dd>${esc((VERDICTS[n.verdict] || {}).label || n.verdict)} · ${esc(fmtMs(n.duration_ms))}</dd></div></dl>
+      <div class="muted">Run against the project's current command and settings.</div></div></div>`;
+}
+
+function findingDetailView(f) {
+  const d = S.detail, list = visibleFindings(d), st = rfState();
+  const i = list.findIndex(x => x.signature === f.signature);
+  const meta = (k, v) => `<div><span class="muted">${k}</span><strong>${v}</strong></div>`;
+  const ev = f.evidence.map(e => `<div class="ev ${e.status}"><span aria-hidden="true">${ICONS[e.status === "matched" ? "success" : "minus"] || ICONS.success}</span><span class="ev-r">${esc(e.rule)}</span><span class="ev-n">${esc(e.note)}</span></div>`).join("");
+  const tone = (VERDICTS[f.verdict] || {}).tone || "red";
+  return `<div class="fdetail">
+    <div class="fd-h"><span class="stile ${tone}" aria-hidden="true">${ICONS[f.verdict === "timeout" ? "clock" : f.verdict === "divergence" ? "scale" : "bug"]}</span>
+      <div class="fd-t"><h3>Finding ${esc(f.id)} <button type="button" class="gx" aria-label="Copy finding id" onclick="copyText('${esc(f.id)}', this)">${ICONS.copy}</button> ${vtag(f.verdict)}</h3>
+        <div class="fd-head">${esc(f.headline)}</div></div>
+      <div class="fd-nav"><button type="button" class="ghost small" onclick="stepFinding(-1)" aria-label="Previous finding">${ICONS.back}</button><span>${i + 1} / ${list.length}</span>
+        <button type="button" class="ghost small" onclick="stepFinding(1)" aria-label="Next finding">${ICONS.arrow}</button></div></div>
+    <div class="fd-meta">${meta("First seen", `input #${f.first_rank + 1}`)}${meta("Generator", esc(f.generator))}${meta("Runtime", esc(fmtMs(f.duration_ms)))}${meta("Inputs with this signature", num(f.count))}</div>
+    <div class="fd-grid">
+      <div class="subcard"><div class="subcard-h"><strong>Input</strong><span class="grow"></span>
+        <button type="button" class="ghost small" onclick="copyText(S.rf.detail.input, this)">${ICONS.copy} Copy</button>
+        <button type="button" class="ghost small" onclick="saveText('${esc(f.id)}-input.txt', S.rf.detail.input)">${ICONS.download} Save</button></div>${codeBlock(f.input)}</div>
+      <div class="subcard"><div class="subcard-h"><strong>Classification</strong> ${hint("hint-class", "The checks in the order SpreadEx applies them. The first one that matches decides the result.")}</div>
+        <div class="evs">${ev}</div><div class="evresult ${tone}"><span class="muted">Result</span><strong>${esc((VERDICTS[f.verdict] || { label: f.verdict }).label)}</strong></div></div></div>
+    <div class="fd-grid b">
+      <div class="subcard"><div class="subcard-h"><strong>Execution output</strong><span class="grow"></span>${f.stderr ? `<button type="button" class="ghost small" onclick="copyText(S.rf.detail.stderr, this)">${ICONS.copy} Copy</button>` : ""}</div>
+        <div class="tabs2"><span class="muted">stderr</span><span class="muted fine">stdout is not kept for failures</span></div>
+        ${f.stderr ? `<pre class="errb">${esc(f.stderr)}</pre>` : `<div class="empty">This execution printed nothing to stderr.</div>`}</div>
+      <div class="subcard"><div class="subcard-h"><strong>Details</strong></div>
+        <div class="dgrid one">${[["Finding ID", `${esc(f.id)}`], ["Type", vtag(f.verdict)], ["Generator", esc(f.generators.join(", "))], ["Exit code", f.signal != null ? `signal ${f.signal}` : f.timed_out ? "no answer" : esc(String(f.exit_code))],
+          ["Runtime", esc(fmtMs(f.duration_ms))], ["Input hash", `<span class="mono">${esc(f.hash.slice(0, 12))}</span>`], ["Signature", `<span class="mono">${esc(f.signature.slice(0, 12))}</span>`]]
+          .map(([k, v]) => `<div class="drow"><span class="muted">${k}</span><span>${v}</span></div>`).join("")}</div></div></div>
+    ${f.similar_total ? `<div class="subcard"><div class="subcard-h"><strong>Similar inputs (${f.similar_total})</strong> ${hint("hint-sim", "Other inputs in this run with the same failure signature. A signature is not a bug: distinct bugs can share one, and one bug can span several.")}</div>
+      <div class="sims">${f.similar.map(s => `<div class="sim"><span class="mono">#${s.rank + 1}</span><span>${esc(s.generator)}</span><span class="mono grow">${esc(s.preview)}</span></div>`).join("")}${f.similar_total > f.similar.length ? `<div class="muted">and ${f.similar_total - f.similar.length} more</div>` : ""}</div></div>` : ""}
+    <div class="subcard replay"><div class="subcard-h"><strong>Replay</strong></div>
+      <p class="muted">Run this input again against your current command and see whether the same thing happens. Nothing is saved.</p>
+      <button type="button" class="primary" onclick="replayFinding()" ${st.busy ? "disabled" : ""}>${ICONS.playOutline} Replay this input</button>${replayPanel(f)}</div>
+  </div>`;
+}
+
+function tabFindings(d) {
+  const st = rfState(), all = d.findings || [], list = visibleFindings(d);
+  const count = k => all.filter(f => f.verdict === k).length;
+  const chip = (id, label, n, tone) => `<button type="button" class="fchip ${tone} ${st.filter === id ? "on" : ""}" aria-pressed="${st.filter === id}" onclick="setFindingFilter('${id}')">${label} <b>${n}</b></button>`;
+  if (!all.length) return `<div class="resgrid one">${resCard("Findings", `<div class="empty">No failures in ${num(d.executed)} executed inputs.<br><span class="muted">For a mature system under test this is the expected outcome, not a missing measurement. Expected rejections are not failures; the Overview counts them separately.</span></div>`)}</div>`;
+  const cards = list.map(f => `<button type="button" class="fcard ${f.signature === st.sel ? "on" : ""}" onclick="openFinding('${esc(f.signature)}')" aria-current="${f.signature === st.sel}">
+      <span class="stile ${(VERDICTS[f.verdict] || {}).tone || "red"} sm" aria-hidden="true">${ICONS[f.verdict === "timeout" ? "clock" : f.verdict === "divergence" ? "scale" : "bug"]}</span>
+      <span class="fc-m"><strong>${esc(f.stderr_first)}</strong>
+        <span class="muted">${esc(f.detail || "")}</span><span class="fc-tags">${vtag(f.verdict)}<span class="vtag blue">${esc(f.generator)}</span></span></span>
+      <span class="fc-r"><span class="muted">${esc(f.id)}</span><span class="muted">input #${f.position + 1}</span><span class="muted">${esc(fmtMs(f.duration_ms))}</span></span></button>`).join("");
+  return `<div class="fwork">
+    <section class="rescard flist"><div class="rescard-h"><h4>Findings <span class="muted">(${all.length})</span> ${hint("hint-findings", "Failures grouped by signature. Two findings are not necessarily two bugs, and a divergence is not automatically a bug.")}</h4></div>
+      <div class="fchips">${chip("all", "All", all.length, "blue")}${chip("crash", "Crash", count("crash"), "red")}${chip("timeout", "Timeout", count("timeout"), "amber")}${chip("divergence", "Divergence", count("divergence"), "purple")}</div>
+      <div class="fsearch"><input id="f-search" type="search" placeholder="Search findings…" value="${esc(st.q)}" oninput="findingSearch(this.value)" aria-label="Search findings">
+        <label class="sortby">Sort <select onchange="findingSort(this.value)" aria-label="Sort findings"><option value="first" ${st.sort === "first" ? "selected" : ""}>First seen</option><option value="count" ${st.sort === "count" ? "selected" : ""}>Most inputs</option><option value="type" ${st.sort === "type" ? "selected" : ""}>Type</option></select></label></div>
+      <div class="fcards">${cards || `<div class="empty">No finding matches.</div>`}</div></section>
+    <section class="rescard fdet">${st.loading ? `<div class="empty">Loading…</div>` : st.err ? `<div class="note bad">${esc(st.err)}</div>` : st.detail ? findingDetailView(st.detail) : `<div class="empty">Select a finding.</div>`}</section></div>`;
+}
+
+// ------- Corpus: what exactly ran
+
+function rcState() { if (!S.rc) S.rc = { q: "", generator: "", verdict: "", offset: 0, limit: 10, data: null, loading: false, sel: null, text: null, dist: "generator", err: "" }; return S.rc; }
+
+async function loadCorpus() {
+  const st = rcState(); st.loading = true; st.err = ""; paintRun();
+  const qs = new URLSearchParams({ offset: st.offset, limit: st.limit });
+  if (st.q) qs.set("q", st.q); if (st.generator) qs.set("generator", st.generator); if (st.verdict) qs.set("verdict", st.verdict);
+  try { st.data = await api(`/api/runs/${encodeURIComponent(S.current)}/inputs?${qs}`); if (!st.sel || !st.data.items.some(i => i.hash === st.sel)) st.sel = st.data.items[0]?.hash || null; }
+  catch (e) { st.err = String(e.message || e); }
+  st.loading = false; paintRun(); loadInputText();
+}
+async function loadInputText() {
+  const st = rcState(); if (!st.sel) { st.text = null; return; }
+  const want = st.sel;
+  try { const t = await api(`/api/input?hash=${encodeURIComponent(want)}`); if (st.sel === want) { st.text = t; paintRun(); } } catch (e) { /* the panel just stays empty */ }
+}
+function corpusFilter(key, value) { const st = rcState(); st[key] = value; st.offset = 0; st.sel = null; loadCorpus(); }
+function corpusSearch(v) { const st = rcState(); st.q = v; st.offset = 0; st.sel = null; clearTimeout(S.cq); S.cq = setTimeout(async () => { await loadCorpus(); const i = el("c-search"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 300); }
+function corpusReset() { Object.assign(rcState(), { q: "", generator: "", verdict: "", offset: 0, sel: null }); loadCorpus(); }
+function corpusPage(offset) { const st = rcState(); st.offset = Math.max(0, offset); st.sel = null; loadCorpus(); }
+function corpusSelect(h) { rcState().sel = h; rcState().text = null; paintRun(); loadInputText(); }
+function corpusStep(delta) { const st = rcState(), it = st.data?.items || []; const i = it.findIndex(x => x.hash === st.sel); const n = it[i + delta]; if (n) corpusSelect(n.hash); }
+
+
+function tabCorpus(d) {
+  const st = rcState(), c = d.corpus || {}, v = d.verdicts || {}, gens = d.by_generator || [], names = gens.map(g => g.name);
+  const tile = (tone, icon, n, label, sub) => `<div class="ctile ${tone}"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span><strong>${num(n)}</strong><span>${label}</span>${sub ? `<span class="muted">${sub}</span>` : ""}</div>`;
+  const overview = `<div class="ctiles">${tile("blue", "doc", c.generated ?? 0, "Generated")}${tile("green", "success", c.valid ?? 0, "Valid", fmtPct(c.valid, c.generated))}
+    ${tile("blue", "playOutline", d.executed, "Executed", fmtPct(d.executed, c.valid))}${tile("red", "bug", (d.findings || []).length, "Findings")}</div>`;
+  const dist = st.dist === "outcome"
+    ? hbars(VORDER.map(k => ({ label: VERDICTS[k].label, value: v[k] || 0, color: VERDICTS[k].color })), Math.max(1, ...VORDER.map(k => v[k] || 0)), x => num(x))
+    : `<div class="stack100">${gens.map(g => { const t = g.executed || 1; return `<div class="s100"><span class="hb-l">${esc(g.name)}</span><span class="s100-t">${VORDER.map(k => g.verdicts[k] ? `<span style="width:${100 * g.verdicts[k] / t}%;background:${VERDICTS[k].color}" title="${VERDICTS[k].label}: ${g.verdicts[k]}"></span>` : "").join("")}</span><b>${num(g.executed)}</b></div>`; }).join("")}</div>`
+      + legend(VORDER.map(k => ({ label: VERDICTS[k].label, color: VERDICTS[k].color })));
+  const distTabs = `<div class="seg" role="tablist">${[["generator", "By generator"], ["outcome", "By outcome"]].map(([id, t]) => `<button type="button" role="tab" class="${st.dist === id ? "on" : ""}" aria-selected="${st.dist === id}" onclick="rcState().dist = '${id}'; paintRun()">${t}</button>`).join("")}</div>`;
+
+  const data = st.data, f = data?.facets || { generators: {}, verdicts: {} };
+  const page = data ? Math.floor(data.offset / data.limit) + 1 : 1, last = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
+  const sel = (key, label, opts) => `<label class="csel"><span class="visually-hidden">${label}</span><select onchange="corpusFilter('${key}', this.value)" aria-label="${label}"><option value="">${label}</option>${opts.map(([val, t]) => `<option value="${esc(val)}" ${st[key] === val ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
+  const rows = (data?.items || []).map(i => `<tr class="click ${i.hash === st.sel ? "sel" : ""}" onclick="corpusSelect('${esc(i.hash)}')" tabindex="0" onkeydown="if (event.key === 'Enter') corpusSelect('${esc(i.hash)}')">
+      <td class="mono">${i.rank + 1}</td><td class="mono prev">${esc(i.preview)}</td><td><i class="dotc" style="background:${genColor(i.generator, names)}"></i>${esc(i.generator)}</td>
+      <td>${vtag(i.verdict)}${i.finding ? ` <span class="muted">${esc(i.finding)}</span>` : ""}</td><td>${num(i.size)}</td><td>${esc(fmtMs(i.duration_ms))}</td></tr>`).join("");
+  const filtersOn = st.q || st.generator || st.verdict;
+  const table = `<div class="cfilters"><div class="fsearch"><input id="c-search" type="search" placeholder="Search inputs…" value="${esc(st.q)}" oninput="corpusSearch(this.value)" aria-label="Search inputs"></div>
+      ${sel("generator", "Generator", Object.entries(f.generators).map(([k, n]) => [k, `${k} (${n})`]))}${sel("verdict", "Outcome", VORDER.filter(k => f.verdicts[k]).map(k => [k, `${VERDICTS[k].label} (${f.verdicts[k]})`]))}
+      <button type="button" class="ghost small" onclick="corpusReset()" ${filtersOn ? "" : "disabled"}>Reset</button></div>
+    ${st.err ? `<div class="note bad">${esc(st.err)}</div>` : ""}
+    <div class="tscroll"><table class="rtable"><thead><tr><th>#</th><th>Input (preview)</th><th>Generator</th><th>Outcome</th><th>Length</th><th>Exec. time</th></tr></thead>
+      <tbody>${st.loading && !data ? `<tr><td colspan="6" class="empty">Loading…</td></tr>` : rows || `<tr><td colspan="6" class="empty">No input matches.</td></tr>`}</tbody></table></div>
+    ${data ? `<div class="pager"><span class="muted">Showing ${data.total ? data.offset + 1 : 0}–${Math.min(data.offset + data.limit, data.total)} of ${num(data.total)}${data.total !== data.all ? ` (of ${num(data.all)} executed)` : " executed inputs"}</span>
+      <span class="pgs"><button type="button" class="ghost small" onclick="corpusPage(${data.offset - data.limit})" ${page <= 1 ? "disabled" : ""} aria-label="Previous page">${ICONS.back}</button>
+        ${pageNumbers(page, last).map(n => n === "…" ? `<span class="muted">…</span>` : `<button type="button" class="pgn ${n === page ? "on" : ""}" onclick="corpusPage(${(n - 1) * data.limit})" aria-current="${n === page}">${n}</button>`).join("")}
+        <button type="button" class="ghost small" onclick="corpusPage(${data.offset + data.limit})" ${page >= last ? "disabled" : ""} aria-label="Next page">${ICONS.arrow}</button></span>
+      <label class="sortby"><select onchange="rcState().limit = Number(this.value); corpusPage(0)" aria-label="Rows per page">${[10, 25, 50].map(n => `<option ${st.limit === n ? "selected" : ""}>${n}</option>`).join("")}</select> / page</label></div>` : ""}`;
+
+  const it = (data?.items || []).find(x => x.hash === st.sel), idx = (data?.items || []).findIndex(x => x.hash === st.sel);
+  const details = it ? `<div class="subcard"><div class="subcard-h"><strong>Input details</strong><span class="grow"></span><span class="muted">${idx + 1} / ${data.items.length}</span>
+      <button type="button" class="ghost small" onclick="corpusStep(-1)" aria-label="Previous input" ${idx <= 0 ? "disabled" : ""}>${ICONS.back}</button><button type="button" class="ghost small" onclick="corpusStep(1)" aria-label="Next input" ${idx >= data.items.length - 1 ? "disabled" : ""}>${ICONS.arrow}</button></div>
+      <div class="subcard-h"><button type="button" class="ghost small" onclick="copyText(S.rc.text?.text || '', this)">${ICONS.copy} Copy</button><button type="button" class="ghost small" onclick="saveText('input-${esc(it.hash.slice(0, 8))}.txt', S.rc.text?.text || '')">${ICONS.download} Download</button></div>
+      ${st.text ? codeBlock(st.text.text) + (st.text.truncated ? `<div class="muted">truncated</div>` : "") : `<div class="empty">Loading…</div>`}
+      <div class="dgrid one">${[["Input", `<span class="mono">#${it.rank + 1}</span>`], ["Hash", `<span class="mono">${esc(it.hash.slice(0, 12))}</span>`], ["Generator", esc(it.generator)], ["Outcome", vtag(it.verdict)],
+        ["Length", `${num(it.size)} bytes`], ["Exec. time", esc(fmtMs(it.duration_ms))]].map(([k, v2]) => `<div class="drow"><span class="muted">${k}</span><span>${v2}</span></div>`).join("")}</div>
+      ${it.finding ? `<button type="button" class="linkish" onclick="openFinding('${esc((d.findings.find(x => x.id === it.finding) || {}).signature || "")}')">Open finding ${esc(it.finding)}</button>` : ""}</div>`
+    : `<div class="subcard"><div class="empty">Select an input to see it.</div></div>`;
+
+  return `<div class="resgrid one">
+    <div class="resgrid two corp">${resCard("Corpus overview", overview + `<div class="rnote">${ICONS.info}<div>Generated inputs that were never reached are counted here but not listed: a run records the inputs it executed.</div></div>`, { tip: "Generated is everything the generators produced; valid is what survived de-duplication and validation; executed is what the budget reached." })}
+      ${resCard("Corpus distribution", dist, { right: distTabs, tip: "Executed inputs, split by who produced them and what happened to them." })}</div>
+    <div class="resgrid corpwork">${resCard("Test inputs", table, { tip: "Every executed input of this run, in the order SpreadEx ran them." })}${details}</div></div>`;
+}
+
+// ------- the page
+
 const RESULTS_PREVIEW = [
   ["chart", "green", "Overview", "How many inputs ran, passed, were refused as expected, or failed."],
-  ["sliders", "purple", "Generators", "Which generator produced what, how fast, and how its inputs compare."],
-  ["stats", "blue", "Budget", "Failures found as inputs were executed, against a random ordering."],
-  ["bug", "red", "Failures", "Each distinct failure signature, an example input, and how to reproduce it."],
-  ["folder", "orange", "Corpus", "Every generated input, kept so a run can be replayed exactly."],
+  ["grid", "purple", "Generators", "Which generator produced what, how fast, and how its inputs compare."],
+  ["clock", "blue", "Budget", "What the run was given, what it spent, and when findings appeared."],
+  ["bug", "red", "Findings", "Each distinct failure, the input, why it was classified so, and a replay."],
+  ["database", "orange", "Corpus", "Every executed input, searchable, so a run can be inspected and replayed."],
 ];
 
 function resultsEmpty() {
@@ -3136,170 +3654,30 @@ function resultsEmpty() {
 async function renderResults() {
   const v = el("view");
   if (!S.runs.length) { v.innerHTML = resultsEmpty(); return; }
-  v.innerHTML = `<div class="runlist">${S.runs.map(r => `
-    <button aria-current="${r.run_id === S.current}" onclick="pickRun('${esc(r.run_id)}')">
-      ${esc(r.run_id.replace("T", " ").replace("Z", ""))} · ${num(r.executed)} executed${r.failures ? ` · <span class="bad">${r.failures} failing</span>` : ""}
-    </button>`).join("")}</div><div id="detail"><div class="empty">Loading…</div></div>`;
-
-  // run_detail shuffles the corpus 200 times for the random baseline, so it is
-  // fetched once per run and the tabs read from what came back.
+  v.innerHTML = `<div id="detail"><div class="empty">Loading…</div></div>`;
+  // The overview is fetched once per run; the tabs read from what came back. (run_detail shuffles
+  // the corpus hundreds of times for the random baseline, so it is not cheap.)
   try { S.detail = await api(`/api/runs/${encodeURIComponent(S.current)}`); }
-  catch (e) { el("detail").innerHTML = `<div class="card bad">${esc(e.message)}</div>`; return; }
+  catch (e) { el("detail").innerHTML = failureCard(e); return; }
+  S.rf = null; S.rc = null; S.runMenu = S.actMenu = false; S.exportError = "";
   paintRun();
+  if (S.rtab === "corpus") loadCorpus();
+  if (S.rtab === "findings") ensureFinding();
 }
+
+function pickRun(id) { S.current = id; S.runMenu = false; renderResults(); }
 
 function paintRun() {
   const d = S.detail;
-  if (!d) return;
-  const body = ({ overview: tabOverview, generators: tabGenerators, budget: tabBudget,
-                  failures: tabFailures, corpus: tabCorpus }[S.rtab] || tabOverview)(d);
-  el("detail").innerHTML = `
-    <div class="rtabs" role="tablist">${RESULT_TABS.map(t => `
-      <button role="tab" aria-selected="${(S.rtab || "overview") === t.id}"
-        onclick="pickResultTab('${t.id}')">${t.t}${t.id === "failures" && d.signatures.length
-          ? ` <span class="tag ${d.signatures.length ? "bad" : ""}">${d.signatures.length}</span>` : ""}</button>`).join("")}
-    </div>${body}`;
-}
-
-function failingCount(d) {
-  const v = d.verdicts || {};
-  return (v.crash || 0) + (v.timeout || 0) + (v.divergence || 0);
-}
-
-// --------------------------------------------------------------- overview
-
-function tabOverview(d) {
-  const ver = d.verdicts || {}, failing = failingCount(d);
-  return `
-  <div class="card">
-    <div class="stats">
-      <div class="stat"><div class="k">Executed</div><div class="v">${num(d.executed)}</div></div>
-      <div class="stat"><div class="k">Passed</div><div class="v">${num(ver.ok || 0)}</div></div>
-      <div class="stat"><div class="k">Rejected (expected)</div><div class="v">${num(ver.expected_rejection || 0)}</div></div>
-      <div class="stat"><div class="k">Failing</div><div class="v ${failing ? "bad" : ""}">${num(failing)}</div></div>
-      <div class="stat"><div class="k">Signatures</div><div class="v">${num(d.signatures.length)}</div></div>
-    </div>
-    <div class="note">A <em>rejected</em> input is one the system under test correctly refused.
-      Counting those as failures is the difference between a usable tool and a noise generator.</div>
-  </div>
-  <div class="card">
-    <h3>What happened</h3>
-    <p class="why">${failing
-      ? `SpreadEx executed ${num(d.executed)} inputs and ${num(failing)} did something worth
-         looking at, across ${d.signatures.length} distinct signature(s). The
-         <strong>Failures</strong> tab has them.`
-      : `SpreadEx executed ${num(d.executed)} inputs and nothing crashed, hung or diverged.
-         For a mature system under test that is the expected outcome, not a missing measurement
-         &mdash; the <strong>Budget</strong> tab shows how far the campaign actually got.`}</p>
-  </div>
-  <div class="card">
-    <h3>Reproducing this run</h3>
-    <table><tbody>
-      <tr><td class="muted" style="width:30%">Config hash</td><td class="mono">${esc(d.config_hash)}</td></tr>
-      <tr><td class="muted">Seed / signal</td><td class="mono">${esc(d.seed)} / ${esc(d.signal)}</td></tr>
-      ${(d.targets || []).map(t => `<tr><td class="muted">Target ${esc(t.name)}</td>
-        <td class="mono">${esc((t.command || []).join(" "))}<br><span class="muted">${esc(t.version || "version unknown")}</span></td></tr>`).join("")}
-      <tr><td class="muted">Environment</td><td class="mono">python ${esc(d.environment.python)} · ${esc(d.environment.platform)}</td></tr>
-    </tbody></table>
-    <pre>spreadex replay ${esc(d.run_id)}</pre>
-  </div>`;
-}
-
-// ------------------------------------------------------------- generators
-
-function tabGenerators(d) {
-  if (!d.generators.length) {
-    return `<div class="card"><div class="empty">This campaign used existing inputs, so there is
-      no generator to compare.</div></div>`;
-  }
-  const costs = d.generators.map(g => g.cost_s).filter(c => c > 0);
-  const spread = costs.length > 1 ? Math.max(...costs) / Math.min(...costs) : 1;
-  return `<div class="card">
-    <h3>Generator comparison</h3>
-    <p class="why">Which generators deserve the next generation budget. Cluster coverage is computed
-      <em>before</em> anything is executed${d.corpus.k_eff ? `, over ${d.corpus.k_eff} clusters` : ""}.</p>
-    <table><thead><tr><th>Generator</th><th class="num">CC</th><th></th><th class="num">Inputs</th><th class="num">Generation cost</th></tr></thead>
-      <tbody>${d.generators.map((g, i) => `<tr><td>${esc(g.name)}</td>
-        <td class="num mono">${g.cc.toFixed(2)}</td>
-        <td style="width:32%"><span class="bar" style="width:${(g.cc * 100).toFixed(0)}%;background:var(--series-${i % 4})"></span></td>
-        <td class="num mono">${num(g.inputs)}</td><td class="num mono">${g.cost_s.toFixed(1)}s</td></tr>`).join("")}</tbody></table>
-    ${spread > 5 ? `<div class="note">Generation costs differ by more than 5&times;, so these CC values
-      compare equal <strong>input counts</strong>, not equal budgets.</div>` : ""}
-    ${(d.corpus.signal_caveats || []).map(c =>
-      `<div class="note warn">${esc(c)}</div>`).join("")}
-    <div class="note">Cluster coverage is measured against <em>this</em> pool. Add or remove a
-      generator and every score moves, so compare these numbers within a campaign, never across
-      campaigns.</div>
-  </div>`;
-}
-
-// ----------------------------------------------------------------- budget
-
-function tabBudget(d) {
-  return `<div class="card">
-    <h3>Budget curve</h3>
-    <p class="why">Distinct failure signatures against inputs executed. The dashed line is the same
-      inputs in random order, so the gap is what the ordering bought &mdash; and no gap is a real
-      answer too.</p>
-    ${budgetChart(d.budget_curve, d.random_curve, d.executed)}
-  </div>`;
-}
-
-// --------------------------------------------------------------- failures
-
-function tabFailures(d) {
-  return `<div class="card">
-    <h3>Failure signatures</h3>
-    <p class="why">A signature is not a bug: distinct bugs can share one and one bug can span
-      several. Treat the count as a triage aid.</p>
-    ${d.signatures.length ? d.signatures.map(s => `<details>
-      <summary><span class="mono">${esc(s.signature)}</span>
-        <span class="tag ${s.verdict === "divergence" ? "warn" : "bad"}">${esc(s.verdict)}</span>
-        &times;${s.count} · first at input ${s.first_rank + 1}${s.new ? ` <span class="tag warn">new</span>` : ""}</summary>
-      ${s.detail ? `<div class="muted" style="font-size:12.5px;margin-top:6px">${esc(s.detail)}</div>` : ""}
-      ${s.stderr ? `<pre>${esc(s.stderr)}</pre>` : ""}
-      <div class="actions"><button class="ghost small" onclick="showInput('${esc(s.example)}', this)">Show an input that triggers it</button></div>
-      <div class="holder"></div></details>`).join("") : `<div class="empty">Nothing crashed, hung or
-      diverged in this run.<br><span class="muted">That is a result, not a gap.</span></div>`}
-  </div>`;
-}
-
-// ----------------------------------------------------------------- corpus
-
-function tabCorpus(d) {
-  const c = d.corpus || {};
-  const row = (k, v, why) => v === null || v === undefined ? "" :
-    `<tr><th>${k}</th><td class="mono" style="width:70px">${num(v)}</td>
-       <td class="muted">${why}</td></tr>`;
-  return `<div class="card">
-    <h3>The corpus this campaign drew on</h3>
-    <p class="why">Inputs are stored once, by content, so the same input produced by two generators
-      or re-seen in a later version is one blob with several execution records.</p>
-    <table class="summary"><tbody>
-      ${row("Generated", c.generated, "written by the generators, before any filtering")}
-      ${row("Valid", c.valid, "kept after the generator's own validity check")}
-      ${row("Prioritized", c.prioritized, "ordered for execution by the selection signal")}
-      ${row("Executed", d.executed, "actually run before the execution budget ran out")}
-      ${row("Clusters", c.k_eff, "found by the shared clustering, which is what CC is measured over")}
-    </tbody></table>
-    ${c.prioritized && d.executed < c.prioritized ? `<div class="note">The execution budget ran out
-      after ${num(d.executed)} of ${num(c.prioritized)} inputs. The rest are still in the corpus and
-      a longer budget picks up where this one stopped.</div>` : ""}
-    <pre>spreadex export ${esc(d.run_id)}</pre>
-  </div>`;
-}
-
-function pickRun(id) { S.current = id; renderResults(); }
-
-async function showInput(hash, btn) {
-  const holder = btn.closest("details").querySelector(".holder");
-  if (holder.dataset.loaded) { holder.innerHTML = ""; delete holder.dataset.loaded; return; }
-  try {
-    const d = await api(`/api/input?hash=${encodeURIComponent(hash)}`);
-    holder.innerHTML = `<pre>${esc(d.text)}${d.truncated ? "\n… truncated" : ""}</pre>
-      <div class="muted" style="font-size:12px">${d.size_bytes} bytes · from ${esc(d.generators.join(", "))}</div>`;
-    holder.dataset.loaded = "1";
-  } catch (e) { holder.innerHTML = `<div class="note bad">${esc(e.message)}</div>`; }
+  if (!d || !el("detail")) return;
+  const body = ({ overview: tabOverview, generators: tabGenerators, budget: tabBudget, findings: tabFindings, corpus: tabCorpus }[S.rtab] || tabOverview)(d);
+  const tab = S.rtab in { overview: 1, generators: 1, budget: 1, findings: 1, corpus: 1 } ? S.rtab : "overview";
+  const n = (d.findings || []).length;
+  el("detail").innerHTML = `<div class="resws">${resultsHeader(d)}
+    ${S.exportError ? `<div class="note bad" role="alert">Export failed: ${esc(S.exportError)}</div>` : ""}
+    <div class="rtabs2" role="tablist">${RESULT_TABS.map(t => `<button type="button" role="tab" class="${tab === t.id ? "on" : ""}" aria-selected="${tab === t.id}" onclick="pickResultTab('${t.id}')">
+      ${ICONS[t.icon]}<span>${t.t}</span>${t.id === "findings" && n ? `<span class="rbadge">${n}</span>` : ""}</button>`).join("")}</div>
+    <div class="restab-body">${body}</div></div>`;
 }
 
 // ------------------------------------------------------------- bootstrap
