@@ -76,7 +76,7 @@ def test_overview_cards_are_the_designed_ones():
 def test_the_page_only_claims_what_a_run_records():
     """Coverage, mutation score, cost and embedding scatter plots are in the mock-ups but a run does
     not record them, so they must not appear -- not even as placeholders with invented numbers."""
-    text = "\n".join(l for l in BLOCK.splitlines() if not l.strip().startswith("//"))
+    text = "\n".join(l for l in BLOCK.splitlines() if not l.strip().startswith("//")).replace("MutationObserver", "")
     for banned in ("Mutation", "mutation", "Branch coverage", "Estimated cost", "Embedding space", "Vendi",
                    "Silhouette", "Cliff", "RankSum", "$0.0"):
         assert banned not in text, banned

@@ -254,9 +254,17 @@ def _launch(server, config, body: dict, label: str = "campaign") -> dict[str, An
     install = bool(body.get("install_missing"))
     to_install = missing_generators(config) if install else []
 
+    demo = getattr(server, "spreadex_demo", None)
+
     def work(job):
         installed = []
-        if to_install:
+        if demo:
+            # The guided demo asks nothing of the user: the same installer the CLI demo uses, which
+            # falls back to the bundled seeds when it cannot install (offline, say).
+            from ..demo import prepare_generators
+            job.log("Preparing the demo's generators (first time only; the run's budget has not started).")
+            prepare_generators(config, log=job.log)
+        elif to_install:
             mgr = GeneratorManager()
             job.log(f"Installing {len(to_install)} generator(s) before the run "
                     f"(first time only; the run's time budget has not started).")
@@ -785,3 +793,70 @@ def probe_target(config, body: dict) -> dict[str, Any]:
         "timeout_s": target.limits.timeout_s,
         "runtime": _runtime_label(target),
     }
+
+
+# ------------------------------------------------------------ guided demo
+
+def demo_status(server) -> dict[str, Any]:
+    """Is there a demo workspace, does it have campaigns, and is its Workbench up?"""
+    from ..core.lock import active_run
+    from ..demo import demo_root
+    from . import registry
+
+    root = demo_root()
+    state = root / ".spreadex"
+    has_runs = False
+    if (state / "corpus.db").is_file():
+        from ..corpus.store import CorpusStore
+        with CorpusStore(state) as store:
+            has_runs = store.latest_run_id() is not None
+    live = registry.find_live(root)
+    # A few of the demo's real seed inputs, for the guide to show what the grammar describes.
+    samples = []
+    seeds = root / "seeds"
+    if seeds.is_dir():
+        for f in sorted(seeds.iterdir())[:20]:
+            text = f.read_text(errors="replace").strip().splitlines()
+            if text and 0 < len(text[0]) <= 40:
+                samples.append(text[0])
+            if len(samples) == 4:
+                break
+    from ..demo import grammar_excerpt
+    bnf = root / "calc.bnf"
+    return {"exists": (root / "spreadex.yaml").is_file(), "has_runs": has_runs, "samples": samples,
+            "grammar_rules": grammar_excerpt(bnf) if bnf.is_file() else [],
+            "active": active_run(state) is not None if state.is_dir() else False,
+            "live": live is not None, "is_demo": bool(getattr(server, "spreadex_demo", None))}
+
+
+def demo_open(server, body: dict, return_url: str) -> dict[str, Any]:
+    """Prepare the managed demo workspace and hand back its Workbench's address.
+
+    The demo is a separate project under SpreadEx's own state, served by its own Workbench (own port,
+    own token) from this process. Nothing about the project this Workbench serves is touched.
+    """
+    from ..core.config import load_config
+    from ..core.lock import RunInProgress
+    from ..demo import demo_root, ensure, reset
+    from . import registry
+    from .server import project_token, start_background
+
+    root = demo_root()
+    try:
+        if body.get("reset"):
+            reset(root)
+        else:
+            ensure(root)
+    except RunInProgress:
+        return {"ok": False, "conflict": True,
+                "error": "The demo has a campaign running. Open it, or cancel it before starting fresh."}
+    except OSError as exc:
+        return {"ok": False, "error": f"could not prepare the demo in {root}: {exc}"}
+    config = load_config(root / "spreadex.yaml")
+    live = registry.find_live(root)
+    if live:
+        url = f"http://{live['host']}:{live['port']}/?token={project_token(config)}"
+    else:
+        url = start_background(config, embedded_in=server.spreadex_config.project_root,
+                               spreadex_demo={"return_url": return_url})
+    return {"ok": True, "url": url + ("&tour=1" if body.get("tour", True) else ""), "root": str(root)}

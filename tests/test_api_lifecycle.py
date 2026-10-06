@@ -123,3 +123,17 @@ def test_rerun_uses_the_recorded_config_then_delete_removes_it(served):
     assert [r["run_id"] for r in body["runs"]] == [rid]
     status, body = call(base + "/api/runs/missing/delete", {})
     assert body["ok"] is False
+
+
+def test_the_theme_choice_is_shared_by_every_project_on_the_machine(served):
+    base, *_ = served
+    _, p = call(base + "/api/project")
+    assert p["theme"] is None
+    status, out = call(base + "/api/prefs", {"theme": "dark"})
+    assert status == 200 and out["theme"] == "dark"
+    from spreadex.api import registry
+    assert registry.prefs()["theme"] == "dark"
+    _, p = call(base + "/api/project")
+    assert p["theme"] == "dark"
+    status, _ = call(base + "/api/prefs", {"theme": "neon"})
+    assert status == 400

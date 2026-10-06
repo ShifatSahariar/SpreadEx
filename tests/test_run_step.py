@@ -158,7 +158,7 @@ def test_step_five_is_called_review_and_run_everywhere_and_is_red():
 def test_running_is_blocked_until_ready_and_a_problem_names_its_fix():
     r = JS[JS.index("function readiness"):JS.index("function estimateLines")]
     assert "ready: items.every(i => i.ok)" in r and "S.project?.writable !== false" in r
-    assert re.search(r'id="launch" onclick="launch\(\)" \$\{readiness\(\)\.ready \? "" : "disabled"\}', JS)
+    assert re.search(r'id="launch" data-tour="run-launch" onclick="launch\(\)" \$\{readiness\(\)\.ready \? "" : "disabled"\}', JS)
     launch = JS[JS.index("async function launch"):][:200]
     assert "if (!readiness().ready) return;" in launch
 
@@ -209,9 +209,12 @@ def test_campaigns_reads_the_persisted_history_not_the_config_file():
     assert "configured" not in r and "configured" not in _empty()
 
 
-def test_the_demo_walkthrough_lives_on_home():
-    h = JS[JS.index("function showDemoHint"):][:900]
-    assert "spreadex demo --ui" in h and "copyDemoCommand(this)" in h
+def test_the_demo_lives_on_home_without_a_terminal_row():
+    h = JS[JS.index("async function paintDemoCard"):][:1200]
+    assert "Continue demo" in h and "Start fresh" in h
+    assert "Prefer the terminal" not in JS and "copyDemoCommand" not in JS
+    land = JS[JS.index("function renderLanding"):JS.index("// ---- opening the demo (Home)")]
+    assert 'onclick="startDemo(false)"' in land and "No setup · Runs locally" in land
 
 
 def test_the_whole_script_parses():

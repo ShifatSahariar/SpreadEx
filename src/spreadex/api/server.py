@@ -196,6 +196,19 @@ class _Handler(BaseHTTPRequestHandler):
         if route == "/api/run":
             self._json_result(setup.start_run(self.server, body))
             return
+        if route == "/api/prefs":
+            theme = body.get("theme")
+            if theme not in ("light", "dark"):
+                self._error(HTTPStatus.BAD_REQUEST, "theme must be light or dark")
+                return
+            _registry().set_pref("theme", theme)
+            self._json({"ok": True, "theme": theme})
+            return
+        if route == "/api/demo/open":
+            # Back to this Workbench from the demo: same origin, so the browser still holds its token.
+            back = f"http://{self.headers.get('Host') or '127.0.0.1'}/"
+            self._json_result(setup.demo_open(self.server, body, back))
+            return
         for action in ("cancel", "delete", "rerun"):
             if route.startswith("/api/runs/") and route.endswith("/" + action):
                 run_id = route[len("/api/runs/"):-len(action) - 1]
@@ -277,6 +290,11 @@ class _Handler(BaseHTTPRequestHandler):
                 "signal": self.config.signal,
                 "oracle": self.config.oracle.get("type"),
                 "experimental": getattr(self.server, "spreadex_experimental", False),
+                # The theme chosen on this machine, if any (SpreadEx ships light).
+                "theme": _registry().prefs().get("theme"),
+                # The guided demo's own Workbench says so, and where it was opened from.
+                "demo": bool(getattr(self.server, "spreadex_demo", None)),
+                "return_url": (getattr(self.server, "spreadex_demo", None) or {}).get("return_url"),
                 # Can a run write its results? The review screen's Storage check. Looks at the state
                 # directory if it exists, otherwise at the project folder that would contain it.
                 "writable": _can_write(self.config.state_dir),
@@ -346,6 +364,10 @@ class _Handler(BaseHTTPRequestHandler):
         if route == "/api/generators":
             from . import setup
             self._json(setup.generator_status(self.config))
+            return
+        if route == "/api/demo":
+            from . import setup
+            self._json(setup.demo_status(self.server))
             return
         if route == "/api/active":
             # Decided by the project's OS lock, so a run started from the CLI counts too.
@@ -506,11 +528,15 @@ def reload_project(server) -> None:
         persist_token(config, server.spreadex_token)
 
 
-def serve(config, host: str = "127.0.0.1", port: int | None = None,
-          open_browser: bool = True, verbose: bool = False,
-          read_only: bool = False, new_token: bool = False, experimental: bool = False,
-          token: str | None = None, log=_emit) -> None:
-    """Run the UI until interrupted. Foreground on purpose.
+def _registry():
+    from . import registry
+    return registry
+
+
+def make_server(config, host: str = "127.0.0.1", port: int | None = None, verbose: bool = False,
+                read_only: bool = False, new_token: bool = False, experimental: bool = False,
+                token: str | None = None):
+    """Bind a Workbench for `config` without serving it yet.
 
     With no `port`, the project's own preferred port is tried first and the next free one after it,
     so a second project, or a forgotten server, never needs `--port`. A port the user NAMES is
@@ -541,6 +567,37 @@ def serve(config, host: str = "127.0.0.1", port: int | None = None,
     # unless someone opts in on the command line.
     httpd.spreadex_experimental = experimental
     httpd.spreadex_jobs = JobRunner()
+    httpd.spreadex_demo = None
+    return httpd
+
+
+def start_background(config, embedded_in: Path, **attrs) -> str:
+    """Serve another project's Workbench from this process, in a daemon thread; returns its URL.
+
+    Used for the guided demo: it gets its own port and token, so it is a separate Workbench with
+    its own history, but it lives and dies with the Workbench that opened it.
+    """
+    from . import registry
+
+    httpd = make_server(config)
+    for name, value in attrs.items():
+        setattr(httpd, name, value)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    port = httpd.server_address[1]
+    registry.register(config.project_root, port, embedded_in=embedded_in)
+    return f"http://127.0.0.1:{port}/?token={httpd.spreadex_token}"
+
+
+def serve(config, host: str = "127.0.0.1", port: int | None = None,
+          open_browser: bool = True, verbose: bool = False,
+          read_only: bool = False, new_token: bool = False, experimental: bool = False,
+          token: str | None = None, log=_emit) -> None:
+    """Run the UI until interrupted. Foreground on purpose."""
+    from . import registry
+
+    httpd = make_server(config, host=host, port=port, verbose=verbose, read_only=read_only,
+                        new_token=new_token, experimental=experimental, token=token)
+    token = httpd.spreadex_token
     actual_port = httpd.server_address[1]
 
     shown_host = "127.0.0.1" if host in ("0.0.0.0", "") else host

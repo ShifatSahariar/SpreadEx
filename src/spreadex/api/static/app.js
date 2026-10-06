@@ -11,9 +11,19 @@ const incoming = new URL(location.href);
 // of the plain address keeps working.
 const tokenStore = { get: k => { try { return sessionStorage.getItem(k) || localStorage.getItem(k) || ""; } catch (e) { return ""; } },
                      set: (k, v) => { try { sessionStorage.setItem(k, v); localStorage.setItem(k, v); } catch (e) { /* private mode */ } } };
+// Opened from the link `spreadex ui` printed (it carries the token): start on Home. A reload of a
+// tab keeps its place instead.
+const FRESH_OPEN = !!incoming.searchParams.get("token");
+// `?tour=1`: the guided demo was just opened; read before the address is cleaned.
+const TOUR_START = incoming.searchParams.get("tour") === "1";
+if (TOUR_START && !incoming.searchParams.get("token")) {
+  incoming.searchParams.delete("tour");
+  history.replaceState({}, "", incoming.pathname + incoming.search);
+}
 if (incoming.searchParams.get("token")) {
   tokenStore.set("spreadex-token", incoming.searchParams.get("token"));
   incoming.searchParams.delete("token");
+  incoming.searchParams.delete("tour");
   history.replaceState({}, "", incoming.pathname);
 }
 const TOKEN = tokenStore.get("spreadex-token");
@@ -52,14 +62,17 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const num = n => (n ?? 0).toLocaleString();
 const el = id => document.getElementById(id);
 
+// Light by default. A choice is remembered for this machine, not just this address: every project's
+// Workbench has its own port, so browser storage alone would forget it in the next project.
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem("spreadex-theme", theme); } catch (e) { /* blocked storage */ }
+}
 function toggleTheme() {
-  const root = document.documentElement;
-  const explicit = root.getAttribute("data-theme");
-  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  // With no explicit choice yet, the first click flips away from the system.
-  const next = explicit ? (explicit === "dark" ? "light" : "dark") : (systemDark ? "light" : "dark");
-  root.setAttribute("data-theme", next);
-  try { localStorage.setItem("spreadex-theme", next); } catch (e) { /* blocked storage */ }
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  applyTheme(next);
+  // A read-only Workbench refuses every POST; the choice then lasts for this address only.
+  api("/api/prefs", { theme: next }).catch(() => {});
 }
 
 const STEPS = [
@@ -123,7 +136,7 @@ const I = (p, o = {}) =>
 //: fade in behind them. Decorative, so it is hidden from assistive tech -- the
 //: heading beside it already says what this is.
 const BRAND_MARK = `
-  <svg class="hero-mark" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"
+  <svg class="hero-mark" viewBox="11 11 38 38" xmlns="http://www.w3.org/2000/svg"
        aria-hidden="true" focusable="false">
     <line class="logo-line-green"  x1="30" y1="30" x2="16.5" y2="16.5"/>
     <line class="logo-line-green"  x1="30" y1="30" x2="43.5" y2="16.5"/>
@@ -261,7 +274,6 @@ const ICONS = {
   doc: I(`<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /> <path d="M14 2v5a1 1 0 0 0 1 1h5" /> <path d="M10 9H8" /> <path d="M16 13H8" /> <path d="M16 17H8" />`),
   shield: I(`<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />`),
   playOutline: I(`<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />`),
-  playSolid: I(`<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />`),
   home: I(`<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" /> <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />`),
   folder: I(`<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />`),
   sliders: I(`<path d="M10 5H3" /> <path d="M12 19H3" /> <path d="M14 3v4" /> <path d="M16 17v4" /> <path d="M21 12h-9" /> <path d="M21 19h-5" /> <path d="M21 5h-7" /> <path d="M8 10v4" /> <path d="M8 12H3" />`),
@@ -271,6 +283,9 @@ const ICONS = {
   chart: I(`<path d="M3 3v16a2 2 0 0 0 2 2h16" /> <path d="M18 17V9" /> <path d="M13 17V5" /> <path d="M8 17v-3" />`),
   check: I(`<path d="M20 6 9 17l-5-5" />`),
   alert: I(`<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /> <path d="M12 9v4" /> <path d="M12 17h.01" />`),
+  // Lucide monitor-play and file-plus: the Quick demo card and its Start fresh action.
+  demoScreen: I(`<path d="M10 7.75a.75.75 0 0 1 1.142-.638l3.664 2.249a.75.75 0 0 1 0 1.278l-3.664 2.25a.75.75 0 0 1-1.142-.64z" /> <path d="M12 17v4" /> <path d="M8 21h8" /> <rect x="2" y="3" width="20" height="14" rx="2" />`),
+  filePlus: I(`<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /> <path d="M14 2v5a1 1 0 0 0 1 1h5" /> <path d="M9 15h6" /> <path d="M12 18v-6" />`),
   copy: I(`<rect width="14" height="14" x="8" y="8" rx="2" ry="2" /> <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />`),
   success: I(`<circle cx="12" cy="12" r="10" /> <path d="m16 9-5.5 5.5L8 12" />`),
   error: I(`<circle cx="12" cy="12" r="10" /> <path d="m15 9-6 6" /> <path d="m9 9 6 6" />`),
@@ -338,6 +353,8 @@ function paintNavIcons() {
 }
 
 function go(tab) {
+  // Leaving the wizard retires any step still loading, so it cannot draw over the new page.
+  if (tab !== "setup") RENDER++;
   S.tab = tab;
   paintNavIcons();
   el("tab-home").setAttribute("aria-selected", tab === "landing");
@@ -348,7 +365,7 @@ function go(tab) {
   if (tab === "results" && S.rview !== "live" && S.rview !== "run") S.rview = S.live?.active ? "live" : "list";
   if (tab === "setup" && !stepReachable(S.step)) { S.step = firstOpenStep(); renderSteps(); }
   saveView();
-  if (tab === "landing") renderLanding();
+  if (tab === "landing") { renderLanding(); paintDemoCard(); }
   else tab === "setup" ? renderStep() : renderResults();
 }
 // A step is reachable when every step before it is complete; an unreachable one sends you to the
@@ -356,17 +373,6 @@ function go(tab) {
 function gotoStep(id) {
   S.step = stepReachable(id) ? id : firstOpenStep();
   saveView(); renderSteps(); renderStep();
-}
-
-function copyDemoCommand(button) {
-  const command = "spreadex demo --ui";
-  const copied = () => {
-    button.textContent = "Copied";
-    setTimeout(() => { button.textContent = "Copy command"; }, 1400);
-  };
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(command).then(copied).catch(() => {});
-  }
 }
 
 function renderLanding() {
@@ -412,25 +418,26 @@ function renderLanding() {
     <section class="landing dashboard-home" aria-labelledby="landing-title">
       <div class="landing-hero">
         <div class="landing-intro">
-          <p class="eyebrow">LOCAL TESTING WORKBENCH</p>
           <div class="hero-title-row">
             ${BRAND_MARK}
-            <h1 id="landing-title">SpreadEx <span>Workbench</span></h1>
+            <h1 id="landing-title"><span class="t1">SpreadEx</span> <span class="t2">Workbench</span></h1>
           </div>
-          <p class="landing-lede">Test compilers, interpreters, parsers, and other
-            program-processing systems from one local workbench.</p>
+          <p class="landing-lede">Generate, prioritize, and run tests for compilers, interpreters, parsers,
+            and other program-processing systems — all locally.</p>
           <div class="hero-actions">
             <button class="hero-action primary landing-primary" onclick="go('setup')"
                     ${readOnly ? "disabled" : ""}>
-              <span class="ha-icon">${ICONS.playSolid}</span>
-              <span class="ha-text"><strong>Set up my system</strong></span>
+              <span class="ha-icon">${ICONS.playOutline}</span>
+              <span class="ha-text"><strong>Set up my system</strong>
+                <small>Guides you step by step</small></span>
               <span class="ha-end">${ICONS.arrow}</span>
             </button>
-            <button class="hero-action quick-demo" onclick="showDemoHint()">
-              <span class="ha-icon qd-icon">${ICONS.book}</span>
-              <span class="ha-text"><strong>Quick demo</strong>
-                <small>See a real run in ~20 seconds</small></span>
-              <span class="ha-end"></span>
+            <button class="hero-action quick-demo" onclick="startDemo(false)" ${readOnly ? "disabled" : ""}>
+              <span class="ha-icon qd-icon">${ICONS.demoScreen}</span>
+              <span class="ha-text"><strong>Quick demo <span class="qd-badge">~20s</span></strong>
+                <small>Run a real campaign and see the results</small>
+                <small class="qd-meta">No setup · Runs locally</small></span>
+              <span class="ha-end">${ICONS.arrow}</span>
             </button>
           </div>
           ${readOnly ? `<p class="landing-readonly">This Workbench is read-only. Open it without
@@ -504,17 +511,32 @@ document.addEventListener("focusin", e => {
   e.target.closest?.(".sc-info")?.closest(".start-card").classList.remove("tip-dismissed");
 });
 
-function showDemoHint() {
-  // The demo is a terminal command, not a thing the browser can start: it
-  // writes a project to the working directory and runs a real campaign.
-  const holder = el("demo-hint");
-  if (!holder) return;
-  holder.innerHTML = holder.innerHTML
-    ? ""
-    : `<div class="note">A real campaign against a hundred-line system under test with one
-         documented bug, in about twenty seconds. Run it from any folder:
-         <div class="ex-code"><code>spreadex demo --ui</code><button type="button" class="ex-copy" onclick="copyDemoCommand(this)" aria-label="Copy command">${ICONS.copy}</button></div>
-         It writes <span class="mono">spreadex-demo</span> beside you and opens the Workbench on its results.</div>`;
+// ---- opening the demo (Home)
+
+async function startDemo(reset) {
+  if (S.project?.demo && !reset) { go("setup"); return tourStart(); }
+  const msg = el("demo-hint");
+  if (msg) msg.innerHTML = `<div class="note" role="status">Preparing the demo&hellip;</div>`;
+  try {
+    const r = await api("/api/demo/open", { reset: !!reset });
+    if (r.ok === false) throw new Error(r.error);
+    try { sessionStorage.removeItem(TOUR_KEY); } catch (e) { /* blocked storage */ }
+    location.href = r.url;
+  } catch (e) { if (msg) msg.innerHTML = `<div class="note bad" role="alert">${esc(e.message || e)}</div>`; }
+}
+function demoFresh() {
+  if (!confirm("Start the demo over? Its campaigns are deleted and its files restored. Your own project is not touched.")) return;
+  startDemo(true);
+}
+async function paintDemoCard() {
+  const holder = el("demo-hint"); if (!holder) return;
+  let st = null;
+  try { st = await api("/api/demo"); } catch (e) { /* the button still works */ }
+  S.demo = st;
+  const again = st && (st.exists && (st.has_runs || st.is_demo));
+  holder.innerHTML = `${again ? `<div class="demo-again">
+      <button type="button" class="demo-btn continue" onclick="startDemo(false)">${ICONS.playOutline}<span>Continue demo</span></button>
+      <button type="button" class="demo-btn" onclick="demoFresh()">${ICONS.filePlus}<span>Start fresh</span></button></div>` : ""}`;
 }
 
 
@@ -1233,7 +1255,7 @@ function stepStrategy() {
       <div class="srows">${STRAT_CHECKS.map(c => {
         const on = c.floor || st[c.id], open = !!st.open[c.id];
         const dis = c.id === "diff" && !multi;
-        return `<div class="srow tc-${c.tone} ${on ? "on" : "off"}">
+        return `<div class="srow tc-${c.tone} ${on ? "on" : "off"}" data-tour="strat-${c.id}">
           <div class="srow-h">
             <button type="button" class="switch" role="switch" aria-checked="${on}" ${c.floor || dis ? "disabled" : ""}
               aria-label="${esc(c.t)}${c.floor ? " (always on)" : ""}" onclick="stratSet('${c.id}', ${!on})"><span></span></button>
@@ -1259,7 +1281,7 @@ function stepStrategy() {
     <div id="err"></div>
     <div class="actions inp-actions">
       <button type="button" class="ghost" onclick="stashStrat(); gotoStep('generators')">${ICONS.back} Back to Generators</button>
-      <button type="button" class="primary" onclick="commitStrategy()">Continue to Review &amp; run ${ICONS.arrow}</button>
+      <button type="button" class="primary" data-tour="strat-continue" onclick="commitStrategy()">Continue to Review &amp; run ${ICONS.arrow}</button>
     </div>
    </div>
 
@@ -1303,6 +1325,7 @@ function commitStrategy() {
   }
   S.confirmed.add("strategy");
   gotoStep("run");
+  tourEvent("step.strategy");
 }
 
 // ------------------------------------------------------------ step views
@@ -1492,6 +1515,7 @@ async function verifyCommand() {
   try { S.probe = await api("/api/probe", body); }
   catch (e) { S.probe = { ok: false, error: String(e.message || e) }; }
   S.probe.key = sutKey({ command: r.argv, cwd: r.cwd, env: r.env, input_mode: r.input_mode });
+  tourEvent(S.probe.ok && !S.probe.timed_out ? "probe.ok" : "probe.fail");
   S.probeShowDetails = false;
   stepSut();
 }
@@ -1556,7 +1580,7 @@ function stepSut() {
       <div class="sut-lab"><label for="sut-cmd">Execution command</label>
         ${hint("hint-cmd", "SpreadEx runs this command once for every generated input. Quote any argument that contains a space.")}
         <span class="sut-pill"><code>{input}</code> will be replaced with each generated test file</span></div>
-      <input id="sut-cmd" class="sut-cmd" type="text" spellcheck="false" autocomplete="off"
+      <input id="sut-cmd" data-tour="sut-command" class="sut-cmd" type="text" spellcheck="false" autocomplete="off"
         value="${esc(d.command)}" placeholder="${esc((SUT_KINDS.find(k => k.id === d.kind) || {}).cmd || "your-command {input}")}">
       ${d.extra.map((x, i) => `<div class="sut-extra">
         <input class="x-name" type="text" value="${esc(x.name)}" aria-label="Name of implementation ${i + 2}">
@@ -1567,7 +1591,7 @@ function stepSut() {
     </section>
 
     <div class="sut-test-row">
-      <button type="button" id="sut-test" class="primary" onclick="verifyCommand()">${ICONS.playOutline} Test connection</button>
+      <button type="button" id="sut-test" data-tour="sut-test" class="primary" onclick="verifyCommand()">${ICONS.playOutline} Test connection</button>
       <span class="muted">Runs a quick check with a sample input to verify the setup.</span>
     </div>
 
@@ -1592,7 +1616,7 @@ function stepSut() {
     <div id="probe" aria-live="polite">${sutResult()}</div>
     <div id="err"></div>
     <div class="actions sut-actions">
-      <button type="button" class="primary" onclick="commitSut()">Continue to Inputs ${ICONS.arrow}</button>
+      <button type="button" class="primary" data-tour="sut-continue" onclick="commitSut()">Continue to Inputs ${ICONS.arrow}</button>
     </div>
    </div>
 
@@ -1652,6 +1676,7 @@ function commitSut() {
   S.config.oracle = o;
   S.kind = d.kind;
   gotoStep("grammar");
+  tourEvent("step.sut");
 }
 
 // ------------------------------------------------------- step 2: inputs
@@ -2200,7 +2225,7 @@ function paintInputs() {
           <span class="sk-t">${m.t}</span><span class="sk-d">${m.d}</span>
           <span class="sk-ok" aria-hidden="true">${ICONS.check}</span></button>`).join("")}
       </div>
-      <div class="inp-panel">${inpPanel()}</div>
+      <div class="inp-panel" data-tour="inputs-grammar">${inpPanel()}</div>
     </section>
 
     ${d.mode === "none" ? "" : `<section class="sut-sec" aria-live="polite">
@@ -2215,7 +2240,7 @@ function paintInputs() {
     <div class="actions inp-actions">
       <button type="button" class="ghost" onclick="gotoStep('sut')">${ICONS.back} Back to System under test</button>
       ${S.project?.experimental ? `<button type="button" class="ghost" onclick="toggleAssistant()">Help me write one</button>` : ""}
-      <button type="button" class="primary" onclick="commitGrammar()">Continue to Generators ${ICONS.arrow}</button>
+      <button type="button" class="primary" data-tour="inputs-continue" onclick="commitGrammar()">Continue to Generators ${ICONS.arrow}</button>
     </div>
    </div>
 
@@ -2435,6 +2460,7 @@ function commitGrammar() {
   S.config.corpus = corpus ? { path: corpus } : undefined;
   S.config.input_extension = d.ext || undefined;
   gotoStep("generators");
+  tourEvent("step.grammar");
 }
 
 // ------------------------------------------------ step 3: generators
@@ -2520,7 +2546,7 @@ function genCard({ g, fit }, recommended) {
   const chosen = (cfg().generators || []).includes(g.id);
   const line = semanticLine(g, cfg().semantics, !!S.project?.experimental);
   const opt = (cfg().generator_options || {})[g.id] || {};
-  return `<div class="gcard ${chosen ? "on" : ""} ${fit.ok ? "" : "off"}" data-gen="${esc(g.id)}">
+  return `<div class="gcard ${chosen ? "on" : ""} ${fit.ok ? "" : "off"}" data-gen="${esc(g.id)}" ${chosen ? 'data-tour="gen-selected"' : ""}>
     <label class="gcheck"><input type="checkbox" ${chosen ? "checked" : ""} ${fit.ok || chosen ? "" : "disabled"}
       onclick="event.stopPropagation()" onchange="toggleGen('${esc(g.id)}')" aria-label="Use ${esc(g.name)}"><span class="box" aria-hidden="true">${ICONS.check}</span></label>
     <button type="button" class="gbody" onclick="openGenModal('${esc(g.id)}', this)" aria-haspopup="dialog">
@@ -2642,7 +2668,7 @@ function paintGenerators() {
     <div class="actions inp-actions">
       <button type="button" class="ghost" onclick="gotoStep('grammar')">${ICONS.back} Back to Inputs</button>
       ${constraintCapable().length ? `<button type="button" class="ghost" onclick="toggleConstraints()">Add constraints</button>` : ""}
-      <button type="button" class="primary" onclick="commitGenerators()">Continue to Testing strategy ${ICONS.arrow}</button>
+      <button type="button" class="primary" data-tour="gen-continue" onclick="commitGenerators()">Continue to Testing strategy ${ICONS.arrow}</button>
     </div>
     <div id="constraints"></div>
    </div>
@@ -2901,6 +2927,7 @@ function commitGenerators() {
   // Generators that are not installed are installed when the run starts (see the review screen).
   S.confirmed.add("generators");
   gotoStep("strategy");
+  tourEvent("step.generators");
 }
 
 // ------------------------------------------------- step 5: review & run
@@ -3094,7 +3121,7 @@ async function stepRun(current = () => true) {
       <div id="run-summary">${summaryCard()}</div>
     </div>
     <div class="side-card runcard">
-      <button type="button" class="primary runbtn" id="launch" onclick="launch()" ${readiness().ready ? "" : "disabled"}>${ICONS.playOutline} Run campaign</button>
+      <button type="button" class="primary runbtn" id="launch" data-tour="run-launch" onclick="launch()" ${readiness().ready ? "" : "disabled"}>${ICONS.playOutline} Run campaign</button>
       <p class="muted runnote">${ICONS.shield}<span>Your inputs and results stay on this machine.${(S.generators || []).some(isPending) ? " Missing generators are downloaded from PyPI first." : ""}</span></p>
     </div>
    </aside>
@@ -3126,6 +3153,7 @@ async function launch() {
   }
   // Land on the campaign that is running, not on a list: that is the one being waited for.
   startLive();
+  tourEvent("campaign.started");
 }
 
 // --------------------------------------------------------------- job log
@@ -3235,8 +3263,8 @@ function legend(items) {
   return `<div class="legend">${items.map(i => `<span><i style="background:${i.color}"></i>${esc(i.label)}</span>`).join("")}</div>`;
 }
 
-function resCard(title, body, { tip, right, cls = "" } = {}) {
-  return `<section class="rescard ${cls}"><div class="rescard-h"><h4>${esc(title)}${tip ? " " + hint("hint-r-" + title.replace(/\W+/g, ""), tip) : ""}</h4>${right || ""}</div>${body}</section>`;
+function resCard(title, body, { tip, right, cls = "", tour = "" } = {}) {
+  return `<section class="rescard ${cls}"${tour ? ` data-tour="${tour}"` : ""}><div class="rescard-h"><h4>${esc(title)}${tip ? " " + hint("hint-r-" + title.replace(/\W+/g, ""), tip) : ""}</h4>${right || ""}</div>${body}</section>`;
 }
 
 // ------- the header every tab shares
@@ -3263,7 +3291,7 @@ function resultsHeader(d) {
       <div class="rtitle-2"><strong>${esc(t.name || "sut")}</strong>${t.version ? ` <span class="muted">${esc(String(t.version).split("\n")[0].slice(0, 40))}</span>` : ""}</div>
       <div class="rtitle-3"><span>${ICONS.clock} ${esc(fmtDate(d.started_at))} · ${esc(fmtTime(d.started_at))}</span><span>${ICONS.playOutline} ${esc(fmtDur(d.duration_s))}</span><span>seed ${esc(String(d.seed))}</span></div>
     </div>
-    <div class="kpis">
+    <div class="kpis" data-tour="res-kpis">
       ${kpi("blue", "doc", c.generated ?? 0, "Generated")}
       ${kpi("green", "success", c.valid ?? 0, "Valid inputs")}
       ${kpi("blue", "playOutline", d.executed, "Executed")}
@@ -3309,7 +3337,7 @@ const RESULT_TABS = [
   { id: "corpus", t: "Corpus", icon: "database" },
 ];
 
-function pickResultTab(id) { S.rtab = id; S.runMenu = S.actMenu = false; paintRun(); if (id === "corpus") loadCorpus(); if (id === "findings") ensureFinding(); }
+function pickResultTab(id) { S.rtab = id; S.runMenu = S.actMenu = false; paintRun(); if (id === "corpus") loadCorpus(); if (id === "findings") ensureFinding(); tourEvent("tab." + id); }
 
 // ------- Overview: what happened
 
@@ -3423,7 +3451,7 @@ function tabGenerators(d) {
 
   if (!gens.length) return `<div class="empty">This run recorded no generator breakdown.</div>`;
   return `<div class="resgrid one">
-    ${resCard("Generator comparison", `${basis ? `<div class="muted rbasis">Comparison basis: ${basis}</div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
+    ${resCard("Generator comparison", `${basis ? `<div class="muted rbasis">Comparison basis: ${basis}</div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
     ${rec}
     <div class="resgrid three">
       ${resCard("Executed inputs per generator", executedChart)}
@@ -3501,7 +3529,7 @@ function tabBudget(d) {
   return `<div class="resgrid one">
     <div class="resgrid two">${resCard("Budget configuration", cfg, { tip: "What this run was given. It is the configuration recorded in the run, not the project's current setup." })}
       ${resCard("Actual resource usage", usage, { tip: "What the run actually spent. Time inside the SUT is the sum of each execution's duration; executions can overlap." })}</div>
-    <div class="resgrid two">${resCard("Findings discovered", budgetCurveChart(d), { tip: "Distinct failure signatures found as inputs were executed, against the average of random orderings of the same inputs." })}
+    <div class="resgrid two">${resCard("Findings discovered", budgetCurveChart(d), { tour: "budget-curve", tip: "Distinct failure signatures found as inputs were executed, against the average of random orderings of the same inputs." })}
       ${resCard("Execution timeline", stackedColumns(d.timeline || [], VORDER, VORDER.map(k => VERDICTS[k].color), "inputs, in execution order") + legend(VORDER.map(k => ({ label: VERDICTS[k].label, color: VERDICTS[k].color }))))}</div>
     <div class="resgrid two">${resCard("Generation time per generator", genTime)}${resCard("Key takeaways", takeaways)}</div>
     ${resCard("Resource usage by generator", table)}
@@ -3521,7 +3549,7 @@ function visibleFindings(d) {
   return fs;
 }
 
-function openFinding(signature) { rfState().sel = signature; S.rtab = "findings"; rfState().replay = null; paintRun(); ensureFinding(true); }
+function openFinding(signature) { rfState().sel = signature; S.rtab = "findings"; rfState().replay = null; paintRun(); ensureFinding(true); tourEvent("finding.opened"); }
 function setFindingFilter(f) { rfState().filter = f; rfState().sel = null; paintRun(); ensureFinding(); }
 function findingSearch(v) { const st = rfState(); st.q = v; st.sel = null; clearTimeout(S.fq); S.fq = setTimeout(() => { paintRun(); ensureFinding(); el("f-search")?.focus(); const i = el("f-search"); if (i) i.setSelectionRange(i.value.length, i.value.length); }, 250); }
 function findingSort(v) { rfState().sort = v; rfState().sel = null; paintRun(); ensureFinding(); }
@@ -3562,6 +3590,7 @@ async function replayFinding() {
   try { st.replay = await api(`/api/runs/${encodeURIComponent(S.current)}/replay`, { hash: f.hash }); }
   catch (e) { st.replay = { ok: false, error: String(e.message || e) }; }
   st.busy = false; paintRun();
+  tourEvent("replay.done", st.replay);
 }
 
 function replayPanel(f) {
@@ -3592,13 +3621,13 @@ function findingDetailView(f) {
         <button type="button" class="ghost small" onclick="stepFinding(1)" aria-label="Next finding">${ICONS.arrow}</button></div></div>
     <div class="fd-meta">${meta("First seen", `input #${f.first_rank + 1}`)}${meta("Generator", esc(f.generator))}${meta("Runtime", esc(fmtMs(f.duration_ms)))}${meta("Inputs with this signature", num(f.count))}</div>
     <div class="fd-grid">
-      <div class="subcard"><div class="subcard-h"><strong>Input</strong><span class="grow"></span>
+      <div class="subcard" data-tour="fd-input"><div class="subcard-h"><strong>Input</strong><span class="grow"></span>
         <button type="button" class="ghost small" onclick="copyText(S.rf.detail.input, this)">${ICONS.copy} Copy</button>
         <button type="button" class="ghost small" onclick="saveText('${esc(f.id)}-input.txt', S.rf.detail.input)">${ICONS.download} Save</button></div>${codeBlock(f.input)}</div>
-      <div class="subcard"><div class="subcard-h"><strong>Classification</strong> ${hint("hint-class", "The checks in the order SpreadEx applies them. The first one that matches decides the result.")}</div>
+      <div class="subcard" data-tour="fd-class"><div class="subcard-h"><strong>Classification</strong> ${hint("hint-class", "The checks in the order SpreadEx applies them. The first one that matches decides the result.")}</div>
         <div class="evs">${ev}</div><div class="evresult ${tone}"><span class="muted">Result</span><strong>${esc((VERDICTS[f.verdict] || { label: f.verdict }).label)}</strong></div></div></div>
     <div class="fd-grid b">
-      <div class="subcard"><div class="subcard-h"><strong>Execution output</strong><span class="grow"></span>${f.stderr ? `<button type="button" class="ghost small" onclick="copyText(S.rf.detail.stderr, this)">${ICONS.copy} Copy</button>` : ""}</div>
+      <div class="subcard" data-tour="fd-output"><div class="subcard-h"><strong>Execution output</strong><span class="grow"></span>${f.stderr ? `<button type="button" class="ghost small" onclick="copyText(S.rf.detail.stderr, this)">${ICONS.copy} Copy</button>` : ""}</div>
         <div class="tabs2"><span class="muted">stderr</span><span class="muted fine">stdout is not kept for failures</span></div>
         ${f.stderr ? `<pre class="errb">${esc(f.stderr)}</pre>` : `<div class="empty">This execution printed nothing to stderr.</div>`}</div>
       <div class="subcard"><div class="subcard-h"><strong>Details</strong></div>
@@ -3609,7 +3638,7 @@ function findingDetailView(f) {
       <div class="sims">${f.similar.map(s => `<div class="sim"><span class="mono">#${s.rank + 1}</span><span>${esc(s.generator)}</span><span class="mono grow">${esc(s.preview)}</span></div>`).join("")}${f.similar_total > f.similar.length ? `<div class="muted">and ${f.similar_total - f.similar.length} more</div>` : ""}</div></div>` : ""}
     <div class="subcard replay"><div class="subcard-h"><strong>Replay</strong></div>
       <p class="muted">Run this input again against your current command and see whether the same thing happens. Nothing is saved.</p>
-      <button type="button" class="primary" onclick="replayFinding()" ${st.busy ? "disabled" : ""}>${ICONS.playOutline} Replay this input</button>${replayPanel(f)}</div>
+      <button type="button" class="primary" data-tour="fd-replay" onclick="replayFinding()" ${st.busy ? "disabled" : ""}>${ICONS.playOutline} Replay this input</button>${replayPanel(f)}</div>
   </div>`;
 }
 
@@ -3618,7 +3647,7 @@ function tabFindings(d) {
   const count = k => all.filter(f => f.verdict === k).length;
   const chip = (id, label, n, tone) => `<button type="button" class="fchip ${tone} ${st.filter === id ? "on" : ""}" aria-pressed="${st.filter === id}" onclick="setFindingFilter('${id}')">${label} <b>${n}</b></button>`;
   if (!all.length) return `<div class="resgrid one">${resCard("Findings", `<div class="empty">No failures in ${num(d.executed)} executed inputs.<br><span class="muted">For a mature system under test this is the expected outcome, not a missing measurement. Expected rejections are not failures; the Overview counts them separately.</span></div>`)}</div>`;
-  const cards = list.map(f => `<button type="button" class="fcard ${f.signature === st.sel ? "on" : ""}" onclick="openFinding('${esc(f.signature)}')" aria-current="${f.signature === st.sel}">
+  const cards = list.map(f => `<button type="button" data-tour="finding-card" class="fcard ${f.signature === st.sel ? "on" : ""}" onclick="openFinding('${esc(f.signature)}')" aria-current="${f.signature === st.sel}">
       <span class="stile ${(VERDICTS[f.verdict] || {}).tone || "red"} sm" aria-hidden="true">${ICONS[f.verdict === "timeout" ? "clock" : f.verdict === "divergence" ? "scale" : "bug"]}</span>
       <span class="fc-m"><strong>${esc(f.stderr_first)}</strong>
         <span class="muted">${esc(f.detail || "")}</span><span class="fc-tags">${vtag(f.verdict)}<span class="vtag blue">${esc(f.generator)}</span></span></span>
@@ -3688,7 +3717,7 @@ function tabCorpus(d) {
       <label class="sortby"><select onchange="rcState().limit = Number(this.value); corpusPage(0)" aria-label="Rows per page">${[10, 25, 50].map(n => `<option ${st.limit === n ? "selected" : ""}>${n}</option>`).join("")}</select> / page</label></div>` : ""}`;
 
   const it = (data?.items || []).find(x => x.hash === st.sel), idx = (data?.items || []).findIndex(x => x.hash === st.sel);
-  const details = it ? `<div class="subcard"><div class="subcard-h"><strong>Input details</strong><span class="grow"></span><span class="muted">${idx + 1} / ${data.items.length}</span>
+  const details = it ? `<div class="subcard" data-tour="corpus-input"><div class="subcard-h"><strong>Input details</strong><span class="grow"></span><span class="muted">${idx + 1} / ${data.items.length}</span>
       <button type="button" class="ghost small" onclick="corpusStep(-1)" aria-label="Previous input" ${idx <= 0 ? "disabled" : ""}>${ICONS.back}</button><button type="button" class="ghost small" onclick="corpusStep(1)" aria-label="Next input" ${idx >= data.items.length - 1 ? "disabled" : ""}>${ICONS.arrow}</button></div>
       <div class="subcard-h"><button type="button" class="ghost small" onclick="copyText(S.rc.text?.text || '', this)">${ICONS.copy} Copy</button><button type="button" class="ghost small" onclick="saveText('input-${esc(it.hash.slice(0, 8))}.txt', S.rc.text?.text || '')">${ICONS.download} Download</button></div>
       ${st.text ? codeBlock(st.text.text) + (st.text.truncated ? `<div class="muted">truncated</div>` : "") : `<div class="empty">Loading…</div>`}
@@ -3809,6 +3838,7 @@ async function exportCampaign(id, ev) {
 // `external` is the project lock's record of a run this server did not start; `since` is when a
 // run it did start began, for a page reloaded mid-run.
 function startLive(external, since) {
+  S.booted = true;
   clearInterval(S.livePoll);
   const at = external?.started_at || since;
   S.live = { active: true, runId: external?.run_id || null, external: !!external, lines: [], total: 0, error: "", done: false,
@@ -3833,19 +3863,21 @@ async function pollLive() {
     // Workbench) is followed through the project lock and the database alone.
     const a = L.external ? { idle: true } : await api(`/api/activity?since=${L.total}`);
     const job = !a.idle && a.kind === "run";
-    if (job) { L.lines.push(...(a.lines || [])); L.total = a.total_lines ?? L.total + (a.lines || []).length; }
+    if (job) { L.lines.push(...(a.lines || [])); L.total = a.total_lines ?? L.total + (a.lines || []).length; tourEvent("stage." + liveStage(L.lines, false)); }
     const act = await api("/api/active");
     if (act.active && act.run_id) L.runId = act.run_id;
     if (L.runId) {
       const runs = (await api("/api/runs")).runs; S.runs = runs;
       const mine = runs.find(r => r.run_id === L.runId);
       if (mine) { L.progress = await api(`/api/runs/${encodeURIComponent(mine.run_id)}/progress`); }
+      // A run started elsewhere has no log here: once inputs are executing, that is its stage.
+      if (L.external && L.progress?.executed) tourEvent("stage.execute");
     }
     const finished = job ? a.done : !act.active;
     if (finished) {
       L.done = true; L.active = false; clearInterval(S.livePoll);
-      if (job && a.ok === false) { L.error = a.error || "The campaign failed."; }
-      else { await loadRuns(); L.busy = false; return L.runId ? openCampaign(L.runId) : showCampaigns(); }
+      if (job && a.ok === false) { L.error = a.error || "The campaign failed."; tourEvent("campaign.failed"); }
+      else { await loadRuns(); L.busy = false; tourEvent("campaign.done"); await tourSettled(); return L.runId ? openCampaign(L.runId) : showCampaigns(); }
     }
   } catch (e) { /* a missed poll is fine; the next one catches up */ }
   L.busy = false;
@@ -3861,7 +3893,7 @@ function liveBody() {
   const total = p && p.exec_budget_s && p.exec_budget_s < 3600 ? (p.gen_budget_s || 0) + p.exec_budget_s : null;
   const bar = p && p.elapsed_s != null && total ? Math.min(100, Math.round(100 * p.elapsed_s / total)) : null;
   const last = p?.latest;
-  return `<header class="reshead live"><button type="button" class="rback" onclick="showCampaigns()" aria-label="Back to campaigns">${ICONS.back}</button>
+  return `<header class="reshead live" data-tour="live-view"><button type="button" class="rback" onclick="showCampaigns()" aria-label="Back to campaigns">${ICONS.back}</button>
       <div class="rtitle"><div class="rtitle-1"><h2>${L.runId ? esc(campaignName(L.runId)) : "Starting campaign"}</h2>
         ${L.error ? `<span class="rstatus bad">${ICONS.error} Failed</span>` : L.cancelling ? `<span class="rstatus warn">${ICONS.stop} Cancelling&hellip;</span>` : `<span class="rstatus live"><span class="pulse" aria-hidden="true"></span> Running</span>`}</div>
         <div class="rtitle-3"><span>${ICONS.clock} ${esc(fmtDur((Date.now() - (L.startedAt || Date.now())) / 1000))} since it started${L.external ? " (from the command line or another Workbench)" : ""}</span></div></div>
@@ -3869,7 +3901,7 @@ function liveBody() {
           title="Stop after the input that is running now; what has run so far is kept">${ICONS.stop} Cancel campaign</button></div>` : ""}
       <div class="kpis">${kpi("blue", "playOutline", p?.executed || 0, "Executed")}${kpi("green", "success", v.ok || 0, "Passed")}${kpi("blue", "doc", v.expected_rejection || 0, "Rejected")}
         ${kpi("red", "bug", v.crash || 0, "Crashes")}${kpi("amber", "clock", v.timeout || 0, "Timeouts")}</div></header>
-    ${L.external ? "" : `<div class="stagebar" role="list" aria-label="Campaign stages">${STAGES.map(([id, t], i) => `<div class="stg ${i < idx ? "done" : i === idx ? "now" : ""}" role="listitem" ${i === idx ? 'aria-current="step"' : ""}><span>${i < idx ? ICONS.check : i + 1}</span>${t}</div>`).join("")}</div>`}
+    ${L.external ? "" : `<div class="stagebar" data-tour="live-stages" role="list" aria-label="Campaign stages">${STAGES.map(([id, t], i) => `<div class="stg ${i < idx ? "done" : i === idx ? "now" : ""}" role="listitem" ${i === idx ? 'aria-current="step"' : ""}><span>${i < idx ? ICONS.check : i + 1}</span>${t}</div>`).join("")}</div>`}
     ${L.error ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-t">The campaign stopped</div><div class="res-s">${esc(L.error)}</div></div>
         <button type="button" class="ghost small res-btn" onclick="go('setup'); gotoStep('run')">Back to Review &amp; run</button></div>`
       : `<section class="rescard"><div class="rescard-h"><h4>Progress</h4></div>
@@ -3934,9 +3966,404 @@ function paintRun() {
   el("detail").innerHTML = `<div class="resws">${resultsHeader(d)}
     ${S.exportError ? `<div class="note bad" role="alert">Export failed: ${esc(S.exportError)}</div>` : ""}
     ${S.actionError ? `<div class="note bad" role="alert">${esc(S.actionError)}</div>` : ""}
-    <div class="rtabs2" role="tablist">${RESULT_TABS.map(t => `<button type="button" role="tab" class="${tab === t.id ? "on" : ""}" aria-selected="${tab === t.id}" onclick="pickResultTab('${t.id}')">
+    <div class="rtabs2" role="tablist">${RESULT_TABS.map(t => `<button type="button" role="tab" data-tour="tab-${t.id}" class="${tab === t.id ? "on" : ""}" aria-selected="${tab === t.id}" onclick="pickResultTab('${t.id}')">
       ${ICONS[t.icon]}<span>${t.t}</span>${t.id === "findings" && n ? `<span class="rbadge">${n}</span>` : ""}</button>`).join("")}</div>
     <div class="restab-body">${body}</div></div>`;
+}
+
+// ---- tour (pure: the tests run this region under Node) -----------------------
+//
+// The guided demo. One concept, one highlighted target, one sentence, one action at a time. The
+// guide only OBSERVES the Workbench: every target is a real element (data-tour="..."), every
+// number comes from the real campaign, and it never clicks anything for the user. A beat moves on
+// when the user does the real thing (`event`), acknowledges an explanation (`ack`), or the real
+// campaign reaches the next stage (`event: "stage.*"`).
+//
+// `text(c)` gets a context of real data: { sut, cfg, probe, samples, live, detail, finding, replay }.
+
+const TOUR_SUT = "MiniCalc";
+
+function tourPct(n, d) { return d ? Math.round(100 * n / d) : 0; }
+// A rule short enough for the coach card: its first alternative and its most telling one
+// (parentheses, else an operator), each verbatim, then "| …" for what was left out.
+function tourShortRule(rule) {
+  const [head, body] = rule.split("::=");
+  if (body === undefined) return rule;
+  const alts = body.split("|").map(x => x.trim());
+  const pick = alts.slice(1).find(x => x.includes('"("')) || alts.slice(1).find(x => /"\s*[-+*\/%]\s*"/.test(x));
+  const kept = pick ? [alts[0], pick] : alts.slice(0, 2);
+  return `${head.trim()} ::= ${kept.join(" | ")}${alts.length > kept.length ? " | …" : ""}`;
+}
+// Two inputs that show the grammar at work: nesting and an operator first, then the rest.
+function tourExamples(samples) {
+  const s = samples || [], rich = x => /\(/.test(x) && /[-+*\/%]/.test(x.replace(/^-/, ""));
+  return [...s.filter(rich), ...s.filter(x => !rich(x))].slice(0, 2);
+}
+
+// Copy conventions, the same on every card:
+//   **concept**  the idea being taught            -> orange
+//   [[name]]     the system or product named      -> deep blue
+//   {{value}}    a real number or a short heading -> bold, neutral
+//   `code`       a technical value
+// A blank line starts a smaller secondary line. One concept per card.
+const TOUR = [
+  // -- Setup 1 of 5: system under test
+  { id: "sut.command", chapter: "Setup · 1 of 5", route: { tab: "setup", step: "sut" }, target: "sut-command", advance: { ack: "Next" },
+    text: () => `Every campaign needs a **system to test**. We've connected [[${TOUR_SUT}]] for you.\n\nThis command runs each test input.` },
+  { id: "sut.test", chapter: "Setup · 1 of 5", route: { tab: "setup", step: "sut" }, target: "sut-test", advance: { event: "probe.ok" },
+    success: () => `✓ [[${TOUR_SUT}]] is connected.`,
+    text: c => c.probe && c.probe.ok === false
+      ? `That did not work. The **real error** is shown below the button.\n\nFix it, or test the connection again.`
+      : `Let's check that SpreadEx can run [[${TOUR_SUT}]].` },
+  { id: "sut.continue", chapter: "Setup · 1 of 5", route: { tab: "setup", step: "sut" }, target: "sut-continue", advance: { event: "step.sut" },
+    text: () => `SpreadEx can now execute test inputs. Continue to **Inputs**.` },
+  // -- 2 of 5: inputs
+  { id: "inputs.grammar", chapter: "Setup · 2 of 5", route: { tab: "setup", step: "grammar" }, target: "inputs-grammar", advance: { ack: "Next" },
+    // Grammar first, what it produces second: two real rules from calc.bnf, two real seed inputs.
+    grammar: c => ({ rules: (c.grammarRules || []).slice(0, 2).map(tourShortRule), examples: tourExamples(c.samples) }),
+    text: () => `SpreadEx needs to know **what inputs** [[${TOUR_SUT}]] **accepts**. We've included a small **BNF grammar** for you.` },
+  { id: "inputs.continue", chapter: "Setup · 2 of 5", route: { tab: "setup", step: "grammar" }, target: "inputs-continue", advance: { event: "step.grammar" },
+    text: () => `This **grammar** guides test generation. Nothing to upload or edit.` },
+  // -- 3 of 5: generators
+  { id: "gen.card", chapter: "Setup · 3 of 5", route: { tab: "setup", step: "generators" }, target: "gen-selected", advance: { ack: "Next" },
+    text: () => `A **generator** turns the grammar into candidate test inputs. We've already selected one for you.` },
+  { id: "gen.continue", chapter: "Setup · 3 of 5", route: { tab: "setup", step: "generators" }, target: "gen-continue", advance: { event: "step.generators" },
+    text: () => `SpreadEx will test inputs produced from this grammar. Continue to **Testing strategy**.` },
+  // -- 4 of 5: strategy
+  { id: "strat.rej", chapter: "Setup · 4 of 5", route: { tab: "setup", step: "strategy" }, target: "strat-rej", advance: { ack: "Next" },
+    text: () => `Not every rejected input is a bug. **Expected rejections** are normal responses, which SpreadEx does not report as failures.` },
+  { id: "strat.crash", chapter: "Setup · 4 of 5", route: { tab: "setup", step: "strategy" }, target: "strat-crash", advance: { ack: "Next" },
+    text: c => `A **crash** is different. SpreadEx reports it as something worth investigating.` +
+      (c.timeout ? `\n\nNo response within \`${c.timeout}\` is classified as a **timeout**.` : "") },
+  { id: "strat.continue", chapter: "Setup · 4 of 5", route: { tab: "setup", step: "strategy" }, target: "strat-continue", advance: { event: "step.strategy" },
+    text: () => `These settings are ready for the demo. You only need to understand what they mean.` },
+  // -- 5 of 5: review & run
+  { id: "run.launch", chapter: "Setup · 5 of 5", route: { tab: "setup", step: "run" }, target: "run-launch", advance: { event: "campaign.started" },
+    story: c => [TOUR_SUT, "Calculator grammar", (c.generators || []).join(", ") || "Seed inputs", "Candidate inputs", "SpreadEx prioritization", "Execute + classify"],
+    text: () => `Everything is ready. Run your first **real SpreadEx campaign**.` },
+  // -- running: watch
+  { id: "live.install", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "stage.generate" },
+    text: () => `Preparing the **generator**. This setup time does not use your campaign budget.` },
+  { id: "live.generate", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "stage.rank" },
+    text: () => `Creating **candidate inputs** from the [[${TOUR_SUT}]] grammar.` },
+  { id: "live.rank", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "stage.execute" },
+    text: () => `SpreadEx is **prioritizing** which inputs should run first.` },
+  { id: "live.execute", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "campaign.done" },
+    text: () => `Running prioritized inputs against [[${TOUR_SUT}]] and classifying the results.` },
+  { id: "live.failed", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { ack: "Next" }, final: true,
+    text: () => `The campaign stopped. The **real error** is shown below.` },
+  // -- understand your results
+  { id: "res.overview", chapter: "Understand your results", route: { tab: "results", rtab: "overview" }, target: "res-kpis", advance: { ack: "Next" },
+    text: c => { const d = c.detail || {}, v = d.verdicts || {}, n = (d.findings || []).length, f = `finding${n === 1 ? "" : "s"}`;
+      return `{{Start here for the big picture.}} SpreadEx executed {{${d.executed ?? 0} inputs}} and discovered **${n} ${f}**.\n\n` +
+        `{{${v.ok || 0}}} normal · {{${v.expected_rejection || 0}}} expected rejections · {{${n}}} ${f}`; } },
+  { id: "res.findtab", chapter: "Understand your results", route: { tab: "results", rtab: "overview" }, target: "tab-findings", advance: { event: "tab.findings" },
+    text: c => (c.detail?.findings || []).length ? `Now let's investigate the **finding**.` : `Nothing failed this time. **Findings** is where you would look.` },
+  { id: "res.finding", chapter: "Understand your results", route: { tab: "results", rtab: "findings" }, target: "finding-card", advance: { event: "finding.opened" },
+    text: () => `A **finding** is behavior worth investigating.\n\nSimilar failures are grouped together.` },
+  { id: "fd.input", chapter: "Understand your results", route: { tab: "results", rtab: "findings" }, target: "fd-input", advance: { ack: "Next" },
+    text: () => `This is the exact **input that triggered the problem**.` },
+  { id: "fd.class", chapter: "Understand your results", route: { tab: "results", rtab: "findings" }, target: "fd-class", advance: { ack: "Next" },
+    text: c => `SpreadEx classified this as a **${c.finding?.verdict || "failure"}**, not a normal rejection.\n\nThe first matching check determines the classification.` },
+  { id: "fd.output", chapter: "Understand your results", route: { tab: "results", rtab: "findings" }, target: "fd-output", advance: { ack: "Next" },
+    text: () => `This is the **execution evidence** from [[${TOUR_SUT}]].` },
+  { id: "fd.replay", chapter: "Understand your results", route: { tab: "results", rtab: "findings" }, target: "fd-replay", advance: { event: "replay.done" },
+    passed: "Replay was not run, so nothing was checked. You can replay any finding later.",
+    success: r => r && r.reproduced ? "✓ {{Reproduced.}} The same input triggered the behavior again."
+      : r && r.ok === false ? `Replay failed: ${r.error}` : "{{Not reproduced}} this time. The page explains what that can mean.",
+    text: () => `Let's see if the same input **reproduces the finding**.` },
+  { id: "res.gentab", chapter: "Understand your results", route: { tab: "results", rtab: "findings" }, target: "tab-generators", advance: { event: "tab.generators" },
+    text: () => `Next: **where the inputs came from**.` },
+  { id: "gen.compare", chapter: "Understand your results", route: { tab: "results", rtab: "generators" }, target: "gen-compare", advance: { ack: "Next" },
+    text: c => { const g = (c.detail?.by_generator || []).filter(x => x.executed);
+      return `Each row shows **where the test inputs came from** and what happened to them.\n\n` +
+        `**Cluster coverage** shows how broadly a generator explored the input space: higher means it reached **more different regions**.` +
+        (g.length > 1 ? " Compare generators to see which explored more broadly." : ""); } },
+  { id: "res.budtab", chapter: "Understand your results", route: { tab: "results", rtab: "generators" }, target: "tab-budget", advance: { event: "tab.budget" },
+    text: () => `Next: **how early** the finding appeared.` },
+  { id: "bud.curve", chapter: "Understand your results", route: { tab: "results", rtab: "budget" }, target: "budget-curve", advance: { ack: "Next" },
+    text: c => { const d = c.detail || {}, f = (d.findings || []).map(x => x.position).filter(x => x != null);
+      const first = f.length ? Math.min(...f) + 1 : null;
+      return (first ? `The first finding appeared at {{input ${first} of ${d.executed}}}: only {{${tourPct(first, d.executed)}%}} of the inputs that ran.\n\n` : "") +
+        `SpreadEx prioritizes which tests run first, helping important behaviors appear **earlier within a limited budget**.`; } },
+  { id: "res.cortab", chapter: "Understand your results", route: { tab: "results", rtab: "budget" }, target: "tab-corpus", advance: { event: "tab.corpus" },
+    text: () => `Last: **the inputs themselves**.` },
+  { id: "cor.input", chapter: "Understand your results", route: { tab: "results", rtab: "corpus" }, target: "corpus-input", advance: { ack: "Next" },
+    text: () => `The **Corpus** contains the actual inputs from this campaign.\n\nFor each input, you can see **where it came from** and **what happened when it ran**.` },
+  { id: "done", chapter: "Done", target: null, advance: { ack: "Next" }, final: true,
+    text: () => `{{You've completed your first SpreadEx campaign.}}` },
+];
+// What the finish card lists.
+const TOUR_LEARNT = ["Connected a system", "Generated test inputs", "Ran a prioritized campaign",
+                     "Investigated a finding", "Replayed the behavior", "Learned how to read the results"];
+const TOUR_IDS = TOUR.map(b => b.id);
+
+// The beat after `id` once `event` happened; the same beat when the event means nothing here.
+// "ack" is the coach card's Next button. Campaign events can arrive in any running beat, and a stage can be
+// skipped (nothing to install), so they jump forward rather than step.
+function tourNext(id, event) {
+  const i = TOUR_IDS.indexOf(id);
+  if (i < 0) return id;
+  const beat = TOUR[i];
+  if (beat.chapter === "Running") {
+    if (event === "campaign.failed") return "live.failed";
+    if (event === "campaign.done") return id === "live.failed" ? id : "res.overview";
+    const m = /^stage\.(\w+)$/.exec(event || "");
+    if (m && TOUR_IDS.includes("live." + m[1]) && TOUR_IDS.indexOf("live." + m[1]) > i) return "live." + m[1];
+  }
+  if (beat.final) return id;
+  const a = beat.advance;
+  if ((a.ack && event === "ack") || (a.event && a.event === event)) return TOUR_IDS[i + 1];
+  // Doing the real thing early (Continue before Next) moves on to where it leads.
+  const ahead = TOUR.findIndex((b, k) => k > i && b.advance.event === event && b.chapter === beat.chapter);
+  if (ahead >= 0 && !/^stage\./.test(event)) return TOUR_IDS[ahead + 1];
+  return id;
+}
+// One beat back, for re-reading. Never into the Running chapter (it has passed) or before the start.
+function tourPrev(id) {
+  let i = TOUR_IDS.indexOf(id);
+  if (i <= 0 || TOUR[i].chapter === "Running" || id === "done") return id;
+  for (i -= 1; i >= 0; i--) if (TOUR[i].chapter !== "Running") return TOUR_IDS[i];
+  return id;
+}
+// "n of N" within the beat's chapter. Setup's chapters already say which step of five they are.
+function tourProgress(id) {
+  const beat = TOUR[TOUR_IDS.indexOf(id)];
+  if (!beat || beat.final || beat.chapter.startsWith("Setup")) return null;
+  const same = TOUR.filter(b => b.chapter === beat.chapter && !b.final);
+  return { n: same.indexOf(beat) + 1, of: same.length };
+}
+// Results steps that wait for a real action can be passed without doing it. Setup ones cannot:
+// the steps after them need what they do (a tested command, a confirmed step).
+function tourCanPass(id) {
+  const beat = TOUR[TOUR_IDS.indexOf(id)];
+  return !!beat && !!beat.advance.event && beat.chapter === "Understand your results";
+}
+// Watching a campaign: a jump over several stages is shown one stage at a time.
+function tourStep(id, event) {
+  const next = tourNext(id, event), i = TOUR_IDS.indexOf(id), j = TOUR_IDS.indexOf(next);
+  if (TOUR[i]?.chapter !== "Running" || next === "live.failed" || j <= i) return { id: next, again: false };
+  // the next stage still to show, if the jump passes over one (never the failure beat)
+  const k = TOUR.findIndex((b, x) => x > i && x < j && b.chapter === "Running" && !b.final);
+  return k >= 0 ? { id: TOUR_IDS[k], again: true } : { id: next, again: false };
+}
+// ---- end tour
+
+// The guide's state lives in this tab (a reload resumes it); it starts only in the demo Workbench.
+const TOUR_KEY = "spreadex-tour";
+function tourLoad() { try { return JSON.parse(sessionStorage.getItem(TOUR_KEY) || "null"); } catch (e) { return null; } }
+function tourSave() { try { S.tour ? sessionStorage.setItem(TOUR_KEY, JSON.stringify(S.tour)) : sessionStorage.removeItem(TOUR_KEY); } catch (e) { /* blocked storage */ } }
+
+function tourStart() {
+  // The real gating then asks for the user's own Test connection and Continue clicks.
+  S.verifiedSut = null; S.confirmed.clear(); S.probe = null;
+  S.tour = { id: TOUR[0].id, flash: "", paused: false, enteredAt: Date.now() };
+  tourSave(); paintDemoStrip();
+  S.step = TOUR[0].route.step; go("setup"); renderSteps(); tourRoute(false);
+}
+// After a reload mid-tour, the setup steps the user already did through the guide count as done,
+// and the ones still ahead are not -- so the gating matches where the guide is.
+function tourRestoreGates() {
+  const at = TOUR_IDS.indexOf(S.tour.id), past = id => at > TOUR_IDS.indexOf(id);
+  S.verifiedSut = past("sut.test") ? sutKey(cfg().sut) : null;
+  S.confirmed.clear();
+  [["inputs.continue", "grammar"], ["gen.continue", "generators"], ["strat.continue", "strategy"]]
+    .forEach(([beat, step]) => { if (past(beat)) S.confirmed.add(step); });
+}
+function tourStop() { S.tour = null; tourSave(); paintDemoStrip(); tourPaint(); }
+function tourPause() { if (S.tour) { S.tour.paused = true; tourSave(); paintDemoStrip(); tourPaint(); } }
+function tourResume() { if (S.tour) { S.tour.paused = false; tourSave(); paintDemoStrip(); tourRoute(true); } else tourStart(); }
+
+// A tour can come back to a "Running" step with nothing running -- the page was opened or reloaded
+// after the campaign ended. Waiting for a progress bar that will never come is a dead end: move on
+// to what actually happened instead. Returns true when it moved.
+function tourReconcile() {
+  const b = S.tour && TOUR[TOUR_IDS.indexOf(S.tour.id)];
+  // Only once the page has settled: during start-up the live view may not have reconnected yet.
+  if (!S.booted || !b || b.chapter !== "Running" || b.final || S.live?.active || tourDraining) return false;
+  const last = (S.runs || [])[0];
+  tourQueue.length = 0;
+  if (last && (last.status === "finished" || last.status === "cancelled")) {
+    S.current = last.run_id; S.rview = "run"; S.rtab = "overview";
+    tourSet("res.overview", ""); setTimeout(() => tourRoute(true), 80);
+  } else {
+    tourSet("run.launch", last ? "The last campaign did not finish. Run it again." : "");
+    setTimeout(() => tourRoute(true), 80);
+  }
+  return true;
+}
+
+function tourBeat() { return S.tour && !S.tour.paused ? TOUR[TOUR_IDS.indexOf(S.tour.id)] : null; }
+
+// Called from the real handlers. `info` carries what the success line needs (the replay result).
+const TOUR_DWELL_MS = 1500;   // each campaign stage stays on screen at least this long
+const tourQueue = [];
+let tourDraining = null;
+
+function tourEvent(name, info) {
+  if (!S.tour) return;
+  if (TOUR[TOUR_IDS.indexOf(S.tour.id)]?.chapter === "Running" || tourQueue.length) {
+    tourQueue.push(name);
+    if (!tourDraining) tourDraining = tourDrain();
+    return;
+  }
+  tourApply(name, info);
+}
+// The real campaign can finish in a few seconds. Its stages are still shown one after another,
+// each for a moment -- what is shown is what happened, just not faster than it can be read.
+async function tourDrain() {
+  while (tourQueue.length && S.tour) {
+    const wait = TOUR_DWELL_MS - (Date.now() - (S.tour.enteredAt || 0));
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    const name = tourQueue[0], { id, again } = tourStep(S.tour.id, name);
+    if (!again) tourQueue.shift();
+    if (id === S.tour.id) continue;
+    tourSet(id, "");
+  }
+  tourDraining = null;
+}
+// Resolves once the queued stages have all been shown (the live view waits for it before results).
+function tourSettled() { return tourDraining || Promise.resolve(); }
+
+function tourApply(name, info) {
+  const before = S.tour.id, beat = TOUR[TOUR_IDS.indexOf(before)];
+  const next = tourNext(before, name);
+  if (next === before) { if (name === "probe.fail") tourPaint(); return; }
+  tourSet(next, beat?.success && beat.advance.event === name ? beat.success(info) : "");
+}
+function tourSet(id, flash) {
+  S.tour.flash = flash; S.tour.id = id; S.tour.enteredAt = Date.now(); tourSave();
+  // A step change already re-renders; give it a moment, then point at the next thing.
+  setTimeout(() => tourRoute(false), 60);
+}
+function tourBack() { const id = tourPrev(S.tour.id); if (id !== S.tour.id) { tourSet(id, ""); setTimeout(() => tourRoute(true), 80); } }
+// Pass a results step without doing its action. Nothing is pretended: the next card says so.
+function tourPass() {
+  const b = tourBeat(); if (!b || !tourCanPass(b.id)) return;
+  tourSet(TOUR_IDS[TOUR_IDS.indexOf(b.id) + 1], b.passed || "");
+  setTimeout(() => tourRoute(true), 80);
+}
+
+// Open the beat's screen if a different one is showing. Only ever navigates; never clicks.
+function tourRoute(force) {
+  const b = tourBeat(); if (!b) return tourPaint();
+  const r = b.route;
+  if (r && force) {
+    if (r.live) { if (S.live?.active) { S.rview = "live"; go("results"); } else tourReconcile(); }
+    else if (r.tab === "setup") { go("setup"); gotoStep(r.step); }
+    else if (r.tab === "results" && S.current) {
+      if (S.tab !== "results" || S.rview !== "run") { S.rtab = r.rtab || "overview"; S.rview = "run"; go("results"); }
+      else if (r.rtab && S.rtab !== r.rtab) { S.rtab = r.rtab; paintRun(); if (r.rtab === "corpus") loadCorpus(); if (r.rtab === "findings") ensureFinding(); }
+    }
+  }
+  S.tour.scrolled = null;
+  tourPaint();
+}
+
+// The tour's own light markup (see the conventions above TOUR). Escaped first, so data can never
+// become markup.
+function tourRich(text) {
+  return esc(text)
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="tour-key">$1</strong>')
+    .replace(/\[\[(.+?)\]\]/g, '<strong class="tour-name">$1</strong>')
+    .replace(/\{\{(.+?)\}\}/g, '<strong class="tour-val">$1</strong>')
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function tourContext() {
+  const c = cfg(), sut = c.sut || {};
+  return { probe: S.probe, samples: S.demo?.samples || [], grammarRules: S.demo?.grammar_rules || [], timeout: sut.timeout ? String(sut.timeout) : "",
+           generators: c.generators || [], detail: S.detail, finding: S.rf?.detail };
+}
+
+let tourFrame = 0;
+// Animation frames do not run in a hidden tab, so a guide repainted only by them would come back
+// stale; a hidden tab gets a timer instead.
+function tourSchedule() {
+  cancelAnimationFrame(tourFrame); clearTimeout(tourFrame);
+  tourFrame = document.hidden ? setTimeout(tourPaint, 60) : requestAnimationFrame(tourPaint);
+}
+
+function tourPaint() {
+  let hole = el("tour-hole"), card = el("tour-card");
+  document.querySelectorAll(".tour-target").forEach(n => n.classList.remove("tour-target"));
+  const b = tourBeat();
+  if (!b) { hole?.remove(); card?.remove(); return; }
+  if (!hole) { hole = Object.assign(document.createElement("div"), { id: "tour-hole", className: "tour-hole" }); hole.setAttribute("aria-hidden", "true"); document.body.appendChild(hole); }
+  if (!card) { card = Object.assign(document.createElement("div"), { id: "tour-card", className: "tour-card" }); card.setAttribute("role", "dialog"); card.setAttribute("aria-live", "polite"); card.setAttribute("aria-label", "Guided demo"); document.body.appendChild(card); }
+  // A target may name fallbacks ("a|b"): the first one on the page is used.
+  const t = b.target ? b.target.split("|").map(x => document.querySelector(`[data-tour="${x}"]`)).find(Boolean) || null : null;
+  const c = tourContext();
+  const g = b.grammar ? b.grammar(c) : null;
+  const bnf = g && g.rules.length ? `<div class="tour-bnf"><pre>${g.rules.map(esc).join("\n")}</pre>
+      ${g.examples.length ? `<div class="tour-arrow" aria-hidden="true">↓</div><div class="tour-ex"><span class="muted">It can generate inputs like</span>
+        ${g.examples.map(x => `<code>${esc(x)}</code>`).join(" ")}</div>` : ""}</div>` : "";
+  const story = b.story ? `<ol class="tour-story">${b.story(c).map(s => `<li>${esc(s)}</li>`).join("")}</ol>` : "";
+  const finish = b.id === "done" ? `<ul class="tour-learnt">${TOUR_LEARNT.map(s => `<li>${ICONS.check}<span>${s}</span></li>`).join("")}</ul>` : "";
+  const missing = b.target && !t;
+  if (missing && b.chapter === "Running" && tourReconcile()) return;
+  const prog = tourProgress(b.id), back = tourPrev(b.id) !== b.id;
+  const buttons = b.id === "done"
+    ? `${S.project?.return_url ? `<a class="primary tour-btn" href="${esc(S.project.return_url)}">Try SpreadEx on my project</a>` : ""}<button type="button" class="ghost small" onclick="tourStop()">Keep exploring</button>`
+    : `${b.id === "live.failed" ? `<button type="button" class="ghost small" onclick="tourStop()">Exit the guide</button>`
+        : missing && b.route ? `<button type="button" class="primary small" onclick="tourRoute(true)">Take me there</button>`
+        : b.advance.ack ? `<button type="button" class="primary small" onclick="tourEvent('ack')">${esc(b.advance.ack)} ${ICONS.arrow}</button>` : ""}
+       ${!missing && tourCanPass(b.id) ? `<button type="button" class="ghost small" onclick="tourPass()" title="Go on without doing this; nothing is run for you">Show me the next part</button>` : ""}
+       ${back ? `<button type="button" class="linkish" onclick="tourBack()">Back</button>` : ""}
+       ${b.id === "done" || b.id === "live.failed" ? "" : `<button type="button" class="linkish tour-skip" onclick="tourPause()">Skip tour</button>`}`;
+  const html = `<div class="tour-chap">${esc(b.chapter)}${prog ? ` · ${prog.n} of ${prog.of}` : ""}</div>
+    ${S.tour.flash ? `<div class="tour-flash ${S.tour.flash.startsWith("✓") ? "" : "plain"}">${tourRich(S.tour.flash)}</div>` : ""}
+    ${tourRich(b.text(c)).split("\n\n").map((para, k) => `<p class="${k ? "tour-sub" : ""}">${para}</p>`).join("")}${bnf}${story}${finish}
+    ${missing && !b.route ? `<p class="muted">Waiting for the page to show it&hellip;</p>` : ""}
+    <div class="tour-actions">${buttons}</div>`;
+  // Repaints are frequent (scroll, re-render); rebuilding unchanged buttons would swallow clicks and focus.
+  if (card.dataset.html !== html) { card.innerHTML = html; card.dataset.html = html; }
+  if (!t) { hole.style.display = "none"; card.classList.add("centre"); card.style.top = card.style.left = ""; return; }
+  t.classList.add("tour-target");
+  if (S.tour.scrolled !== b.id) {
+    S.tour.scrolled = b.id;
+    t.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: no-preference)").matches ? "smooth" : "auto" });
+    setTimeout(tourSchedule, 350);   // place again once the scroll settles
+  }
+  let r = t.getBoundingClientRect(); const pad = 6;
+  // A step that renders in stages can push the target away after the first scroll: follow it once.
+  if ((r.bottom < 0 || r.top > innerHeight) && S.tour.rescrolled !== b.id) {
+    S.tour.rescrolled = b.id; t.scrollIntoView({ block: "center" }); r = t.getBoundingClientRect();
+  }
+  Object.assign(hole.style, { display: "", top: `${r.top - pad}px`, left: `${r.left - pad}px`, width: `${r.width + 2 * pad}px`, height: `${r.height + 2 * pad}px` });
+  card.classList.remove("centre");
+  if (innerWidth < 640) { card.style.top = card.style.left = ""; card.classList.add("docked"); return; }
+  card.classList.remove("docked");
+  const ch = card.offsetHeight, cw = card.offsetWidth;
+  const below = r.bottom + 14 + ch < innerHeight;
+  // Always on screen, even while its target is scrolled away: the card is how you find it again.
+  const top = Math.min(innerHeight - ch - 8, Math.max(8, below ? r.bottom + 14 : r.top - ch - 14));
+  card.style.top = `${top}px`;
+  const left = Math.min(innerWidth - cw - 12, Math.max(12, r.left));
+  card.style.left = `${left}px`;
+  // The pointer: from the card's edge toward the target, when the card sits right next to it.
+  const tip = below ? top === r.bottom + 14 : top === r.top - ch - 14;
+  card.classList.toggle("pt-up", tip && below); card.classList.toggle("pt-down", tip && !below);
+  card.style.setProperty("--pt-x", `${Math.max(18, Math.min(cw - 18, r.left + Math.min(r.width, 120) / 2 - left))}px`);
+}
+addEventListener("scroll", tourSchedule, { passive: true });
+addEventListener("resize", tourSchedule);
+new MutationObserver(tourSchedule).observe(document.getElementById("view") || document.body, { childList: true, subtree: true });
+
+// The demo Workbench says what it is, and offers the way back.
+function paintDemoStrip() {
+  let strip = el("demo-strip");
+  if (!S.project?.demo) { strip?.remove(); return; }
+  if (!strip) {
+    strip = Object.assign(document.createElement("div"), { id: "demo-strip", className: "demo-strip" });
+    document.querySelector("header.topbar").insertAdjacentElement("afterend", strip);
+  }
+  strip.innerHTML = `<span class="demo-tag">Demo Workspace</span>
+    <span class="muted">A bundled example, separate from your project. Its campaigns run for real.</span>
+    <span class="grow"></span>
+    ${S.tour && !S.tour.paused ? `<button type="button" class="ghost small" onclick="tourPause()">Skip tour</button>` : `<button type="button" class="ghost small" onclick="tourResume()">${S.tour ? "Resume tour" : "Start the tour"}</button>`}
+    <button type="button" class="ghost small" onclick="demoFresh()">Start fresh</button>
+    ${S.project.return_url ? `<a class="ghost small demo-back" href="${esc(S.project.return_url)}">${ICONS.back} Back to my project</a>` : ""}`;
 }
 
 // ------------------------------------------------------------- bootstrap
@@ -3944,6 +4371,7 @@ function paintRun() {
 (async function () {
   try {
     S.project = await api("/api/project");
+    if (S.project.theme && S.project.theme !== document.documentElement.getAttribute("data-theme")) applyTheme(S.project.theme);
     // The project path used to sit in the header, competing with the menu. It
     // is one hover away in the badge instead.
     const badge = el("local-badge");
@@ -3962,20 +4390,31 @@ function paintRun() {
       S.verifiedSut = sutKey(S.config.sut);
       ["grammar", "generators", "strategy"].forEach(id => S.confirmed.add(id));
     }
+    paintDemoStrip();
+    if (S.project.demo) {
+      try { S.demo = await api("/api/demo"); } catch (e) { /* samples are optional */ }
+      S.tour = TOUR_START ? null : tourLoad();
+      if (S.tour) { tourRestoreGates(); paintDemoStrip(); }
+    }
     // A page refreshed (or opened) while a campaign is running goes straight back to watching it --
     // whether this Workbench started it or not.
     try {
       const job = await api("/api/activity");
       const act = await api("/api/active");
-      if (!job.idle && !job.done && job.kind === "run") { renderSteps(); return startLive(null, act.started_at); }
-      if (act.active) { renderSteps(); return startLive(act); }
+      // A fresh open still starts on Home (Campaigns shows the running one); a reload goes back to it.
+      if (!FRESH_OPEN && !job.idle && !job.done && job.kind === "run") { renderSteps(); return startLive(null, act.started_at); }
+      if (!FRESH_OPEN && act.active) { renderSteps(); return startLive(act); }
     } catch (e) { /* no job info is not an error */ }
-    const v = initialView(S.project, S.runs, loadView(), stepReachable);
+    // Just opened from Home: begin at step 1. (Reloaded mid-tour, it carries on from where it was.)
+    if (S.project.demo && TOUR_START) { renderSteps(); return tourStart(); }
+    const v = FRESH_OPEN ? { tab: "landing" } : initialView(S.project, S.runs, loadView(), stepReachable);
     if (v.step) S.step = v.step;
     if (v.rview) S.rview = v.rview;
     if (v.current) S.current = v.current;
     renderSteps();
     go(v.tab);
+    S.booted = true;
+    if (S.tour && !tourReconcile()) tourRoute(true);
   } catch (e) {
     const noToken = !TOKEN || /token/i.test(e.message);
     el("view").innerHTML = noToken

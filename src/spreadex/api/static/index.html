@@ -6,12 +6,11 @@
 <title>SpreadEx</title>
 <link rel="stylesheet" href="/static/app.css">
 <script>
-  // Applied before the stylesheet paints, so a reader who chose light never
-  // sees a flash of dark (or the reverse).
-  try {
-    var t = localStorage.getItem("spreadex-theme");
-    if (t) document.documentElement.setAttribute("data-theme", t);
-  } catch (e) { /* storage can be blocked; the system preference still applies */ }
+  // Applied before the stylesheet paints, so there is no flash of the other theme. SpreadEx ships
+  // light; a choice made on this machine (kept by the server, cached here) wins.
+  var t = "light";
+  try { t = localStorage.getItem("spreadex-theme") || "light"; } catch (e) { /* storage can be blocked */ }
+  document.documentElement.setAttribute("data-theme", t);
 </script>
 </head>
 <body>

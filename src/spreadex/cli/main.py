@@ -259,7 +259,12 @@ def cmd_ui(args) -> int:
         config = Config.unconfigured(Path.cwd())
 
     if args.stop:
-        if registry.stop(config.project_root):
+        try:
+            stopped = registry.stop(config.project_root)
+        except registry.Embedded as exc:
+            print(f"This Workbench runs inside the one for {exc}; stop that one to stop both.")
+            return 1
+        if stopped:
             print(f"Stopped the Workbench for {config.project_root}")
             return 0
         print(f"No Workbench is running for {config.project_root}")
@@ -294,7 +299,8 @@ def _list_servers(registry) -> int:
         return 0
     width = max(len(s["root"]) for s in servers)
     for s in servers:
-        print(f"  {s['root']:<{width}}  http://{s['host']}:{s['port']}  (pid {s['pid']})")
+        inside = f", inside {s['embedded_in']}" if s.get("embedded_in") else ""
+        print(f"  {s['root']:<{width}}  http://{s['host']}:{s['port']}  (pid {s['pid']}{inside})")
     print("\nOpen one with `spreadex ui` from its folder; stop it with `spreadex ui --stop`.")
     return 0
 
@@ -349,24 +355,9 @@ def cmd_demo(args) -> int:
     except ConfigError as exc:
         _die(str(exc), code=1)
 
-    # The demo is the one place installation is implicit, because the whole
-    # promise is "type this and watch it work". It is still the deterministic
-    # catalog doing the installing, into an isolated environment, and it says
-    # so while it happens.
-    from ..generators import GeneratorError, GeneratorManager
+    from ..demo import prepare_generators
 
-    wanted = list(config.generators)
-    if wanted:
-        mgr = GeneratorManager()
-        try:
-            mgr.ensure(wanted, log=lambda m: print(f"  {m}"), auto_install=True)
-        except (GeneratorError, OSError) as exc:
-            # No network, or a generator that will not build here. The campaign
-            # still runs on the seed corpus, and says why it is smaller.
-            print(f"\n  Could not install a generator: {exc}")
-            print("  Running on the bundled seed inputs instead. The pipeline is the same;")
-            print("  there is simply less to prioritize.\n")
-            config.generators = []
+    prepare_generators(config)
 
     print("\nRunning a real campaign. Nothing about this is canned.\n")
     campaign = Campaign(config)

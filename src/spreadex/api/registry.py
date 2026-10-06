@@ -100,6 +100,25 @@ def remember_token(root: Path, token: str) -> None:
 
 # ----------------------------------------------------------------- servers
 
+def _prefs_path() -> Path:
+    return home() / "prefs.json"
+
+
+def prefs() -> dict:
+    """Per-user Workbench preferences, shared by every project on this machine."""
+    try:
+        data = json.loads(_prefs_path().read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def set_pref(key: str, value) -> None:
+    data = prefs()
+    data[key] = value
+    _write_private(_prefs_path(), json.dumps(data, indent=2))
+
+
 def _servers_path() -> Path:
     return home() / "servers.json"
 
@@ -130,9 +149,15 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def register(root: Path, port: int, host: str = "127.0.0.1", pid: int | None = None) -> None:
+def register(root: Path, port: int, host: str = "127.0.0.1", pid: int | None = None,
+             embedded_in: Path | None = None) -> None:
+    """`embedded_in`: this Workbench is served from inside another one's process (the guided demo),
+    so stopping it means stopping that one -- `stop` refuses rather than kill the wrong thing."""
     data = _read()
-    data[str(Path(root).resolve())] = {"pid": pid or os.getpid(), "port": port, "host": host}
+    entry = {"pid": pid or os.getpid(), "port": port, "host": host}
+    if embedded_in is not None:
+        entry["embedded_in"] = str(Path(embedded_in).resolve())
+    data[str(Path(root).resolve())] = entry
     _write(data)
 
 
@@ -177,10 +202,16 @@ def find_live(root: Path) -> dict | None:
     return None
 
 
+class Embedded(RuntimeError):
+    """The Workbench runs inside another's process; its pid is that one's."""
+
+
 def stop(root: Path) -> bool:
     e = find_live(root)
     if not e:
         return False
+    if e.get("embedded_in"):
+        raise Embedded(e["embedded_in"])
     try:
         os.kill(e["pid"], signal.SIGTERM)
     except OSError:

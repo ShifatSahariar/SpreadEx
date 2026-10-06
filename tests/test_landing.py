@@ -31,8 +31,8 @@ def test_landing_enters_the_existing_setup_step_without_config_writes():
 
 def test_landing_contains_the_approved_copy_and_no_demo_endpoint():
     for text in (
-        "SpreadEx <span>Workbench</span>",
-        "Test compilers, interpreters, parsers, and other",
+        "<span class=\"t1\">SpreadEx</span> <span class=\"t2\">Workbench</span>",
+        "Generate, prioritize, and run tests for compilers, interpreters, parsers,",
         "workflow-figure",
         "Quick demo",
         "spreadex demo",
@@ -41,7 +41,8 @@ def test_landing_contains_the_approved_copy_and_no_demo_endpoint():
         "Configure generators",
     ):
         assert text in APP
-    assert "/api/demo" not in APP
+    # The demo button opens the real bundled demo through the server; it is not a canned page.
+    assert '"/api/demo/open"' in APP and "location.href = r.url" in APP
 
 
 def test_every_section_is_reachable_and_the_current_one_is_marked():
@@ -118,7 +119,7 @@ def test_the_start_page_uses_svg_icons_not_font_glyphs():
     page is inline SVG inheriting currentColor."""
     import re
 
-    rendered = APP[APP.index("function renderLanding"):APP.index("function showDemoHint")]
+    rendered = APP[APP.index("function renderLanding"):APP.index("// ---- opening the demo (Home)")]
     glyphs = set(re.findall(r"[■-◿←-⇿☀-➿❖⬀-⯿]",
                             rendered))
     assert not glyphs, f"decorative glyphs left in the start page: {glyphs}"
@@ -133,7 +134,7 @@ def test_every_icon_inherits_colour_and_is_hidden_from_assistive_tech():
     assert 'aria-hidden="true"' in APP
     assert "focusable=\"false\"" in APP, "IE/Edge focus the SVG without this"
     for name in ("home", "folder", "sliders", "chart", "gear",
-                 "playSolid", "book", "arrow", "chart"):
+                 "book", "arrow", "chart"):
         assert f"{name}:" in icons, f"ICONS.{name} is missing"
 
 
@@ -193,8 +194,8 @@ def test_decoration_is_dropped_for_readers_who_asked_for_less():
 def test_the_two_hero_actions_are_sized_by_the_grid_not_by_their_labels():
     """Both must match in width and height at every viewport. Side by side
     they came out 244px each with both labels wrapping, so they stack: one
-    column makes the width identical by construction, and `grid-auto-rows: 1fr`
-    makes the height identical even though only one has a second line."""
+    column makes the width identical by construction, and `grid-auto-rows: 1fr` keeps both
+    cards the same height (the setup card has a subtitle now, so neither is padded out)."""
     rule = CSS[CSS.index(".hero-actions {"):]
     rule = rule[:rule.index("}") + 1]
     assert "grid-template-columns: 1fr" in rule, rule
@@ -224,7 +225,7 @@ def test_the_brand_mark_is_the_one_from_the_research_webapp():
     assert mark.count('class="logo-orange"') == 4
     assert mark.count('class="logo-red"') == 2
     assert mark.count("logo-line-green") == 4 and mark.count("logo-line-orange") == 4
-    assert 'viewBox="0 0 60 60"' in mark
+    assert 'viewBox="11 11 38 38"' in mark, "cropped to the drawing, so it aligns with the column"
     assert 'aria-hidden="true"' in mark, "decoration beside a heading that says the same"
 
 
@@ -374,8 +375,10 @@ def test_the_workflow_stays_readable_on_a_phone_without_widening_the_page():
 def test_the_hero_gives_the_diagram_enough_width_before_it_stacks():
     """Side by side it needs ~590px for 10px labels; narrower and it falls to
     8.8px (measured at 1105). So the hero stacks while there is still room."""
-    assert "@media (max-width: 1180px)" in CSS
-    assert "grid-template-columns: minmax(0, 26rem) minmax(0, 1fr)" in CSS
+    assert "@media (max-width: 1180px) {\n  .landing-hero { grid-template-columns: minmax(0, 1fr)" in CSS
+    # 42 / 58: the diagram explains SpreadEx, so it gets the larger share, with a 48-64px gutter.
+    assert "grid-template-columns: minmax(0, 42fr) minmax(0, 58fr)" in CSS
+    assert "gap: clamp(48px, 4.5vw, 64px)" in CSS
 
 
 def test_the_stylesheet_has_balanced_braces():
@@ -496,7 +499,7 @@ def test_the_header_wraps_only_when_it_genuinely_cannot_fit():
 
 import re as _re
 
-_LANDING = APP[APP.index("function renderLanding"):APP.index("function showDemoHint")]
+_LANDING = APP[APP.index("function renderLanding"):APP.index("// ---- opening the demo (Home)")]
 _STEPS = _re.findall(
     r'\{ n: (\d), tone: "(\w+)",\s*icon: ICONS\.(\w+),\s*title: "([^"]+)",\s*'
     r'body: "([^"]+)",\s*tip: ((?:"[^"]*"\s*\+?\s*)+)\}', _LANDING)
@@ -603,7 +606,7 @@ def test_the_arrows_live_in_the_gaps_and_go_away_when_the_cards_stack():
     cards = cards[:cards.index("}") + 1]
     assert cards.count("auto") == 3, "three arrow tracks between four cards"
     assert "minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr)" in cards
-    stacked = _media(1180, ".landing-hero")
+    stacked = _media(1180, ".start-cards")
     assert ".card-arrow { display: none; }" in stacked, "a 2x2 grid has no order to point along"
 
 
@@ -809,3 +812,15 @@ def test_the_row_scrolls_before_a_title_can_wrap():
     narrow = _media(960, ".steps-row")
     assert "overflow-x: auto" in narrow
     assert "@media (max-width: 860px) {\n  .steps-row" not in CSS
+
+
+def test_opening_from_the_spreadex_ui_link_lands_on_home():
+    assert 'const FRESH_OPEN = !!incoming.searchParams.get("token");' in APP
+    boot = APP[APP.index("(async function () {"):]
+    assert 'FRESH_OPEN ? { tab: "landing" } : initialView(' in boot
+    assert "!FRESH_OPEN && act.active" in boot
+
+
+def test_light_is_the_shipped_theme_and_a_choice_is_kept_for_the_machine():
+    assert 'var t = "light";' in INDEX and 'setAttribute("data-theme", t)' in INDEX
+    assert 'api("/api/prefs", { theme: next })' in APP and "S.project.theme" in APP

@@ -582,16 +582,24 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .dashboard-home { width: min(100%, 1180px); margin-inline: auto;
   padding-top: clamp(2rem, 6vh, 4.5rem); text-align: left; }
 
-.landing-hero { display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
-  gap: clamp(1.5rem, 4vw, 3.5rem); align-items: center; max-width: 100%; margin: 0 auto; }
+/* The diagram is the picture of what SpreadEx does, so it gets the larger share: 42 / 58, with a
+   48-64px gutter so neither side touches the other. */
+.landing-hero { display: grid; grid-template-columns: minmax(0, 42fr) minmax(0, 58fr);
+  gap: clamp(48px, 4.5vw, 64px); align-items: center; max-width: 100%; margin: 0 auto; }
 /* --hero-col is the measure the lede and the actions below it share. */
-.dashboard-home .landing-intro { --hero-col: min(100%, 26rem);
-  max-width: 34rem; margin: 0; text-align: left; }
-.dashboard-home h1 { font-size: clamp(2rem, 4.4vw, 3.4rem); letter-spacing: -.04em;
-  white-space: normal; }          /* nowrap clipped the title on narrow windows */
-.dashboard-home h1 span { background: linear-gradient(95deg, #15a34a, #0f8aa8);
+/* One column for the whole hero: brand, description, both cards and the demo area all take its
+   width, so their left and right edges are the same edges. It is a size container, so the brand
+   is sized to the column (cqi), not to the window. */
+.dashboard-home .landing-intro { --hero-col: min(100%, 30rem);
+  width: var(--hero-col); max-width: var(--hero-col); margin: 0; text-align: left; container-type: inline-size; }
+/* Two lines, the product name a little larger than "Workbench". Both scale with the column, so
+   logo + title fill it at every width instead of floating at their own size. */
+.dashboard-home h1 { letter-spacing: -.04em; line-height: .98; white-space: normal; }
+.dashboard-home h1 .t1, .dashboard-home h1 .t2 { display: block; }
+.dashboard-home h1 .t1 { font-size: 15.4cqi; }
+.dashboard-home h1 .t2 { font-size: 13.8cqi; background: linear-gradient(95deg, #15a34a, #0f8aa8);
   -webkit-background-clip: text; background-clip: text; color: transparent; }
-.dashboard-home .landing-lede { max-width: 32rem; margin-left: 0;
+.dashboard-home .landing-lede { max-width: none; margin-left: 0;
   font-size: clamp(1rem, 1.35vw, 1.1rem); }
 
 /* ---- hero actions ---- */
@@ -688,13 +696,16 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 }
 
 /* ---- responsive ---- */
+/* Side by side down to the page's own width; below it the 58% share would leave the diagram's
+   labels under 10px, so the hero stacks. */
+@media (max-width: 1180px) {
+  .landing-hero { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+}
 @media (max-width: 1180px) {
   /* The diagram's labels are the first thing to become too small, long before
      the text does. Side by side it gets ~590px at this width, which puts its
      23-unit labels at 10px; any narrower and they fall below that (8.8px at
      1105). Stacking gives it the full content width -- about 15px. */
-  .landing-hero { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
-  .dashboard-home .landing-intro { max-width: 46rem; }
   .start-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem; }
   .card-arrow { display: none; }    /* a 2x2 grid has no left-to-right order to point along */
 }
@@ -757,10 +768,12 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
    `align-items: stretch` with a shared min-height matches them in height --
    including when one wraps to two lines of label and the other does not. */
 
-.hero-title-row { display: flex; align-items: center; gap: clamp(.65rem, 1.6vw, 1.1rem); }
+/* Logo and title are one composition: the logo is as tall as the two title lines and centred on
+   them. Its viewBox is cropped to the drawing, so its visible edge IS the column's left edge. */
+.hero-title-row { display: flex; align-items: center; gap: 5cqi; }
 .hero-title-row h1 { margin: 0; }
 /* Sized to the two-line title it stands beside, not to the text size. */
-.hero-mark { width: clamp(3.3rem, 7vw, 5.4rem); height: clamp(3.3rem, 7vw, 5.4rem);
+.hero-mark { width: 22cqi; height: 22cqi;
   flex: none; overflow: visible; }
 
 /* The lede sits to the same measure as the actions beneath it, so the block
@@ -769,7 +782,7 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
    lede and the buttons beneath it line up instead of each finding its own
    width. `balance` evens the line lengths rather than leaving a short widow,
    which is what made the old wrap look accidental. */
-.dashboard-home .landing-lede { max-width: var(--hero-col); margin-left: 0;
+.dashboard-home .landing-lede { max-width: var(--hero-col); margin: .9rem 0 0;
   font-size: clamp(1rem, 1.35vw, 1.1rem); text-wrap: balance; }
 
 /* One column, as in the reference: both actions then span the same measure at
@@ -781,7 +794,7 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
   max-width: var(--hero-col); }
 
 .hero-action { display: grid; grid-template-columns: auto 1fr auto; align-items: center;
-  gap: .8rem; min-height: 3.9rem; padding: .8rem 1.15rem; border-radius: 12px;
+  gap: .8rem; min-height: 0; padding: .6rem 1rem; border-radius: 12px;
   font: inherit; text-align: left; cursor: pointer; }
 .hero-action .ha-icon { display: grid; place-items: center; width: 2.1rem; height: 2.1rem;
   flex: none; border-radius: 8px; }
@@ -792,15 +805,23 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
   line-height: 1.3; }
 
 .dashboard-home .landing-primary { border: 1px solid transparent;
-  box-shadow: 0 9px 18px rgba(22,163,74,.22); }
+  background: linear-gradient(135deg, #16a34a, #0f8f45); box-shadow: 0 9px 18px rgba(22,163,74,.22); }
+.dashboard-home .landing-primary:hover { background: linear-gradient(135deg, #15963f, #0c7d3b); }
 .dashboard-home .landing-primary .ha-icon { background: rgba(255,255,255,.18); }
 .dashboard-home .landing-primary strong { font-size: 1rem; }
 .dashboard-home .landing-primary small { color: rgba(255,255,255,.85); }
 
-.quick-demo { border: 1px solid var(--color-border); background: var(--color-surface);
-  box-shadow: var(--shadow); color: var(--color-text); }
-.quick-demo:hover { border-color: var(--color-primary); }
-.quick-demo .qd-icon { background: var(--color-primary-lt); color: var(--color-primary-dk); }
+/* The demo is the warm, secondary action: orange, so it never competes with the green primary. */
+.quick-demo { --qd: #ea7a0c; --qd-bd: #fbd5ad; --qd-lt: #fff4e8;
+  border: 1px solid var(--qd-bd); color: var(--color-text); box-shadow: none;
+  background: linear-gradient(160deg, var(--color-surface) 35%, var(--qd-lt)); }
+:root[data-theme="dark"] .quick-demo { --qd: #fb923c; --qd-bd: #5a3a1c; --qd-lt: #2a1a0c; }
+.quick-demo:hover { border-color: var(--qd); }
+.quick-demo .ha-end { color: var(--color-text); }
+.quick-demo .qd-icon { width: 2.6rem; height: 2.6rem; border-radius: 10px; background: var(--qd-lt); color: var(--qd); }
+.quick-demo .qd-icon .ico { width: 1.35rem; height: 1.35rem; }
+.qd-badge { display: inline-block; margin-left: .4rem; padding: 1px 8px; border-radius: 999px; vertical-align: 2px;
+  font-size: .72rem; font-weight: 700; color: var(--qd); background: color-mix(in srgb, var(--qd) 15%, var(--color-surface)); }
 
 /* ---- the brand mark's animation -----------------------------------------
    The research webapp's original, timings unchanged: a 5s cycle that builds
@@ -862,7 +883,7 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 /* ============================================================ the workflow
    One SVG, no fixed size: width follows the column, height follows the
    viewBox's aspect ratio, so it scales with the window and never overflows. */
-.workflow-figure { margin: 0; min-width: 0; }
+.workflow-figure { margin: 0; min-width: 0; justify-self: center; width: 100%; }
 .workflow { display: block; width: 100%; height: auto; overflow: visible; }
 
 /* Light mode is the artwork as drawn. In dark mode the pale card fills would
@@ -1447,3 +1468,76 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .cempty { text-align: center; padding: 40px 24px; }
 .cempty h3 { margin: 0 0 6px; } .cempty p { max-width: 460px; margin: 0 auto 18px; }
 .cempty .primary { display: inline-flex; align-items: center; gap: 8px; }
+
+/* ---- guided demo ------------------------------------------------------------------------
+   The page stays real and clickable underneath: the spotlight is a hole in a light dim, drawn
+   with one box-shadow and ignoring the pointer, so the highlighted control is the real one. */
+.tour-hole { position: fixed; z-index: 900; pointer-events: none; border-radius: 12px;
+  /* A light veil: the Workbench stays recognisable; the real control gets a quiet green ring. */
+  box-shadow: 0 0 0 2px var(--color-primary), 0 0 0 9999px rgba(15, 23, 42, .12);
+  transition: top .25s ease, left .25s ease, width .25s ease, height .25s ease; }
+.tour-card { position: fixed; z-index: 901; width: min(380px, calc(100vw - 24px)); padding: 14px 16px;
+  background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .22); font-size: .9rem; transition: top .25s ease, left .25s ease; }
+.tour-card.centre { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.tour-card.docked { left: 12px; right: 12px; bottom: 12px; top: auto; width: auto; }
+.tour-card p { margin: 6px 0 10px; line-height: 1.45; }
+.tour-chap { font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--color-primary); }
+.tour-flash { margin-top: 6px; color: var(--color-success); font-weight: 600; }
+.tour-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tour-skip { margin-left: auto; font-size: .8rem; }
+.tour-btn { display: inline-flex; align-items: center; padding: 7px 14px; border-radius: 8px; text-decoration: none; font-weight: 600;
+  background: var(--color-primary); color: #fff; }
+.tour-btn:hover { background: var(--color-primary-dk); }
+.tour-story { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 2px; }
+.tour-story li { padding: 4px 8px; border-radius: 6px; background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface)); font-size: .82rem; }
+.tour-story li + li::before { content: "↓ "; color: var(--color-muted); }
+.tour-learnt { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 4px; }
+.tour-learnt li { display: flex; gap: 8px; align-items: center; } .tour-learnt svg { width: 14px; height: 14px; color: var(--color-success); }
+@media (prefers-reduced-motion: reduce) { .tour-hole, .tour-card { transition: none; } }
+
+.demo-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 16px; font-size: .85rem;
+  background: color-mix(in srgb, var(--color-primary) 9%, var(--color-surface)); border-bottom: 1px solid var(--color-border); }
+.demo-strip .grow { flex: 1; }
+.demo-tag { font-weight: 700; color: var(--color-primary); }
+.demo-back { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: var(--color-text); }
+.demo-back svg { width: 14px; height: 14px; }
+.qd-meta { opacity: .75; }
+/* Under the demo card: the demo's own actions. */
+.demo-again { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .75rem; max-width: var(--hero-col); }
+.demo-btn { display: inline-flex; align-items: center; gap: .45rem; padding: .5rem .9rem; border-radius: 9px; font: inherit;
+  font-size: .85rem; font-weight: 600; cursor: pointer; background: var(--color-surface); color: var(--color-text);
+  border: 1px solid var(--color-border); }
+.demo-btn .ico { width: 1rem; height: 1rem; flex: none; }
+.demo-btn { white-space: nowrap; }
+.demo-btn:hover { border-color: var(--color-muted); }
+.demo-btn.continue { color: #ea7a0c; border-color: #f5b072; }
+.demo-btn.continue:hover { border-color: #ea7a0c; }
+:root[data-theme="dark"] .demo-btn.continue { color: #fb923c; border-color: #7a4a20; }
+.tour-flash.plain { color: var(--color-muted); font-weight: 500; }
+/* One emphasis system for every card: concept orange, the system under test (MiniCalc) a deeper
+   amber, values bold. */
+.tour-card { --tour-key: #ea7a0c; --tour-name: #c2690a; }
+:root[data-theme="dark"] .tour-card { --tour-key: #fb923c; --tour-name: #e0913f; }
+.tour-card strong { font-weight: 700; color: var(--color-text); }
+.tour-card strong.tour-key { color: var(--tour-key); }
+.tour-card strong.tour-name { color: var(--tour-name); }
+.tour-card button .ico { width: 1rem; height: 1rem; vertical-align: -3px; }
+.tour-card code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; padding: 1px 5px; border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text) 7%, var(--color-surface)); }
+.tour-card p.tour-sub { margin-top: -4px; font-size: .84rem; color: var(--color-muted); }
+.tour-card p.tour-sub strong.tour-val { color: var(--color-text); }
+/* Step 2 of the guide: a grammar, then what it produces. */
+.tour-bnf { margin: 0 0 12px; }
+.tour-bnf pre { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: .76rem; line-height: 1.5; white-space: pre-wrap;
+  background: color-mix(in srgb, var(--color-text) 6%, var(--color-surface)); }
+.tour-arrow { text-align: center; color: var(--color-muted); line-height: 1.6; }
+.tour-ex { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: .82rem; }
+.tour-ex .muted { width: 100%; text-align: center; }
+.tour-ex { justify-content: center; }
+/* The coach card points at what it is talking about. */
+.tour-card.pt-up::before, .tour-card.pt-down::before { content: ""; position: absolute; left: var(--pt-x, 28px); width: 12px; height: 12px;
+  margin-left: -6px; background: var(--color-surface); border: 1px solid var(--color-border); transform: rotate(45deg); }
+.tour-card.pt-up::before { top: -7px; border-right: 0; border-bottom: 0; }
+.tour-card.pt-down::before { bottom: -7px; border-left: 0; border-top: 0; }
+.tour-card.docked::before, .tour-card.centre::before { display: none; }
