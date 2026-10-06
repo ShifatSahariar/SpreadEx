@@ -90,7 +90,7 @@ class CrashOracle:
         if obs.signal is not None:
             return Judgement(
                 Verdict.CRASH,
-                signature=failure_signature(obs.stderr_preview, obs.stdout_preview),
+                signature=failure_signature(obs.stderr_tail or obs.stderr_preview, obs.stdout_preview),
                 detail=f"signal {obs.signal}",
             )
 
@@ -98,7 +98,7 @@ class CrashOracle:
         if looks_like_crash(obs.stderr_preview, obs.stdout_preview, self.crash_patterns):
             return Judgement(
                 Verdict.CRASH,
-                signature=failure_signature(obs.stderr_preview, obs.stdout_preview),
+                signature=failure_signature(obs.stderr_tail or obs.stderr_preview, obs.stdout_preview),
                 detail=f"exit {obs.exit_code} (matched a crash pattern)",
             )
 
@@ -114,7 +114,7 @@ class CrashOracle:
 
         return Judgement(
             Verdict.CRASH,
-            signature=failure_signature(obs.stderr_preview, obs.stdout_preview),
+            signature=failure_signature(obs.stderr_tail or obs.stderr_preview, obs.stdout_preview),
             detail=f"exit {obs.exit_code}",
         )
 
@@ -142,7 +142,7 @@ class DifferentialOracle:
 
     def _fingerprint(self, obs: Observation) -> tuple:
         exc = normalize_exception_for_compare(
-            extract_exception_normalized(obs.stderr_preview, obs.stdout_preview)
+            extract_exception_normalized(obs.stderr_tail or obs.stderr_preview, obs.stdout_preview)
         )
         out = ""
         if self.compare_stdout:

@@ -10,6 +10,7 @@ notes: >-
 install:
   type: python
   package: isla-solver
+  version: "==1.14.4"   # exact: the same seed must give the same inputs
   # Not a dependency of the package, but required for it to import at all.
   extra_packages: ["setuptools<81"]
 check:

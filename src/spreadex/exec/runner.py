@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .observation import Observation, preview, sha256_text
+from .observation import SIGNATURE_TAIL_CHARS, Observation, preview, sha256_text
 
 DEFAULT_TIMEOUT_S = 5.0
 DEFAULT_MEM_MB = 2048
@@ -85,12 +85,19 @@ class Target:
         if self.base_dir is None:
             return list(self.command)
         out = []
-        for part in self.command:
+        for i, part in enumerate(self.command):
             if part.startswith(("./", "../")) or (part.startswith("/") is False and "/" in part):
                 candidate = (self.base_dir / part).resolve()
                 if candidate.exists():
                     out.append(str(candidate))
                     continue
+            # A bare file name after the program -- `python3 validate.py {input}` -- means the
+            # project's file, exactly as it would in a shell opened there. Only when that file
+            # exists, and never for the program itself or for an option.
+            elif (i > 0 and part and not part.startswith("-") and "{input}" not in part
+                  and "=" not in part and (self.base_dir / part).is_file()):
+                out.append(str((self.base_dir / part).resolve()))
+                continue
             out.append(part)
         return out
 
@@ -240,4 +247,5 @@ def run_one(target: Target, input_path: Path, input_hash: str | None = None) -> 
         stderr_hash=sha256_text(err),
         stdout_preview=preview(out),
         stderr_preview=preview(err),
+        stderr_tail=(err.strip()[-SIGNATURE_TAIL_CHARS:] or None) if err else None,
     )

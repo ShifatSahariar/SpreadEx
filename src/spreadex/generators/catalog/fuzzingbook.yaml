@@ -6,7 +6,7 @@ license: MIT
 install:
   type: python
   package: fuzzingbook
-  version: ">=1.2"
+  version: "==1.2.2"   # exact: the same seed must give the same inputs
 check:
   type: python_import
   module: fuzzingbook.GrammarFuzzer

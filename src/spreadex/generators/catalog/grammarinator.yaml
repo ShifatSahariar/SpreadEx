@@ -6,6 +6,7 @@ license: BSD-3-Clause
 install:
   type: python
   package: grammarinator
+  version: "==26.1"   # exact: the same seed must give the same inputs
 check:
   type: command
   command: [grammarinator-process, --version]

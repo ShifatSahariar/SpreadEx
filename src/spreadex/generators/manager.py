@@ -114,10 +114,15 @@ class Status:
 class GeneratorManager:
     """Resolves, checks and installs generators into isolated environments."""
 
-    def __init__(self, cache_dir: Path | None = None, catalog_dir: Path | None = None) -> None:
+    def __init__(self, cache_dir: Path | None = None, catalog_dir: Path | None = None,
+                 allow_host: bool | None = None) -> None:
         self.cache_dir = Path(cache_dir or DEFAULT_CACHE)
         self.envs_dir = self.cache_dir / "generators"
         self.catalog = load_catalog(catalog_dir)
+        # A generator found on PATH (installed globally, any version) is used only when asked
+        # for: otherwise the same campaign would give different inputs on different machines.
+        self.allow_host = (os.environ.get("SPREADEX_HOST_GENERATORS") == "1"
+                           if allow_host is None else allow_host)
 
     # ------------------------------------------------------------- lookup
 
@@ -153,12 +158,35 @@ class GeneratorManager:
         if self.env_dir(gen.id).exists():
             ok, version, detail = self._probe(gen, kind, check, in_env=True)
             if ok:
+                # The catalog pins an exact version; a different one is reinstalled, not used.
+                pinned = self.pinned_version(gen)
+                have = self._env_package_version(gen) if pinned else None
+                if pinned and have and have != pinned:
+                    return Status(gen, False, have, "environment",
+                                  f"version {have} installed, {pinned} required")
                 return Status(gen, True, version, "environment", detail)
 
-        ok, version, detail = self._probe(gen, kind, check, in_env=False)
-        if ok:
-            return Status(gen, True, version, "host", detail)
+        detail = "not installed in its own environment"
+        if self.allow_host:
+            ok, version, detail = self._probe(gen, kind, check, in_env=False)
+            if ok:
+                return Status(gen, True, version, "host", detail)
         return Status(gen, False, None, "", detail)
+
+    @staticmethod
+    def pinned_version(gen: "Generator") -> str | None:
+        """The exact version the catalog pins (`version: "==X"`), or None."""
+        spec = str(gen.install.get("version") or "")
+        return spec[2:].strip() if spec.startswith("==") else None
+
+    def _env_package_version(self, gen: "Generator") -> str | None:
+        py = self.env_python(gen.id)
+        if not py.exists():
+            return None
+        proc = subprocess.run([str(py), "-c", "import importlib.metadata as m, sys; "
+                               f"print(m.version({gen.package!r}))"],
+                              capture_output=True, text=True, timeout=30, check=False)
+        return proc.stdout.strip() or None if proc.returncode == 0 else None
 
     def status_all(self) -> list[Status]:
         return [self.status(gid) for gid in sorted(self.catalog)]
@@ -205,7 +233,7 @@ class GeneratorManager:
         in_env = self.env_bin(generator_id, executable)
         if in_env.exists():
             return str(in_env)
-        return shutil.which(executable)
+        return shutil.which(executable) if self.allow_host else None
 
     # ------------------------------------------------------------- install
 

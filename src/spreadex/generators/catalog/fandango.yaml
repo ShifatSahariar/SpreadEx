@@ -6,6 +6,7 @@ license: EUPL-1.2
 install:
   type: python
   package: fandango-fuzzer
+  version: "==1.3.0"   # exact: the same seed must give the same inputs
 check:
   type: command
   command: [fandango, --version]

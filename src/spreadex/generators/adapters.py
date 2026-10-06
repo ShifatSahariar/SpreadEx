@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -53,8 +54,12 @@ def _collect(out_dir: Path, suffixes=(".txt", ".js", ".input", "")) -> list[byte
 
 
 def _run(cmd: list[str], timeout: float, what: str) -> subprocess.CompletedProcess:
+    # Every generator runs in Python. A fixed hash seed is what makes a seeded generator actually
+    # reproducible: without it, set and dict iteration order changes from process to process
+    # (Fandango 1.3 gave different inputs for the same --random-seed until this was pinned).
+    env = {**os.environ, "PYTHONHASHSEED": "0"}
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False, env=env)
     except subprocess.TimeoutExpired:
         # Deliberately mode-agnostic: under `generation.mode: time` the budget
         # IS the point and "lower generation.count" is advice for a setting
@@ -242,6 +247,10 @@ def generate_grammarinator(mgr, grammar: Path, n: int, out_dir: Path, seed: int,
         "-o", str(out_dir / "gi_%d.txt"),
         "-n", str(n),
         "-d", "30",
+        # Seeded like every other generator, so a campaign is reproducible.
+        "--random-seed", str(seed),
+        # One worker: parallel workers interleave their random streams, which a seed cannot fix.
+        "-j", "1",
         "--sys-path", str(compiled),
     ], timeout, "grammarinator-generate")
     return _collect(out_dir)

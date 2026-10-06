@@ -195,6 +195,10 @@ def top_frames(stderr_s: str | None, n: int = 5) -> list[str]:
     if not stderr_s:
         return []
     frames: list[str] = []
+    # Python prints "most recent call last": the frames that locate the failure come last.
+    # Detected from the frame lines too: a long traceback's tail may have lost its header.
+    innermost_last = ("Traceback (most recent call last)" in stderr_s
+                      or bool(re.search(r'^\s*File ".*", line \d+', stderr_s, re.M)))
     for line in stderr_s.splitlines():
         m = _FRAME_JAVA.match(line)
         if m:
@@ -208,9 +212,9 @@ def top_frames(stderr_s: str | None, n: int = 5) -> list[str]:
         m = _FRAME_NATIVE.match(line)
         if m:
             frames.append(m.group("func"))
-        if len(frames) >= n:
+        if len(frames) >= n and not innermost_last:
             break
-    return frames[:n]
+    return frames[-n:] if innermost_last else frames[:n]
 
 
 def failure_signature(stderr_s: str | None, stdout_s: str | None = "", frames: int = 5) -> str:

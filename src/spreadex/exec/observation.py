@@ -12,6 +12,10 @@ from dataclasses import dataclass, asdict
 from typing import Any
 
 PREVIEW_CHARS = 2000
+#: How much of the END of stderr a failure signature is computed from. Generous on purpose: frames
+#: carry absolute paths, so a signature computed from a short excerpt would depend on how deep the
+#: project folder sits. Not stored with the execution; it only feeds the oracle.
+SIGNATURE_TAIL_CHARS = 20000
 
 
 def sha256_text(s: str) -> str:
@@ -40,6 +44,8 @@ class Observation:
     stderr_hash: str
     stdout_preview: str | None
     stderr_preview: str | None
+    #: The last SIGNATURE_TAIL_CHARS of stderr, for failure signatures (see above).
+    stderr_tail: str | None = None
 
     @property
     def crashed_by_signal(self) -> bool:
@@ -56,4 +62,8 @@ def preview(s: str | None) -> str | None:
     s = s.strip()
     if len(s) <= PREVIEW_CHARS:
         return s
-    return s[:PREVIEW_CHARS] + f"\n... [{len(s) - PREVIEW_CHARS} more chars]"
+    # Head AND tail: a Python traceback ends with the innermost frames and the exception itself,
+    # so keeping only the head made a crash's signature depend on how much fitted before the cut --
+    # which a longer project path changes.
+    half = PREVIEW_CHARS // 2
+    return s[:half] + f"\n... [{len(s) - 2 * half} chars omitted] ...\n" + s[-half:]
