@@ -39,6 +39,8 @@ class Config:
     generators: list[str] = field(default_factory=lambda: ["fuzzingbook"])
     grammar: dict = field(default_factory=dict)
     signal: str = "cc"
+    #: Opt-in generator selection by Cluster Coverage: {"by": "cc", "keep": N}, or {}.
+    selection: dict = field(default_factory=dict)
     embedding: dict = field(default_factory=lambda: {"model": "tfidf"})
     seed: int = 42
     #: e.g. ".js". Executed inputs are linked under a name ending in it, because many
@@ -92,6 +94,7 @@ class Config:
             "signal": self.signal,
             "embedding": self.embedding,
             "seed": self.seed,
+            **({"selection": self.selection} if self.selection else {}),
             "budget": {"generation_s": self.budget.generation_s,
                        "execution_s": self.budget.execution_s,
                        "max_inputs": self.budget.max_inputs},
@@ -278,6 +281,7 @@ def load_config(path: Path | None = None) -> Config:
                         else ["fuzzingbook"]),
         grammar=raw.get("grammar") or {},
         signal=raw.get("selection_signal", raw.get("signal", "cc")),
+        selection=_selection(raw.get("selection"), path),
         embedding=raw.get("embedding") or {"model": "tfidf"},
         seed=int(raw.get("seed", 42)),
         input_extension=_input_extension(raw.get("input_extension"), path),
@@ -285,6 +289,26 @@ def load_config(path: Path | None = None) -> Config:
         generator_options=_generator_options(raw.get("generator_options"), path),
         raw=raw,
     )
+
+
+def _selection(value, path) -> dict:
+    """`selection: {by: cc, keep: N}`: keep the N generators with the highest Cluster Coverage."""
+    if value in (None, {}):
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: `selection` must be a mapping like `{{by: cc, keep: 2}}`.")
+    unknown = set(value) - {"by", "keep"}
+    if unknown:
+        raise ConfigError(f"{path}: `selection` has unknown key(s): {', '.join(sorted(unknown))}.")
+    by = value.get("by", "cc")
+    if by != "cc":
+        raise ConfigError(f"{path}: `selection.by` must be `cc` (Cluster Coverage), not {by!r}.")
+    keep = value.get("keep")
+    if keep == "all":                       # stated explicitly: measure CC, keep every generator
+        return {"by": "cc", "keep": "all"}
+    if not isinstance(keep, int) or isinstance(keep, bool) or keep < 1:
+        raise ConfigError(f"{path}: `selection.keep` must be a whole number of generators (at least 1), or `all`.")
+    return {"by": "cc", "keep": keep}
 
 
 _GENERATOR_OPTION_KEYS = {"constraints": bool}

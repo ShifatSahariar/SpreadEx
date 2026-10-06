@@ -1541,3 +1541,18 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .tour-card.pt-up::before { top: -7px; border-right: 0; border-bottom: 0; }
 .tour-card.pt-down::before { bottom: -7px; border-left: 0; border-top: 0; }
 .tour-card.docked::before, .tour-card.centre::before { display: none; }
+/* Review & run: the generator-selection rule, when the campaign has one. */
+.rsel { display: flex; gap: .5rem; align-items: flex-start; margin: .2rem 0 .6rem; font-size: .85rem; color: var(--color-text); }
+.rsel .ico { width: 1rem; height: 1rem; flex: none; margin-top: .15rem; color: var(--color-primary); }
+/* Inputs step: the generator constraint files, beside the plain-language rule. */
+.sem-native { margin-top: .75rem; }
+/* Guided demo: the plain-language constraint is the focus of its card (pale orange, from the logo). */
+.tour-rule { display: flex; gap: .5rem; align-items: center; margin: 2px 0 10px; padding: 9px 12px; border-radius: 9px; font-weight: 600;
+  color: var(--color-text); background: color-mix(in srgb, #f5a623 12%, var(--color-surface)); border: 1px solid color-mix(in srgb, #f5a623 45%, var(--color-surface)); }
+.tour-rule .spark { color: #ea7a0c; }
+.tour-check { display: flex; gap: .4rem; align-items: center; margin: 0 0 10px; font-size: .84rem; color: var(--color-muted); }
+.tour-check .ok { color: var(--color-success); font-weight: 700; }
+/* Review & run: the generator-selection choice inside Test ordering. */
+.rsel-h { display: flex; align-items: center; gap: .35rem; margin: .9rem 0 .4rem; font-size: .9rem; }
+.ropts.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
+@media (max-width: 760px) { .ropts.three { grid-template-columns: minmax(0, 1fr); } }

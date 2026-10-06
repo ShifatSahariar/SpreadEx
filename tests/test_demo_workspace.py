@@ -152,3 +152,55 @@ def test_demo_status_carries_the_grammar_excerpt(origin):
     call(base + "/api/demo/open", {})
     _, st = call(base + "/api/demo")
     assert st["grammar_rules"] == demo.grammar_excerpt(demo.demo_root() / "calc.bnf")
+
+
+def test_prepare_generators_drops_only_the_one_that_fails(tmp_path, monkeypatch):
+    from spreadex.generators import GeneratorError, GeneratorManager
+
+    def ensure(self, ids, **k):
+        if ids == ["fandango"]:
+            raise GeneratorError("no network")
+    monkeypatch.setattr(GeneratorManager, "ensure", ensure)
+    cfg = load_config(demo.materialize(tmp_path / "d") / "spreadex.yaml")
+    lines = []
+    demo.prepare_generators(cfg, log=lines.append)
+    assert cfg.generators == ["fuzzingbook", "grammarinator"]
+    assert any("Could not install fandango" in l for l in lines)
+
+
+def test_the_wizard_validates_relative_paths_against_the_project(tmp_path):
+    """The dry-run check loaded a copy from a temp folder, so `spec/constraints.fan` was
+    'not found' and no project with generator constraints could be saved from the wizard."""
+    from spreadex.api import setup
+
+    project = demo.materialize(tmp_path / "d")
+    cfg = load_config(project / "spreadex.yaml")
+    text = (project / "spreadex.yaml").read_text()
+    out = setup.save_config(cfg, {"yaml": text, "write": False})
+    assert out["ok"], out
+    assert not list(project.glob(".spreadex-check-*")), "the scratch copy must not be left behind"
+    bad = setup.save_config(cfg, {"yaml": text.replace("spec/constraints.fan", "spec/missing.fan"), "write": False})
+    assert not bad["ok"] and "spreadex.yaml" in bad["errors"][0] and ".spreadex-check-" not in bad["errors"][0]
+
+
+def test_a_demo_written_by_an_older_version_is_repaired_not_broken(tmp_path):
+    """An older SpreadEx wrote the demo without spec/; the new spreadex.yaml names
+    spec/constraints.fan, so reusing the folder as-is failed with 'not found'."""
+    import shutil
+    root = demo.materialize(tmp_path / "d")
+    shutil.rmtree(root / "spec")
+    (root / "calc.py").write_text("# my edit\n")
+    demo.ensure(root)
+    assert (root / "spec" / "constraints.fan").is_file()
+    assert (root / "calc.py").read_text() == "# my edit\n", "existing files are never overwritten"
+    load_config(root / "spreadex.yaml")
+
+
+def test_the_demo_constraint_forbids_division_by_a_literal_zero(origin):
+    base, _ = origin
+    call(base + "/api/demo/open", {})
+    _, st = call(base + "/api/demo")
+    assert st["constraint"].startswith("where ") and " / " in st["constraint"], "the rule, not its imports"
+    assert st["rule"] == "Do not divide by a literal zero."
+    fan = (demo.source_dir() / "spec" / "constraints.fan").read_text()
+    assert "import re" in fan and "float(d) != 0" in fan and "%" not in fan.split("where", 1)[1]

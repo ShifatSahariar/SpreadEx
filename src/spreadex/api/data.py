@@ -436,6 +436,12 @@ def _prioritization(rows: list[dict[str, Any]], findings: list[dict[str, Any]]) 
             "all_at": pos[-1], "all_pct": round(100 * pos[-1] / n)}
 
 
+def _rejection_hints(state_dir: Path, run_id: str) -> list[dict]:
+    from ..core.firstrun import rejection_hints
+    with CorpusStore(state_dir) as store:
+        return rejection_hints(store, run_id)
+
+
 def results_overview(state_dir: Path, run_id: str) -> dict[str, Any] | None:
     """The workspace payload: everything the five tabs show, computed once."""
     base = run_detail(state_dir, run_id)
@@ -467,6 +473,10 @@ def results_overview(state_dir: Path, run_id: str) -> dict[str, Any] | None:
         "timeline": _timeline(rows),
         "prioritization": _prioritization(rows, findings),
         "generation_stats": corpus.get("generation_stats") or [],
+        # Set when the campaign kept only the top generators by Cluster Coverage.
+        "selection": corpus.get("selection"),
+        # Crash signatures that read like the system rejecting input (see core/firstrun.py).
+        "rejection_hints": _rejection_hints(state_dir, run_id),
         "generation_mode": corpus.get("generation_mode"),
         "oracle": (manifest.get("config") or {}).get("oracle") or {},
         "exec_cpu_s": sum((r["duration_ms"] or 0) for r in rows) / 1000,

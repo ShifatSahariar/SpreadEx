@@ -677,24 +677,26 @@ function inferKind(argv) {
 // What a generator can do with the semantic input the user supplied in step 2. Pure and
 // deterministic -- no model, no guess -- so the same inputs always give the same sentence.
 // `g` is a catalog row ({id, name, constraints}); `sem` is the saved semantics block.
+// What each selected generator will do with the user's constraints, said plainly on its card.
+// Nothing is converted behind the user's back: a generator reads its own constraint format, or
+// runs from the grammar alone.
+const NATIVE_FORMAT = { fandango: ["Fandango", ".fan"], isla: ["ISLa", ".isla"] };
 function semanticLine(g, sem, experimental) {
   const native = (sem && sem.native) || {};
   const hasGuidance = !!(sem && sem.guidance && sem.guidance.length);
   const hasStructured = !!(sem && sem.structured);
   const others = Object.keys(native).filter(id => id !== g.id);
+  const label = id => (NATIVE_FORMAT[id] || [id[0].toUpperCase() + id.slice(1)])[0];
   if (!hasGuidance && !hasStructured && !Object.keys(native).length) return null;
-  if (native[g.id]) return { tone: "ok", text: `Your ${g.name} constraints are used as written.${hasGuidance ? " Your written guidance is not used by it." : ""}` };
-  if (!g.constraints) {
-    if (others.length) {
-      return { tone: "warn", text: `You supplied ${others.map(id => id === "isla" ? "ISLa" : id[0].toUpperCase() + id.slice(1)).join(" and ")}-specific constraints; ${g.name} cannot use them. It runs from the grammar alone.` };
-    }
-    return { tone: "muted", text: `Semantic input is not consumed by ${g.name}. It runs from the grammar alone.` };
-  }
+  if (native[g.id]) return { tone: "ok", text: `\u2713 ${g.name} constraints provided (${native[g.id]}), used as written.${hasGuidance ? " Your written guidance is not used by it." : ""}` };
+  // A generator without constraint support is not an error, whatever was supplied for others.
+  if (!g.constraints) return { tone: "muted", text: `${g.name} has no constraint support, so it runs from the grammar alone.` };
   const parts = [];
-  if (others.length) parts.push(`You supplied ${others.map(id => id === "isla" ? "ISLa" : id[0].toUpperCase() + id.slice(1)).join(" and ")}-specific constraints; ${g.name} cannot use them.`);
-  if (hasGuidance) parts.push(experimental
-    ? "Natural-language guidance is not consumed directly. Use Add constraints to draft them with the experimental assistant, then review."
-    : "Natural-language guidance is not consumed directly, and drafting constraints needs spreadex ui --experimental.");
+  if (others.length) parts.push(`You supplied ${others.map(label).join(" and ")}-specific constraints; ${g.name} cannot use them.`);
+  const [name, ext] = NATIVE_FORMAT[g.id] || [g.name, "constraints file"];
+  if (hasGuidance) parts.push(`Your rule is in plain language, which is not consumed directly by ${name}. Recommended: provide a ${name} constraints file (${ext}) on the Inputs step.` +
+    (experimental ? " Or draft one from your rule with the experimental assistant (Add constraints), then review it."
+                  : " Drafting one from your rule needs spreadex ui --experimental."));
   if (hasStructured) parts.push("Structured constraints are stored but not interpreted yet.");
   return { tone: others.length ? "warn" : "muted", text: parts.join(" ") };
 }
@@ -751,10 +753,16 @@ function suggestRejection(probe) {
   const line = first(probe.stderr) || first(probe.stdout);
   let pattern = "";
   if (line) {
-    let cut = line.search(/["'\d]/);
-    let prefix = cut >= 0 ? line.slice(0, cut) : line;
-    if (cut < 0 && prefix.includes(":")) prefix = prefix.slice(0, prefix.indexOf(":"));
-    if (prefix.trim().length < 3) prefix = line.slice(0, 40);
+    // A short word before the first colon is usually the system's own rejection prefix.
+    const colon = line.indexOf(":");
+    let prefix;
+    if (colon >= 3 && colon <= 30) prefix = line.slice(0, colon);
+    else {
+      const cut = line.search(/["'\d]/);
+      prefix = cut >= 0 ? line.slice(0, cut) : line;
+      if (cut < 0 && prefix.includes(":")) prefix = prefix.slice(0, prefix.indexOf(":"));
+      if (prefix.trim().length < 3) prefix = line.slice(0, 40);
+    }
     pattern = "^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
   return { exitCode: probe.exit_code, line, pattern };
@@ -778,7 +786,10 @@ function runFromConfig(c) {
   const r = { genMode: g.mode === "time" || g.count == null ? "time" : "count",
               perGen: per && per > 0 ? per : 30, count: Number.isInteger(g.count) && g.count > 0 ? g.count : 200,
               execMode: "time", execMinutes: execS && execS > 0 ? execS / 60 : 1, execCount: 500,
-              signal: c.selection_signal === "random" ? "random" : "cc", model: (c.embedding || {}).model || "tfidf", jobs: 4 };
+              signal: c.selection_signal === "random" ? "random" : "cc", model: (c.embedding || {}).model || "tfidf", jobs: 4,
+              // Generators to keep by Cluster Coverage; 0 means all of them. Selection is opt-in: a project
+              // without it keeps every generator, as it always has (the guided demo sets keep: 1).
+              keep: c.selection && Number.isInteger(c.selection.keep) ? c.selection.keep : 0 };
   if (b.max_inputs) { r.execMode = "count"; r.execCount = b.max_inputs; }
   else if (execS && execS >= MAX_EXEC_S) r.execMode = "corpus";
   return r;
@@ -846,7 +857,10 @@ function pageNumbers(cur, last) {
 // ---- end results formatting ----
 
 // ---- live stage (pure) ----
-const STAGES = [["install", "Install"], ["generate", "Generate"], ["rank", "Prioritize"], ["execute", "Execute"], ["finish", "Finish"]];
+const STAGES = [["install", "Install"], ["generate", "Generate"], ["rank", "Prioritize"], ["select", "Select"], ["execute", "Execute"], ["finish", "Finish"]];
+// "Select" is a stage only for campaigns that keep the top generators by Cluster Coverage.
+const SELECTED_LINE = /^\s*selected by cluster coverage:/;
+function stagesFor(lines) { return lines.some(l => SELECTED_LINE.test(l)) ? STAGES : STAGES.filter(s => s[0] !== "select"); }
 function liveStage(lines, done) {
   if (done) return "finish";
   // Monotonic: a campaign only moves forward, so a later line that merely LOOKS like an earlier
@@ -858,6 +872,7 @@ function liveStage(lines, done) {
     if (/^Installing /.test(l) || /^- /.test(l)) reach("install");
     if (/^Running:/.test(l) || /^Generating/.test(l)) reach("generate");
     if (/^Ranking with signal/.test(l)) reach("rank");
+    if (SELECTED_LINE.test(l)) reach("select");
     if (/^Executing against/.test(l)) reach("execute");
   }
   return order[at];
@@ -940,6 +955,7 @@ function buildYaml() {
     `  generation: ${c.budget?.generation || "1m"}`,
     `  execution: ${c.budget?.execution || "1m"}`);
   if (c.budget?.max_inputs) lines.push(`  max_inputs: ${c.budget.max_inputs}`);
+  if (c.selection?.keep) lines.push("", "selection:", `  by: ${c.selection.by || "cc"}`, `  keep: ${c.selection.keep}`);
   lines.push("", `selection_signal: ${c.selection_signal || "cc"}`,
     "embedding:", `  model: ${c.embedding?.model || "tfidf"}`,
     "", `seed: ${c.seed ?? 42}`, "");
@@ -1936,7 +1952,7 @@ function semanticSection() {
     <h4 id="sem-h"><span class="num" aria-hidden="true">4</span> Semantic guidance <span class="muted">(optional)</span>
       ${hint("hint-sem", "Rules a grammar cannot say, such as a variable being declared before use. Written once here; step 3 shows what each generator can do with it.")}</h4>
     <p class="muted inp-sub">Describe rules that go beyond syntax. Plain language is fine.</p>
-    <div class="sem-card">
+    <div class="sem-card" data-tour="inputs-constraint">
       <div class="sem-head"><span class="tile green" aria-hidden="true">${ICONS.doc}</span>
         <div><strong>Natural language</strong> <span class="tag ok">Recommended</span>
           <div class="muted">Write the rules, or upload documentation that states them.</div></div></div>
@@ -1959,20 +1975,24 @@ function semanticSection() {
       ${d.busy ? `<div class="muted sem-note" role="status"><span class="spinner"></span> ${esc(d.busy)}</div>` : ""}
       ${d.msg ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-s">${esc(d.msg)}</div></div></div>` : ""}
     </div>
+    <div class="sem-card sem-native">
+      <div class="sem-head"><span class="tile orange" aria-hidden="true">${ICONS.shield}</span>
+        <div><strong>Generator-specific specification</strong> <span class="tag ok">Recommended</span>
+          <div class="muted">Generators that support constraints read their own format: Fandango a <span class="mono">.fan</span> file, ISLa an <span class="mono">.isla</span> file.
+            Each file goes to its generator unchanged; SpreadEx does not convert it. Generators without constraint support use the grammar alone.</div></div></div>
+      ${nativeRows}
+      ${capable.length ? `<div class="inp-up">${capable.filter(g => !(saved.native || {})[g.id]).map(g => `<label class="btn-like" for="sem-nat-${g.id}">${ICONS.upload} ${esc(g.name)} constraints (${g.id === "isla" ? ".isla" : ".fan"})</label>
+          <input id="sem-nat-${g.id}" type="file" class="visually-hidden" onchange="semFileSlot(this, 'native:${g.id}')">`).join(" ")}</div>`
+        : `<div class="muted">No installed generator takes its own constraints.</div>`}
+    </div>
     <details class="sut-adv" ${d.advancedOpen ? "open" : ""} ontoggle="toggleSemAdvanced(this.open)">
-      <summary><span><strong>Advanced</strong></span><span class="muted">Structured constraints and generator-specific specifications</span></summary>
+      <summary><span><strong>Advanced</strong></span><span class="muted">Structured constraints</span></summary>
       <div class="sut-adv-body">
         <label>Structured constraints <span class="tag warn">reserved</span></label>
         <p class="muted">A YAML or JSON file. Stored and recorded with each run, but not interpreted by any generator yet.</p>
         ${saved.structured ? `<div class="sem-file"><span class="mono">${esc(saved.structured)}</span>
           <button type="button" class="linkish" onclick="semDropSlot('structured')">Remove</button></div>`
           : `<label class="btn-like" for="sem-struct">${ICONS.upload} Choose a file</label><input id="sem-struct" type="file" accept=".yaml,.yml,.json" class="visually-hidden" onchange="semFileSlot(this, 'structured')">`}
-        <label>Generator-specific specification</label>
-        <p class="muted">A constraints file written in a generator's own language. It goes to that generator unchanged; SpreadEx does not convert it.</p>
-        ${nativeRows}
-        ${capable.length ? capable.filter(g => !(saved.native || {})[g.id]).map(g => `<label class="btn-like" for="sem-nat-${g.id}">${ICONS.upload} ${esc(g.name)} constraints</label>
-          <input id="sem-nat-${g.id}" type="file" class="visually-hidden" onchange="semFileSlot(this, 'native:${g.id}')">`).join(" ")
-          : `<div class="muted">No installed generator takes its own constraints.</div>`}
       </div>
     </details>
     <div class="sem-sum" aria-label="Input specification summary">
@@ -2643,7 +2663,7 @@ function paintGenerators() {
         aria-selected="${d.filter === id}" onclick="setGenFilter('${id}')">${t}</button>`).join("")}
     </div>
 
-    <section class="gsec rec" aria-labelledby="gh-rec">
+    <section class="gsec rec" aria-labelledby="gh-rec" data-tour="gen-cards">
       <div class="gsec-h"><h4 id="gh-rec">Recommended generators ${hint("hint-rec", "Generators that are able to run your grammar, so they should work without changes.")}</h4>
         <span class="gcount">Up to 3 shown</span></div>
       <div class="ggrid">${recShown.map(x => genCard(x, true)).join("") ||
@@ -2946,6 +2966,9 @@ function syncRun() {
   S.config.generation = b.generation;
   S.config.budget = b.budget;
   S.config.selection_signal = r.signal;
+  // Only meaningful with something to choose from, and only with Cluster Coverage scores to choose by.
+  if (nGenerators() > 1 && r.signal === "cc" && r.keep > 0 && r.keep < nGenerators()) S.config.selection = { by: "cc", keep: r.keep };
+  else delete S.config.selection;
   S.config.embedding = { model: r.model };
   return r;
 }
@@ -3058,7 +3081,7 @@ async function stepRun(current = () => true) {
     </header>
 
     <div class="rbudgets">
-      <section class="rcard purple" aria-labelledby="rg-h">
+      <section class="rcard purple" aria-labelledby="rg-h" data-tour="run-genbudget">
         <h4 id="rg-h"><span class="stile purple" aria-hidden="true">${ICONS.doc}</span> Generation budget
           ${hint("hint-gen", "How much each generator is given to produce inputs. Equal time answers \\u201cwho makes better use of a budget\\u201d; they will produce different numbers of inputs, and that is the measurement.")}</h4>
         <div class="ropts two">
@@ -3071,7 +3094,7 @@ async function stepRun(current = () => true) {
         </div>
       </section>
 
-      <section class="rcard blue" aria-labelledby="re-h">
+      <section class="rcard blue" aria-labelledby="re-h" data-tour="run-execbudget">
         <h4 id="re-h"><span class="stile blue" aria-hidden="true">${ICONS.playOutline}</span> Execution budget
           ${hint("hint-exec", "When to stop running inputs against your system. Whichever you choose, each input still has its own timeout from the Testing strategy step.")}</h4>
         <div class="ropts">
@@ -3085,15 +3108,25 @@ async function stepRun(current = () => true) {
       </section>
     </div>
 
-    <section class="rcard green wide" aria-labelledby="ro-h">
+    <section class="rcard green wide" aria-labelledby="ro-h" data-tour="run-ordering">
       <h4 id="ro-h"><span class="stile green" aria-hidden="true">${ICONS.table}</span> Test ordering
-        ${hint("hint-order", "Which generated inputs run first. SpreadEx puts the most different ones first (cluster coverage); random order is the baseline to compare against.")}</h4>
+        ${hint("hint-order", "Which generated inputs run first. SpreadEx prioritization uses the diversity map to put the most different inputs first; random order is the baseline to compare against.")}</h4>
       <div class="ropts two">
         ${grp("so", { on: r.signal === "cc", title: "SpreadEx prioritization", tag: "Recommended", onclick: "runSet('signal','cc')",
-          body: `<p class="muted">Cluster coverage: the most different inputs first.</p>` })}
+          body: `<p class="muted">The most different inputs first, from the diversity map.</p>` })}
         ${grp("so", { on: r.signal === "random", title: "Random order", onclick: "runSet('signal','random')",
           body: `<p class="muted">The baseline. Useful to see what prioritization is worth.</p>` })}
       </div>
+      ${nGenerators() > 1 && r.signal === "cc" ? `<div class="rsel-h"><strong>Generator selection</strong>
+        ${hint("hint-gsel", "After generating, SpreadEx measures each generator's Cluster Coverage over all the inputs, then runs only the inputs of the generators you keep. Coverage is still reported for every generator.")}</div>
+      <div class="ropts ${nGenerators() > 2 ? "three" : "two"}">
+        ${grp("gs", { on: !(r.keep > 0 && r.keep < nGenerators()), title: "All generators", onclick: "runSet('keep',0)",
+          body: `<p class="muted">Run every generator's inputs; Cluster Coverage is only reported.</p>` })}
+        ${grp("gs", { on: r.keep === 1, title: "Best generator", onclick: "runSet('keep',1)",
+          body: `<p class="muted">Keep the one with the highest Cluster Coverage and run only its inputs.</p>` })}
+        ${nGenerators() > 2 ? grp("gs", { on: r.keep === 2, title: "Best 2 generators", onclick: "runSet('keep',2)",
+          body: `<p class="muted">Keep the two with the highest Cluster Coverage.</p>` }) : ""}
+      </div>` : ""}
       <details class="sut-adv"><summary><span><strong>Advanced</strong></span><span class="muted">Embedding model and parallel executions</span></summary>
         <div class="sut-adv-body"><div class="row">
           <div><label for="run-model">Embedding</label><select id="run-model" onchange="runSet('model', this.value)">
@@ -3372,7 +3405,13 @@ function tabOverview(d) {
     <tr class="total"><td>Total</td><td>${num(d.corpus?.generated)}</td><td>${num(d.corpus?.valid)}</td><td>${num(d.executed)}</td><td><span class="count bad">${fs.length}</span></td>
       <td>${total ? ((100 * (v.ok || 0) / total).toFixed(1) + "%") : "—"}</td></tr></tbody></table>`;
 
-  return `<div class="resgrid">
+  // Crashes that read like rejections: the most common first-run mistake, said plainly with the fix.
+  const hints = d.rejection_hints || [];
+  const hintNote = hints.length ? `<div class="res warn" role="note"><span class="res-ico" aria-hidden="true">${ICONS.alert}</span><div class="res-main">
+      <div class="res-t">Some of these crashes look like your system rejecting input</div>
+      <div class="res-s">${hints.map(h => `${num(h.inputs)} input${h.inputs > 1 ? "s" : ""}, exit ${h.exit_code}: <span class="mono">${esc(h.line.slice(0, 90))}</span>`).join("<br>")}</div>
+      <div class="res-s">If that is how your system refuses invalid input, add ${hints.map(h => `<span class="mono">${esc(h.pattern)}</span>`).join(", ")} under <span class="mono">oracle.rejection_patterns</span> (Testing strategy step), and those inputs will count as expected rejections instead of findings.</div></div></div>` : "";
+  return `${hintNote}<div class="resgrid">
     ${resCard("Campaign outcome", outcome, { tip: "How every executed input was judged. A refusal the system makes on purpose is an expected rejection, not a failure." })}
     ${resCard("Prioritization", prio, { tip: "When the findings were reached, against how many inputs were executed. Only what this run recorded." })}
     ${resCard("Top findings", top, { right: fs.length ? `<button type="button" class="ghost small" onclick="pickResultTab('findings')">View all ${ICONS.arrow}</button>` : "", cls: "wide-l" })}
@@ -3414,13 +3453,17 @@ function groupedBars(rows, series, colors) {
 
 function tabGenerators(d) {
   const gens = d.by_generator || [], names = gens.map(g => g.name);
+  // When the campaign selected generators by CC, say which, on every row.
+  const sel = d.selection;
+  const selTag = n => !sel ? "" : sel.selected.includes(n) ? ` <span class="vtag green">Selected by CC</span>`
+    : sel.dropped.includes(n) ? ` <span class="vtag">Not selected</span>` : "";
   const sorts = { executed: g => -g.executed, findings: g => -g.findings, pass: g => -(g.pass_rate ?? -1), cc: g => -(g.cc ?? -1) };
   const key = S.gsort || "executed";
   const rows = [...gens].sort((a, b) => sorts[key](a) - sorts[key](b));
   const fv = g => ["crash", "timeout", "divergence"].map(k => g.verdicts[k] ? `<span class="count ${VERDICTS[k].tone}" title="${VERDICTS[k].label}">${g.verdicts[k]}</span>` : "").join("") || `<span class="muted">0</span>`;
   const ccMax = Math.max(1, ...gens.map(g => g.cc || 0));
   const table = `<div class="tscroll"><table class="rtable"><thead><tr><th>Generator</th><th>Generated</th><th>Valid</th><th>Executed</th><th>Failing inputs</th><th>Pass rate</th><th>Cluster coverage ${hint("hint-cc-col", "How much of the pooled input space this generator's inputs reach. It is relative to the pool in this run: add or remove a generator and every score changes.")}</th></tr></thead><tbody>
-    ${rows.map(g => `<tr><td><i class="dotc" style="background:${genColor(g.name, names)}"></i>${esc(g.name)}</td><td>${num(g.generated)}</td><td>${num(g.valid)}</td><td>${num(g.executed)}</td><td>${fv(g)}</td>
+    ${rows.map(g => `<tr><td><i class="dotc" style="background:${genColor(g.name, names)}"></i>${esc(g.name)}${selTag(g.name)}</td><td>${num(g.generated)}</td><td>${num(g.valid)}</td><td>${num(g.executed)}</td><td>${fv(g)}</td>
       <td class="passcell"><span>${g.pass_rate == null ? "—" : (100 * g.pass_rate).toFixed(1) + "%"}</span><span class="o-b"><span style="width:${100 * (g.pass_rate || 0)}%;background:#16A34A"></span></span></td>
       <td class="passcell"><span>${g.cc == null ? "—" : g.cc.toFixed(3)}</span><span class="o-b"><span style="width:${g.cc == null ? 0 : 100 * g.cc / ccMax}%;background:#1687F8"></span></span></td></tr>`).join("")}</tbody></table></div>`;
   const sortSel = `<label class="sortby">Sort by <select onchange="S.gsort = this.value; paintRun()">${[["executed", "Executed inputs"], ["findings", "Findings"], ["pass", "Pass rate"], ["cc", "Cluster coverage"]]
@@ -3451,7 +3494,7 @@ function tabGenerators(d) {
 
   if (!gens.length) return `<div class="empty">This run recorded no generator breakdown.</div>`;
   return `<div class="resgrid one">
-    ${resCard("Generator comparison", `${basis ? `<div class="muted rbasis">Comparison basis: ${basis}</div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
+    ${resCard("Generator comparison", `${basis ? `<div class="muted rbasis">Comparison basis: ${basis}</div>` : ""}${sel ? `<div class="rnote" data-tour="gen-selection">${ICONS.info}<div>This campaign kept ${sel.selected.length === 1 ? "the generator" : `the <strong>${sel.selected.length}</strong> generators`} with the highest Cluster Coverage (${sel.selected.map(esc).join(", ")}). Inputs from ${sel.dropped.map(esc).join(", ")} were generated and measured, but not executed.</div></div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
     ${rec}
     <div class="resgrid three">
       ${resCard("Executed inputs per generator", executedChart)}
@@ -3863,7 +3906,7 @@ async function pollLive() {
     // Workbench) is followed through the project lock and the database alone.
     const a = L.external ? { idle: true } : await api(`/api/activity?since=${L.total}`);
     const job = !a.idle && a.kind === "run";
-    if (job) { L.lines.push(...(a.lines || [])); L.total = a.total_lines ?? L.total + (a.lines || []).length; tourEvent("stage." + liveStage(L.lines, false)); }
+    if (job) { L.lines.push(...(a.lines || [])); L.total = a.total_lines ?? L.total + (a.lines || []).length; const st = liveStage(L.lines, false); if (st !== L.tourStage) { L.tourStage = st; tourEvent("stage." + st); } }
     const act = await api("/api/active");
     if (act.active && act.run_id) L.runId = act.run_id;
     if (L.runId) {
@@ -3888,7 +3931,8 @@ function paintLive() { const h = el("view"); if (h && el("live-root")) el("live-
 
 function liveBody() {
   const L = S.live || { lines: [], progress: null }, p = L.progress, v = (p && p.verdicts) || {};
-  const stage = liveStage(L.lines, L.done && !L.error), idx = STAGES.findIndex(s => s[0] === stage);
+  const stages = stagesFor(L.lines);
+  const stage = liveStage(L.lines, L.done && !L.error), idx = stages.findIndex(s => s[0] === stage);
   const kpi = (tone, icon, n, label) => `<div class="kpi ${tone}"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span><div><strong>${num(n)}</strong><span>${label}</span></div></div>`;
   const total = p && p.exec_budget_s && p.exec_budget_s < 3600 ? (p.gen_budget_s || 0) + p.exec_budget_s : null;
   const bar = p && p.elapsed_s != null && total ? Math.min(100, Math.round(100 * p.elapsed_s / total)) : null;
@@ -3901,7 +3945,7 @@ function liveBody() {
           title="Stop after the input that is running now; what has run so far is kept">${ICONS.stop} Cancel campaign</button></div>` : ""}
       <div class="kpis">${kpi("blue", "playOutline", p?.executed || 0, "Executed")}${kpi("green", "success", v.ok || 0, "Passed")}${kpi("blue", "doc", v.expected_rejection || 0, "Rejected")}
         ${kpi("red", "bug", v.crash || 0, "Crashes")}${kpi("amber", "clock", v.timeout || 0, "Timeouts")}</div></header>
-    ${L.external ? "" : `<div class="stagebar" data-tour="live-stages" role="list" aria-label="Campaign stages">${STAGES.map(([id, t], i) => `<div class="stg ${i < idx ? "done" : i === idx ? "now" : ""}" role="listitem" ${i === idx ? 'aria-current="step"' : ""}><span>${i < idx ? ICONS.check : i + 1}</span>${t}</div>`).join("")}</div>`}
+    ${L.external ? "" : `<div class="stagebar" data-tour="live-stages" role="list" aria-label="Campaign stages">${stages.map(([id, t], i) => `<div class="stg ${i < idx ? "done" : i === idx ? "now" : ""}" role="listitem" ${i === idx ? 'aria-current="step"' : ""}><span>${i < idx ? ICONS.check : i + 1}</span>${t}</div>`).join("")}</div>`}
     ${L.error ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-t">The campaign stopped</div><div class="res-s">${esc(L.error)}</div></div>
         <button type="button" class="ghost small res-btn" onclick="go('setup'); gotoStep('run')">Back to Review &amp; run</button></div>`
       : `<section class="rescard"><div class="rescard-h"><h4>Progress</h4></div>
@@ -4022,41 +4066,67 @@ const TOUR = [
     // Grammar first, what it produces second: two real rules from calc.bnf, two real seed inputs.
     grammar: c => ({ rules: (c.grammarRules || []).slice(0, 2).map(tourShortRule), examples: tourExamples(c.samples) }),
     text: () => `SpreadEx needs to know **what inputs** [[${TOUR_SUT}]] **accepts**. We've included a small **BNF grammar** for you.` },
+  { id: "inputs.constraint", chapter: "Setup · 2 of 5", route: { tab: "setup", step: "grammar" }, target: "inputs-constraint", advance: { ack: "Next" },
+    rule: c => c.rule || "",
+    check: { text: "Prepared for the generators that support constraints",
+             tip: "In this demo the rule is already provided in Fandango's own format (spec/constraints.fan), and SpreadEx passes that file to Fandango unchanged. FuzzingBook and Grammarinator do not support constraints, so they use the grammar alone. In your own project, provide that file for each such generator, or draft it from your rule with the experimental assistant." },
+    text: () => `{{Add a constraint.}} Tell SpreadEx an extra **rule** for generated inputs, one the grammar cannot express.` },
   { id: "inputs.continue", chapter: "Setup · 2 of 5", route: { tab: "setup", step: "grammar" }, target: "inputs-continue", advance: { event: "step.grammar" },
     text: () => `This **grammar** guides test generation. Nothing to upload or edit.` },
   // -- 3 of 5: generators
   { id: "gen.card", chapter: "Setup · 3 of 5", route: { tab: "setup", step: "generators" }, target: "gen-selected", advance: { ack: "Next" },
-    text: () => `A **generator** turns the grammar into candidate test inputs. We've already selected one for you.` },
+    text: c => `{{${(c.generators || []).length}}} **generators** are selected. Each writes {{${c.count || "the same number of"}}} candidate inputs from the same grammar.` },
+  { id: "gen.cc", chapter: "Setup · 3 of 5", route: { tab: "setup", step: "generators" }, target: "gen-cards", advance: { ack: "Next" },
+    text: c => `After generating, SpreadEx compares them by **Cluster Coverage**: it groups similar inputs into clusters and counts how many clusters each generator reached.` +
+      (c.keep ? `\n\nThis campaign keeps ${c.keep === 1 ? "the {{single best}} generator and runs only its inputs" : `the best {{${c.keep}}} and runs only their inputs`}.` : "") },
   { id: "gen.continue", chapter: "Setup · 3 of 5", route: { tab: "setup", step: "generators" }, target: "gen-continue", advance: { event: "step.generators" },
     text: () => `SpreadEx will test inputs produced from this grammar. Continue to **Testing strategy**.` },
   // -- 4 of 5: strategy
   { id: "strat.rej", chapter: "Setup · 4 of 5", route: { tab: "setup", step: "strategy" }, target: "strat-rej", advance: { ack: "Next" },
-    text: () => `Not every rejected input is a bug. **Expected rejections** are normal responses, which SpreadEx does not report as failures.` },
+    text: () => `**Expected rejections** are inputs the system is allowed to reject. SpreadEx separates them from findings.` },
   { id: "strat.crash", chapter: "Setup · 4 of 5", route: { tab: "setup", step: "strategy" }, target: "strat-crash", advance: { ack: "Next" },
     text: c => `A **crash** is different. SpreadEx reports it as something worth investigating.` +
       (c.timeout ? `\n\nNo response within \`${c.timeout}\` is classified as a **timeout**.` : "") },
   { id: "strat.continue", chapter: "Setup · 4 of 5", route: { tab: "setup", step: "strategy" }, target: "strat-continue", advance: { event: "step.strategy" },
     text: () => `These settings are ready for the demo. You only need to understand what they mean.` },
   // -- 5 of 5: review & run
+  { id: "run.genbudget", chapter: "Setup · 5 of 5", route: { tab: "setup", step: "run" }, target: "run-genbudget", advance: { ack: "Next" },
+    text: c => c.count
+      ? `The **generation budget** is what each generator gets. Here it is an equal count: {{${c.count}}} inputs each, so the run is reproducible.\n\nEqual time is the resource-fair alternative: every generator gets the same seconds.`
+      : `The **generation budget** is what each generator gets: the same seconds each, so the comparison is resource-fair.` },
+  { id: "run.execbudget", chapter: "Setup · 5 of 5", route: { tab: "setup", step: "run" }, target: "run-execbudget", advance: { ack: "Next" },
+    text: c => `The **execution budget** says when to stop running inputs against [[${TOUR_SUT}]]` + (c.execution ? `: here, up to {{${c.execution}}}.` : ".") +
+      `\n\nEach input still has its own timeout from the testing strategy.` },
+  { id: "run.ordering", chapter: "Setup · 5 of 5", route: { tab: "setup", step: "run" }, target: "run-ordering", advance: { ack: "Next" },
+    text: c => `**Test ordering**: SpreadEx prioritization runs the most different inputs first; random order is the baseline to compare against.` +
+      (c.keep ? `\n\n**Generator selection**: ${c.keep === 1 ? "only the {{best generator}}" : `only the top {{${c.keep}}} generators`} by Cluster Coverage will run.` : "") },
   { id: "run.launch", chapter: "Setup · 5 of 5", route: { tab: "setup", step: "run" }, target: "run-launch", advance: { event: "campaign.started" },
-    story: c => [TOUR_SUT, "Calculator grammar", (c.generators || []).join(", ") || "Seed inputs", "Candidate inputs", "SpreadEx prioritization", "Execute + classify"],
+    story: c => [TOUR_SUT, "Calculator grammar", (c.generators || []).join(", ") || "Seed inputs", "Candidate inputs",
+                 ...(c.keep ? [c.keep === 1 ? "Cluster Coverage: keep the best generator" : `Cluster Coverage: keep the top ${c.keep}`] : []), "SpreadEx prioritization", "Execute + classify"],
     text: () => `Everything is ready. Run your first **real SpreadEx campaign**.` },
   // -- running: watch
   { id: "live.install", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "stage.generate" },
     text: () => `Preparing the **generator**. This setup time does not use your campaign budget.` },
   { id: "live.generate", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "stage.rank" },
-    text: () => `Creating **candidate inputs** from the [[${TOUR_SUT}]] grammar.` },
-  { id: "live.rank", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "stage.execute" },
-    text: () => `SpreadEx is **prioritizing** which inputs should run first.` },
+    text: c => `${(c.generators || []).length > 1 ? `{{${c.generators.length}}} generators are creating` : "Creating"} **candidate inputs** from the [[${TOUR_SUT}]] grammar.` },
+  { id: "live.rank", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "stage.select" },
+    text: () => `SpreadEx turns every candidate into a vector, groups similar ones into **clusters**, and measures each generator's **Cluster Coverage**.` },
+  { id: "live.select", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "stage.execute" },
+    text: c => { const m = /selected by cluster coverage: (.*) \(kept (\d+) of (\d+); dropped (.*); (\d+) inputs to execute\)/.exec(c.selectLine || "");
+      return m ? `**Generator selection**: kept {{${m[1]}}}; dropped {{${m[4]}}}.\n\nOnly the kept generators' {{${m[5]}}} inputs will run.`
+        : `**Generator selection**: no choice was needed here, so every generator's inputs will run.`; } },
   { id: "live.execute", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { event: "campaign.done" },
-    text: () => `Running prioritized inputs against [[${TOUR_SUT}]] and classifying the results.` },
+    text: () => `Running the inputs against [[${TOUR_SUT}]] in **SpreadEx priority order**, and classifying each result.` },
   { id: "live.failed", chapter: "Running", route: { live: true }, target: "live-stages|live-view", advance: { ack: "Next" }, final: true,
     text: () => `The campaign stopped. The **real error** is shown below.` },
   // -- understand your results
   { id: "res.overview", chapter: "Understand your results", route: { tab: "results", rtab: "overview" }, target: "res-kpis", advance: { ack: "Next" },
     text: c => { const d = c.detail || {}, v = d.verdicts || {}, n = (d.findings || []).length, f = `finding${n === 1 ? "" : "s"}`;
       return `{{Start here for the big picture.}} SpreadEx executed {{${d.executed ?? 0} inputs}} and discovered **${n} ${f}**.\n\n` +
-        `{{${v.ok || 0}}} normal · {{${v.expected_rejection || 0}}} expected rejections · {{${n}}} ${f}`; } },
+        `{{${v.ok || 0}}} normal · {{${v.expected_rejection || 0}}} expected rejections · {{${n}}} ${f}` +
+        // A zero is part of the story when the selected generator followed the demo's constraint.
+        (!v.expected_rejection && d.selection && c.rule
+          ? `\n\n{{0 expected rejections}}: in this run the selected generator followed the constraint, so inputs matching [[${TOUR_SUT}]]'s known rejection case were filtered out before execution.` : ""); } },
   { id: "res.findtab", chapter: "Understand your results", route: { tab: "results", rtab: "overview" }, target: "tab-findings", advance: { event: "tab.findings" },
     text: c => (c.detail?.findings || []).length ? `Now let's investigate the **finding**.` : `Nothing failed this time. **Findings** is where you would look.` },
   { id: "res.finding", chapter: "Understand your results", route: { tab: "results", rtab: "findings" }, target: "finding-card", advance: { event: "finding.opened" },
@@ -4076,7 +4146,8 @@ const TOUR = [
     text: () => `Next: **where the inputs came from**.` },
   { id: "gen.compare", chapter: "Understand your results", route: { tab: "results", rtab: "generators" }, target: "gen-compare", advance: { ack: "Next" },
     text: c => { const g = (c.detail?.by_generator || []).filter(x => x.executed);
-      return `Each row shows **where the test inputs came from** and what happened to them.\n\n` +
+      return `Each row shows **where the test inputs came from** and what happened to them.` +
+        (c.detail?.selection ? ` The **Selected by CC** tags show which generators this campaign kept.` : "") + `\n\n` +
         `**Cluster coverage** shows how broadly a generator explored the input space: higher means it reached **more different regions**.` +
         (g.length > 1 ? " Compare generators to see which explored more broadly." : ""); } },
   { id: "res.budtab", chapter: "Understand your results", route: { tab: "results", rtab: "generators" }, target: "tab-budget", advance: { event: "tab.budget" },
@@ -4094,7 +4165,7 @@ const TOUR = [
     text: () => `{{You've completed your first SpreadEx campaign.}}` },
 ];
 // What the finish card lists.
-const TOUR_LEARNT = ["Connected a system", "Generated test inputs", "Ran a prioritized campaign",
+const TOUR_LEARNT = ["Connected a system", "Generated test inputs", "Compared generators by Cluster Coverage", "Ran a prioritized campaign",
                      "Investigated a finding", "Replayed the behavior", "Learned how to read the results"];
 const TOUR_IDS = TOUR.map(b => b.id);
 
@@ -4213,8 +4284,10 @@ function tourEvent(name, info) {
 // each for a moment -- what is shown is what happened, just not faster than it can be read.
 async function tourDrain() {
   while (tourQueue.length && S.tour) {
+    // Each stage stays readable for a moment -- unless nobody can see it: a hidden tab throttles
+    // timers to a crawl, and holding the queue there would also hold back the results page.
     const wait = TOUR_DWELL_MS - (Date.now() - (S.tour.enteredAt || 0));
-    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    if (wait > 0 && !document.hidden) await tourWait(wait);
     const name = tourQueue[0], { id, again } = tourStep(S.tour.id, name);
     if (!again) tourQueue.shift();
     if (id === S.tour.id) continue;
@@ -4222,8 +4295,26 @@ async function tourDrain() {
   }
   tourDraining = null;
 }
-// Resolves once the queued stages have all been shown (the live view waits for it before results).
-function tourSettled() { return tourDraining || Promise.resolve(); }
+// A pause that ends early if the tab is hidden: timers in a hidden tab can be held back for up to
+// a minute, and nobody is watching the stages then anyway.
+function tourWait(ms) {
+  return new Promise(resolve => {
+    const done = () => { clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); resolve(); };
+    const onVis = () => { if (document.hidden) done(); };
+    const timer = setTimeout(done, ms);
+    document.addEventListener("visibilitychange", onVis);
+  });
+}
+// Resolves once the queued stages have been shown -- but the results never wait on the guide for
+// long: past the time the remaining stages need, it moves straight on to the results chapter.
+function tourSettled() {
+  if (!tourDraining) return Promise.resolve();
+  const limit = TOUR_DWELL_MS * (tourQueue.length + 2);
+  return Promise.race([tourDraining, new Promise(r => setTimeout(r, limit))]).then(() => {
+    const b = S.tour && TOUR[TOUR_IDS.indexOf(S.tour.id)];
+    if (b && b.chapter === "Running" && !b.final) { tourQueue.length = 0; tourSet("res.overview", ""); }
+  });
+}
 
 function tourApply(name, info) {
   const before = S.tour.id, beat = TOUR[TOUR_IDS.indexOf(before)];
@@ -4272,7 +4363,9 @@ function tourRich(text) {
 
 function tourContext() {
   const c = cfg(), sut = c.sut || {};
-  return { probe: S.probe, samples: S.demo?.samples || [], grammarRules: S.demo?.grammar_rules || [], timeout: sut.timeout ? String(sut.timeout) : "",
+  return { probe: S.probe, samples: S.demo?.samples || [], grammarRules: S.demo?.grammar_rules || [],
+           constraint: S.demo?.constraint || "", rule: S.demo?.rule || "", keep: Number.isInteger(c.selection?.keep) ? c.selection.keep : 0, count: c.generation?.count || 0,
+           execution: c.budget?.execution || "", selectLine: (S.live?.lines || []).find(l => SELECTED_LINE.test(l)) || "", timeout: sut.timeout ? String(sut.timeout) : "",
            generators: c.generators || [], detail: S.detail, finding: S.rf?.detail };
 }
 
@@ -4298,6 +4391,9 @@ function tourPaint() {
   const bnf = g && g.rules.length ? `<div class="tour-bnf"><pre>${g.rules.map(esc).join("\n")}</pre>
       ${g.examples.length ? `<div class="tour-arrow" aria-hidden="true">↓</div><div class="tour-ex"><span class="muted">It can generate inputs like</span>
         ${g.examples.map(x => `<code>${esc(x)}</code>`).join(" ")}</div>` : ""}</div>` : "";
+  const codeBlock = (b.code && b.code(c) ? `<div class="tour-bnf"><pre>${esc(b.code(c))}</pre></div>` : "")
+    + (b.rule && b.rule(c) ? `<div class="tour-rule"><span class="spark" aria-hidden="true">\u2726</span><span>\u201c${esc(b.rule(c))}\u201d</span></div>` : "")
+    + (b.check ? `<div class="tour-check"><span class="ok" aria-hidden="true">\u2713</span><span>${esc(b.check.text)}</span>${hint("hint-tour-check", b.check.tip)}</div>` : "");
   const story = b.story ? `<ol class="tour-story">${b.story(c).map(s => `<li>${esc(s)}</li>`).join("")}</ol>` : "";
   const finish = b.id === "done" ? `<ul class="tour-learnt">${TOUR_LEARNT.map(s => `<li>${ICONS.check}<span>${s}</span></li>`).join("")}</ul>` : "";
   const missing = b.target && !t;
@@ -4313,7 +4409,7 @@ function tourPaint() {
        ${b.id === "done" || b.id === "live.failed" ? "" : `<button type="button" class="linkish tour-skip" onclick="tourPause()">Skip tour</button>`}`;
   const html = `<div class="tour-chap">${esc(b.chapter)}${prog ? ` · ${prog.n} of ${prog.of}` : ""}</div>
     ${S.tour.flash ? `<div class="tour-flash ${S.tour.flash.startsWith("✓") ? "" : "plain"}">${tourRich(S.tour.flash)}</div>` : ""}
-    ${tourRich(b.text(c)).split("\n\n").map((para, k) => `<p class="${k ? "tour-sub" : ""}">${para}</p>`).join("")}${bnf}${story}${finish}
+    ${tourRich(b.text(c)).split("\n\n").map((para, k) => `<p class="${k ? "tour-sub" : ""}">${para}</p>${k === 0 ? codeBlock : ""}`).join("")}${bnf}${story}${finish}
     ${missing && !b.route ? `<p class="muted">Waiting for the page to show it&hellip;</p>` : ""}
     <div class="tour-actions">${buttons}</div>`;
   // Repaints are frequent (scroll, re-render); rebuilding unchanged buttons would swallow clicks and focus.

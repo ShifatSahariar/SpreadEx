@@ -15,13 +15,29 @@ oracle:
 grammar:
   source: ./calc.bnf
 
-generators: [fuzzingbook]
+# Three generators, so the campaign can compare them. After generating, SpreadEx
+# builds one diversity map over all their inputs, measures each generator's
+# Cluster Coverage, keeps the one that reached the most clusters, and executes
+# only its inputs, in SpreadEx priority order.
+generators: [fuzzingbook, fandango, grammarinator]
+
+selection:
+  by: cc
+  keep: 1
+
+# Fandango can follow a constraint on top of the grammar: here, never divide by a
+# literal zero. calc.py already rejects that correctly, so such inputs would only
+# spend budget. The remainder operator is deliberately left alone.
+semantics:
+  guidance: [spec/rules.md]               # the rule, in plain language
+  native:
+    fandango: spec/constraints.fan        # the same rule, in Fandango's own format
 
 corpus:
   path: ./seeds
 
 generation:
-  count: 150
+  count: 40   # per generator: equal count, reproducible
 
 budget:
   generation: 30s

@@ -27,6 +27,7 @@ from .budget import Clock, uniform_allocation
 from ..exec.inputs import InputFiles
 from .config import Config
 from .lock import RunLock, cancel_file
+from .selection import Selection, apply as apply_selection, choose as choose_generators
 from .manifest import Manifest, capture_environment, probe_target_version
 
 Logger = Callable[[str], None]
@@ -56,6 +57,8 @@ class CampaignResult:
     #: Per generator: what it was asked for, what it spent, what it produced.
     #: Without this a CC comparison cannot be read as fair or unfair.
     generation_stats: list[dict] = field(default_factory=list)
+    #: Set when the campaign kept only the top generators by CC (see core/selection.py).
+    selection: dict | None = None
 
     @property
     def failures(self) -> int:
@@ -166,11 +169,13 @@ class Campaign:
 
             # 2. Store + validate --------------------------------------------
             items: list[Item] = []
+            origins: dict[str, set[str]] = {}   # blob -> every source that produced it
             for gi in generated:
                 text = gi.data.decode("utf-8", errors="replace")
                 valid = bool(text.strip())  # v0.1: non-empty. Grammar-level
                                             # validation arrives with the adapter.
                 h = store.add_input(gi.data, gi.generator, valid=valid, gen_cost_ms=gi.cost_ms)
+                origins.setdefault(h, set()).add(gi.generator)
                 if valid:
                     items.append(Item(blob_hash=h, text=text, generator=gi.generator))
             store.commit()
@@ -198,6 +203,22 @@ class Campaign:
             result.generator_scores = ordering.generator_scores
             result.k_eff = ordering.k_eff
             ordered = [items[i] for i in ordering.order]
+            selection = None
+            if cfg.selection.get("keep") == "all":
+                pass                        # every generator is kept; CC is reported, not used to choose
+            elif cfg.selection and signal_name != "cc":
+                self.log("  selection: needs the cc signal to score generators, so every input is kept")
+            elif cfg.selection and ordering.generator_scores:
+                picked = choose_generators(ordering.generator_scores, cfg.generators, cfg.selection["keep"])
+                if picked is None:
+                    self.log(f"  selection: fewer than {cfg.selection['keep'] + 1} generators produced "
+                             f"inputs, so every input is kept")
+                else:
+                    before = len(ordered)
+                    ordered = apply_selection(ordered, origins, picked[1])
+                    selection = Selection(keep=cfg.selection["keep"], selected=picked[0], dropped=picked[1],
+                                          scores={g: round(ordering.generator_scores[g], 4) for g in picked[0] + picked[1]},
+                                          kept_inputs=len(ordered), dropped_inputs=before - len(ordered))
             if cfg.budget.max_inputs:
                 ordered = ordered[: cfg.budget.max_inputs]
             result.prioritized = len(ordered)
@@ -209,6 +230,9 @@ class Campaign:
                 # measurement is shaky, and it should not scroll past as one line.
                 self.log("  ! " + caveat.replace(". ", ".\n    "))
             result.signal_caveats = list(getattr(ordering, "caveats", []))
+            if selection is not None:
+                self.log(selection.log_line())
+                result.selection = selection.as_dict()
 
             # 5-8. Execute / Observe / Oracle / Persist -----------------------
             oracle = make_oracle(cfg.oracle)
@@ -314,6 +338,7 @@ class Campaign:
                 "k_eff": result.k_eff,
                 "signal_caveats": result.signal_caveats,
                 "generation_stats": result.generation_stats,
+                "selection": result.selection,
                 "generation_mode": (cfg.raw.get("generation") or {}).get("mode", "count"),
                 "allocation_s": allocation,
             }

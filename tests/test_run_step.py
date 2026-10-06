@@ -227,3 +227,17 @@ def test_the_whole_script_parses():
         pytest.skip("node is not installed")
     out = subprocess.run([node, "--check", str(STATIC / "app.js")], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
+
+
+def test_generator_selection_is_opt_in_and_all_generators_is_the_default():
+    # Selection changes the experiment, so it is never proposed silently: no `selection:` means all.
+    assert _node("api.runFromConfig({})")["keep"] == 0
+    assert _node("api.runFromConfig({selection:{by:'cc',keep:2}})")["keep"] == 2
+    assert _node("api.runFromConfig({selection:{by:'cc',keep:'all'}})")["keep"] == 0
+    sync = JS[JS.index("function syncRun()"):][:700]
+    assert "r.keep > 0 && r.keep < nGenerators()) S.config.selection = { by: \"cc\", keep: r.keep }" in sync
+    ordering = JS[JS.index('<strong>Generator selection</strong>'):][:1500]
+    assert ordering.index("All generators") < ordering.index("Best generator"), "the default comes first"
+    assert 'title: "Best generator", tag:' not in ordering, "no Recommended badge without evidence for it"
+    for t in ("Best generator", "Best 2 generators", "All generators", "Generator selection"):
+        assert t in JS, t

@@ -193,11 +193,17 @@ def test_the_verdicts_account_for_every_execution(name, request):
 
 @pytest.mark.parametrize("name", ALL_CAMPAIGNS)
 def test_prioritization_is_a_permutation_not_a_filter(name, request):
-    """SpreadEx orders the corpus; it must never silently drop part of it."""
+    """SpreadEx orders the corpus; it must never silently drop part of it.
+
+    The one sanctioned reduction is an explicit, recorded generator selection (`selection:` in
+    spreadex.yaml): then every input is either prioritized or counted as dropped by it.
+    """
     config, r = request.getfixturevalue(name)
     with CorpusStore(config.state_dir) as store:
         unique_valid = {row["blob_hash"] for row in store.iter_inputs(valid_only=True)}
-    assert r.prioritized == len(unique_valid), (
+    dropped = (r.selection or {}).get("dropped_inputs", 0)
+    assert bool(config.selection) or not dropped, "inputs dropped without a configured selection"
+    assert r.prioritized + dropped == len(unique_valid), (
         "the prioritized stream is not the whole unique valid corpus"
     )
 

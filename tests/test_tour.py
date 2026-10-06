@@ -32,9 +32,9 @@ def _walk(events):
                  f" for (const e of {json.dumps(events)}) {{ id = tourNext(id, e); seen.push(id); }} return seen; }})()")
 
 
-HAPPY = ["ack", "probe.ok", "step.sut", "ack", "step.grammar", "ack", "step.generators",
-         "ack", "ack", "step.strategy", "campaign.started", "stage.generate", "stage.rank",
-         "stage.execute", "campaign.done", "ack", "tab.findings", "finding.opened", "ack", "ack", "ack",
+HAPPY = ["ack", "probe.ok", "step.sut", "ack", "ack", "step.grammar", "ack", "ack", "step.generators",
+         "ack", "ack", "step.strategy", "ack", "ack", "ack", "campaign.started", "stage.generate", "stage.rank",
+         "stage.select", "stage.execute", "campaign.done", "ack", "tab.findings", "finding.opened", "ack", "ack", "ack",
          "replay.done", "tab.generators", "ack", "tab.budget", "ack", "tab.corpus", "ack"]
 
 
@@ -78,7 +78,7 @@ def test_every_target_is_a_real_element_and_every_event_is_emitted():
     dynamic = {"tab.", "stage."}
     for e in events:
         assert e in emitted or any(e.startswith(d) for d in dynamic), e
-    assert 'tourEvent("tab." + id)' in JS and 'tourEvent("stage." + liveStage' in JS
+    assert 'tourEvent("tab." + id)' in JS and 'tourEvent("stage." + st)' in JS and 'st !== L.tourStage' in JS
 
 
 def test_the_guide_never_clicks_for_the_user():
@@ -127,8 +127,8 @@ def test_a_fast_campaign_is_shown_one_stage_at_a_time():
             if not step["again"]:
                 break
         return out
-    assert walk("live.install", "campaign.done") == ["live.generate", "live.rank", "live.execute", "res.overview"]
-    assert walk("live.generate", "stage.execute") == ["live.rank", "live.execute"]
+    assert walk("live.install", "campaign.done") == ["live.generate", "live.rank", "live.select", "live.execute", "res.overview"]
+    assert walk("live.generate", "stage.execute") == ["live.rank", "live.select", "live.execute"]
     assert walk("live.rank", "campaign.failed") == ["live.failed"]
 
 
@@ -188,3 +188,37 @@ def test_running_steps_always_have_something_real_to_point_at():
     assert 'data-tour="live-view"' in JS, "the live view header exists for every run, the stage bar only for ours"
     assert 'b.target.split("|")' in ENGINE
     assert 'if (L.external && L.progress?.executed) tourEvent("stage.execute");' in JS
+
+
+def test_the_demo_steps_teach_cc_constraints_budgets_and_ordering():
+    ids = _node("TOUR_IDS")
+    order = ["inputs.grammar", "inputs.constraint", "inputs.continue", "gen.card", "gen.cc", "gen.continue",
+             "run.genbudget", "run.execbudget", "run.ordering", "run.launch", "live.rank", "live.select", "live.execute"]
+    assert [i for i in ids if i in order] == order
+    ctx = '{ generators: ["fuzzingbook", "fandango", "grammarinator"], count: 40, keep: 1, execution: "60s", rule: "Do not divide by a literal zero." }'
+    assert "{{3}}" in _node(f'TOUR.find(b => b.id === "gen.card").text({ctx})') and "{{40}}" in _node(f'TOUR.find(b => b.id === "gen.card").text({ctx})')
+    assert "**Cluster Coverage**" in _node(f'TOUR.find(b => b.id === "gen.cc").text({ctx})')
+    assert "{{single best}}" in _node(f'TOUR.find(b => b.id === "gen.cc").text({ctx})')
+    assert "{{40}}" in _node(f'TOUR.find(b => b.id === "run.genbudget").text({ctx})')
+    assert "{{60s}}" in _node(f'TOUR.find(b => b.id === "run.execbudget").text({ctx})')
+    # The demo teaches the abstraction: the user states the rule; no generator name, regex or Python.
+    assert _node(f'TOUR.find(b => b.id === "inputs.constraint").rule({ctx})') == "Do not divide by a literal zero."
+    card = _node(f'TOUR.find(b => b.id === "inputs.constraint").text({ctx})')
+    assert "Fandango" not in card and "where" not in card and "re." not in card
+    assert _node('TOUR.find(b => b.id === "inputs.constraint").code === undefined') is True
+
+
+def test_the_selection_step_reports_the_real_choice_from_the_log():
+    line = "  selected by cluster coverage: fandango 0.79, fuzzingbook 0.29 (kept 2 of 3; dropped grammarinator 0.12; 105 inputs to execute)"
+    text = _node(f'TOUR.find(b => b.id === "live.select").text({{ selectLine: {json.dumps(line)} }})')
+    assert "{{fandango 0.79, fuzzingbook 0.29}}" in text and "{{grammarinator 0.12}}" in text and "{{105}}" in text
+    assert "no choice was needed" in _node('TOUR.find(b => b.id === "live.select").text({ selectLine: "" })')
+
+
+def test_zero_expected_rejections_is_explained_not_left_missing():
+    d = '{ detail: { executed: 45, verdicts: { ok: 39, crash: 6 }, findings: [{}, {}], selection: { selected: ["fandango"] } }, rule: "Do not divide by a literal zero." }'
+    text = _node(f'TOUR.find(b => b.id === "res.overview").text({d})')
+    assert "{{0 expected rejections}}" in text and "followed the constraint" in text
+    plain = _node('TOUR.find(b => b.id === "res.overview").text({ detail: { executed: 9, verdicts: { expected_rejection: 2 }, findings: [] } })')
+    assert "followed the constraint" not in plain
+    assert "allowed to reject" in _node('TOUR.find(b => b.id === "strat.rej").text({})')

@@ -17,6 +17,9 @@ DEMO_FILES = ("calc.py", "calc.bnf", "spreadex.yaml", "README.md")
 
 DEMO_SEEDS = "seeds"
 
+#: Directories copied whole: the seed corpus and the generator-specific constraints.
+DEMO_DIRS = (DEMO_SEEDS, "spec")
+
 
 def source_dir() -> Path:
     return Path(__file__).resolve().parent / "project"
@@ -38,10 +41,11 @@ def materialize(destination: Path, force: bool = False) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
     for name in DEMO_FILES:
         shutil.copy2(src / name, destination / name)
-    seeds = destination / DEMO_SEEDS
-    if seeds.exists():
-        shutil.rmtree(seeds)
-    shutil.copytree(src / DEMO_SEEDS, seeds)
+    for name in DEMO_DIRS:
+        target = destination / name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(src / name, target)
     (destination / "calc.py").chmod(0o755)
     return destination
 
@@ -70,10 +74,25 @@ def reset(root: Path | None = None) -> Path:
 
 
 def ensure(root: Path | None = None) -> Path:
-    """The demo workspace, written on first use and reused after that."""
+    """The demo workspace, written on first use and reused after that.
+
+    A reused workspace is also repaired: any file or folder the demo ships that is missing is
+    restored, so a demo written by an older SpreadEx (before `spec/constraints.fan` existed, say)
+    cannot fail on a path its own spreadex.yaml names. Existing files are never overwritten.
+    """
     root = Path(root or demo_root())
     if not (root / "spreadex.yaml").is_file():
         return materialize(root, force=True)
+    src = source_dir()
+    for name in DEMO_FILES:
+        if not (root / name).exists():
+            shutil.copy2(src / name, root / name)
+    for name in DEMO_DIRS:
+        for f in (src / name).rglob("*"):
+            target = root / f.relative_to(src)
+            if f.is_file() and not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, target)
     return root
 
 
@@ -104,22 +123,28 @@ def grammar_excerpt(path: Path, limit: int = 2) -> list[str]:
 
 
 def prepare_generators(config, log=print) -> None:
-    """Install the demo's generators, or fall back to its bundled seeds.
+    """Install the demo's generators; drop only the ones that cannot be installed.
 
     The demo is the one place installation is implicit, because the whole promise is "this just
-    works". It is still the deterministic catalog doing the installing, into an isolated
-    environment, and it says so. With no network, or a generator that will not build here, the
-    campaign runs on the seed corpus -- the same pipeline, with less to prioritize.
+    works". It is still the deterministic catalog doing the installing, into isolated
+    environments, and it says so. A generator that will not install here (no network, a build
+    failure) is dropped with the reason; the others still run, and with none left the campaign
+    runs on the bundled seed inputs -- the same pipeline, with less to compare.
     """
     from ..generators import GeneratorError, GeneratorManager
 
-    wanted = list(config.generators)
-    if not wanted:
+    if not config.generators:
         return
-    try:
-        GeneratorManager().ensure(wanted, log=lambda m: log(f"  {m}"), auto_install=True)
-    except (GeneratorError, OSError) as exc:
-        log(f"\n  Could not install a generator: {exc}")
+    mgr = GeneratorManager()
+    kept = []
+    for gid in list(config.generators):
+        try:
+            mgr.ensure([gid], log=lambda m: log(f"  {m}"), auto_install=True)
+            kept.append(gid)
+        except (GeneratorError, OSError) as exc:
+            log(f"\n  Could not install {gid}: {exc}")
+            log(f"  Continuing without {gid}.\n")
+    if not kept:
         log("  Running on the bundled seed inputs instead. The pipeline is the same;")
         log("  there is simply less to prioritize.\n")
-        config.generators = []
+    config.generators = kept

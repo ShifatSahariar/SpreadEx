@@ -273,8 +273,10 @@ def test_a_generator_without_constraint_support_runs_from_the_grammar_alone():
 
 
 def test_constraints_written_for_a_different_generator_are_flagged_not_converted():
+    # A generator with no constraint support is simply told so, calmly: nothing was done wrong.
     r = _line(GRM, '{"native":{"fandango":"spec/c.fan"}}')
-    assert r["tone"] == "warn" and "Fandango-specific" in r["text"] and "cannot use them" in r["text"]
+    assert r["tone"] == "muted" and "has no constraint support" in r["text"] and "grammar alone" in r["text"]
+    # One that does support constraints, but got only another generator's file, is flagged.
     r2 = _line(FAN, '{"native":{"isla":"spec/c.isla"}}')
     assert r2["tone"] == "warn" and "ISLa-specific" in r2["text"]
 
@@ -312,3 +314,12 @@ def test_a_native_file_does_not_hide_that_written_guidance_goes_unused():
     both = _line(FAN, '{"native":{"fandango":"spec/c.fan"},"guidance":["spec/s.md"]}')
     assert both["tone"] == "ok" and "written guidance is not used" in both["text"]
     assert "guidance" not in _line(FAN, '{"native":{"fandango":"spec/c.fan"}}')["text"]
+
+
+def test_each_generator_card_says_plainly_what_it_does_with_the_constraint():
+    ok = _line(FAN, '{"guidance":["spec/rules.md"],"native":{"fandango":"spec/constraints.fan"}}')
+    assert ok["tone"] == "ok" and "Fandango constraints provided (spec/constraints.fan)" in ok["text"]
+    rec = _line(FAN, '{"guidance":["spec/rules.md"]}')
+    assert "Recommended: provide a Fandango constraints file (.fan)" in rec["text"]
+    none = _line(GRM, '{"guidance":["spec/rules.md"]}')
+    assert "has no constraint support" in none["text"] and "grammar alone" in none["text"]

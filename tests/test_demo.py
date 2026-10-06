@@ -77,7 +77,16 @@ def test_the_demo_config_loads(tmp_path):
 
     project = materialize(tmp_path / "demo")
     config = load_config(project / "spreadex.yaml")
-    assert config.generators == ["fuzzingbook"]
+    # Three generators to compare, keep the best two by Cluster Coverage, 50 inputs each,
+    # and one Fandango constraint that ships with the demo.
+    assert config.generators == ["fuzzingbook", "fandango", "grammarinator"]
+    assert config.selection == {"by": "cc", "keep": 1}
+    assert config.raw["generation"]["count"] == 40
+    assert config.semantics.native == {"fandango": "spec/constraints.fan"}
+    # The same rule, stated in plain language, is what the user (and the guide) sees.
+    assert config.semantics.guidance == ["spec/rules.md"]
+    assert (project / "spec" / "rules.md").read_text().strip() == "Do not divide by a literal zero."
+    assert "\nwhere " in (project / "spec" / "constraints.fan").read_text()
     assert config.raw["oracle"]["rejection_patterns"] == ["^calc: SyntaxError"]
     assert config.raw["grammar"]["source"].endswith("calc.bnf")
 

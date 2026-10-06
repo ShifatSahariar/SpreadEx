@@ -57,17 +57,23 @@ def save_config(config, body: dict) -> dict[str, Any]:
         parsed = None
 
     # Validate by loading it exactly as the CLI would, from a scratch copy, so
-    # a broken configuration can never be written over a working one.
+    # a broken configuration can never be written over a working one. The copy sits in the
+    # project folder, hidden and removed straight after, because relative paths in the file
+    # (a grammar, a corpus, a constraints file) resolve against the folder it is in.
     if not errors:
+        import os
         import tempfile
 
-        with tempfile.TemporaryDirectory() as tmp:
-            probe = Path(tmp) / CONFIG_NAME
-            probe.write_text(raw)
+        fd, tmp = tempfile.mkstemp(prefix=".spreadex-check-", suffix=".yaml", dir=config.project_root)
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(raw)
             try:
-                load_config(probe)
+                load_config(Path(tmp))
             except ConfigError as exc:
-                errors.append(str(exc))
+                errors.append(str(exc).replace(str(Path(tmp).resolve()), str(path)).replace(tmp, str(path)))
+        finally:
+            os.unlink(tmp)
 
     if errors:
         return {"ok": False, "errors": errors}
@@ -777,6 +783,15 @@ def probe_target(config, body: dict) -> dict[str, Any]:
             return {"ok": False, "error": str(exc)}
         rendered = target.render(path)
 
+    # The command ran, but the system did not start: say so, rather than showing it as a run
+    # with an unusual exit code that step 4 would later call a crash on every input.
+    from ..exec.setup_check import setup_failure
+    problem = setup_failure(obs)
+    if problem:
+        return {"ok": False, "setup": True, "command": rendered,
+                "error": f"The command ran, but your system did not start: {problem}. "
+                         f"Check the paths in the command; relative paths are read from the project folder."}
+
     return {
         "ok": True,
         "ran": True,
@@ -823,8 +838,17 @@ def demo_status(server) -> dict[str, Any]:
                 break
     from ..demo import grammar_excerpt
     bnf = root / "calc.bnf"
+    # The demo's Fandango constraint, as written, for the guide to show: the `where` rule itself,
+    # not the imports above it.
+    fan = root / "spec" / "constraints.fan"
+    constraint = next((l.strip() for l in fan.read_text().splitlines()
+                       if l.strip().startswith("where ")), "") if fan.is_file() else ""
     return {"exists": (root / "spreadex.yaml").is_file(), "has_runs": has_runs, "samples": samples,
             "grammar_rules": grammar_excerpt(bnf) if bnf.is_file() else [],
+            "constraint": constraint,
+            # The same rule in plain language: what the user states, and what the guide shows.
+            "rule": next((l.strip() for l in (root / "spec" / "rules.md").read_text().splitlines() if l.strip()), "")
+                    if (root / "spec" / "rules.md").is_file() else "",
             "active": active_run(state) is not None if state.is_dir() else False,
             "live": live is not None, "is_demo": bool(getattr(server, "spreadex_demo", None))}
 

@@ -54,7 +54,7 @@ where = ["src"]
 "spreadex.corpus" = ["*.sql"]
 "spreadex.generators" = ["catalog/*.yaml"]
 "spreadex.api" = ["static/*", "static/assets/*"]
-"spreadex.demo" = ["project/*", "project/seeds/*"]
+"spreadex.demo" = ["project/*", "project/seeds/*", "project/spec/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

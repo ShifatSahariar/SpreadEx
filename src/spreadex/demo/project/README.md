@@ -25,9 +25,10 @@ operator beside it, so `1 / 0` is reported cleanly and `1 % 0` crashes. An
 incomplete guard covering one operator and not its sibling is one of the most
 common bugs there is.
 
-A campaign usually reports this one bug under **two** signatures, because it
-crashes from two different places in the parser. That is not a flaw in the
-run; it is why SpreadEx counts signatures and never claims a bug count.
+A campaign reports this one bug under **several** signatures (three with the
+shipped configuration), because it crashes through different paths in the
+parser. That is not a flaw in the run; it is why SpreadEx counts signatures and
+never claims a bug count.
 
 Whether a given campaign reaches it still depends on what the generators
 produce under the budget. **If a run finds nothing, SpreadEx says so** -- a

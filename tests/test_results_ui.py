@@ -173,8 +173,13 @@ def test_a_later_stage_is_never_walked_back_by_an_earlier_looking_line():
     assert _stage(["Executing against 1 target(s)", "Installing late note"]) == "execute"
 
 
-def test_the_stages_are_the_five_in_order():
-    assert [s[0] for s in _node("api.STAGES")] == ["install", "generate", "rank", "execute", "finish"]
+def test_the_stages_are_in_order_and_select_appears_only_when_a_campaign_selects():
+    assert [s[0] for s in _node("api.STAGES")] == ["install", "generate", "rank", "select", "execute", "finish"]
+    sel = "  selected by cluster coverage: fandango 0.79, fuzzingbook 0.29 (kept 2 of 3; dropped grammarinator 0.12; 105 inputs to execute)"
+    assert _stage(["Generating...", "Ranking with signal 'cc'...", sel]) == "select"
+    assert _stage(["Ranking with signal 'cc'...", sel, "Executing against 1 target(s)"]) == "execute"
+    assert "select" in [s[0] for s in _node(f"stagesFor({json.dumps([sel])})")]
+    assert "select" not in [s[0] for s in _node('stagesFor(["Ranking with signal"])')]
 
 
 def test_the_results_menu_opens_the_list_unless_a_campaign_is_running():
