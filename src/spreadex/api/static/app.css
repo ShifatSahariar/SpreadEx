@@ -1230,3 +1230,14 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .runnote { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 12px 0 0; font-size: .78rem; }
 .runnote svg { width: 15px; height: 15px; flex: none; }
 @media (max-width: 900px) { .rbudgets { grid-template-columns: minmax(0, 1fr); } }
+
+/* Results, before there is a result */
+.resempty { display: grid; gap: 14px; max-width: 900px; margin: 0 auto; }
+.resempty-h { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.resempty-h h3 { margin: 0 0 4px; } .resempty-h p { margin: 0; font-size: .88rem; }
+.resempty-a { margin-left: auto; } .resempty-a .primary { display: inline-flex; align-items: center; gap: 8px; }
+.resempty-a svg { width: 16px; height: 16px; }
+.resempty .ex-code { margin: 8px 0; }
+.restabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.restab { display: flex; gap: 12px; align-items: flex-start; padding: 14px; }
+.restab strong { display: block; font-size: .9rem; } .restab .muted { display: block; font-size: .8rem; margin-top: 2px; }

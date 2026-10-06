@@ -185,3 +185,43 @@ def test_every_edit_writes_the_config_so_the_summary_and_the_file_agree():
 
 def test_the_two_budget_cards_stack_on_a_narrow_screen():
     assert "@media (max-width: 900px) { .rbudgets { grid-template-columns: minmax(0, 1fr); } }" in CSS
+
+
+# ------------------------------------------------ Results before any run
+
+def test_results_with_no_run_is_a_page_not_a_one_line_card():
+    e = JS[JS.index("function resultsEmpty"):JS.index("async function renderResults")]
+    for t in ("No results yet", "Set up a campaign", "See a real result first", "spreadex demo",
+              "What you will see here", "copyDemoCommand(this)"):
+        assert t in e, t
+    r = JS[JS.index("async function renderResults"):][:300]
+    assert "resultsEmpty()" in r and "No campaigns yet" not in JS
+
+
+def test_the_empty_results_page_describes_the_real_tabs_and_shows_no_made_up_numbers():
+    tabs = JS[JS.index("const RESULTS_PREVIEW"):JS.index("function resultsEmpty")]
+    names = re.findall(r'\["\w+", "\w+", "(\w+)"', tabs)
+    assert names == ["Overview", "Generators", "Budget", "Failures", "Corpus"]
+    # the real results page has the same five tabs
+    real = JS[JS.index("function paintRun"):][:1500]
+    for n in names:
+        assert n in real, n
+    e = JS[JS.index("function resultsEmpty"):JS.index("async function renderResults")]
+    assert not re.search(r">\s*\d{2,}\s*<", e), "no sample figures on an empty page"
+
+
+def test_an_unconfigured_folder_is_told_why_there_is_nothing():
+    e = JS[JS.index("function resultsEmpty"):JS.index("async function renderResults")]
+    assert "S.project?.configured === false" in e and "has no" in e and "spreadex.yaml" in e
+
+
+def test_the_whole_script_parses():
+    """The other tests read app.js as text, so a duplicate declaration (which stops the entire page
+    loading) passed all of them once. Parse it for real."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    out = subprocess.run([node, "--check", str(STATIC / "app.js")], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr

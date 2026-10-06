@@ -3100,13 +3100,42 @@ const RESULT_TABS = [
 
 function pickResultTab(id) { S.rtab = id; paintRun(); }
 
+// What Results is for, shown before there is anything to show. These are descriptions of the real
+// tabs, not sample numbers: nothing here pretends a run has happened.
+const RESULTS_PREVIEW = [
+  ["chart", "green", "Overview", "How many inputs ran, passed, were refused as expected, or failed."],
+  ["sliders", "purple", "Generators", "Which generator produced what, how fast, and how its inputs compare."],
+  ["stats", "blue", "Budget", "Failures found as inputs were executed, against a random ordering."],
+  ["bug", "red", "Failures", "Each distinct failure signature, an example input, and how to reproduce it."],
+  ["folder", "orange", "Corpus", "Every generated input, kept so a run can be replayed exactly."],
+];
+
+function resultsEmpty() {
+  const unconf = S.project?.configured === false;
+  return `<div class="resempty">
+    <div class="side-card resempty-h">
+      <span class="stile green" aria-hidden="true">${ICONS.chart}</span>
+      <div><h3>No results yet</h3>
+        <p class="muted">Results appear here once a campaign has run. ${unconf ? "This folder has no <span class=\"mono\">spreadex.yaml</span> yet, so start with the setup." : "Set up a campaign, or look at a finished one first."}</p></div>
+      <div class="resempty-a">
+        <button type="button" class="primary" onclick="go('setup')">${ICONS.playOutline} ${unconf ? "Set up a campaign" : "Go to setup"}</button></div>
+    </div>
+    <div class="side-card">
+      <h4><span class="h-ico green">${ICONS.terminal}</span> See a real result first</h4>
+      <p class="muted">The quick demo runs the genuine pipeline on a tiny calculator with one documented bug, in about twenty seconds. In a terminal:</p>
+      <div class="ex-code"><code>spreadex demo</code><button type="button" class="ex-copy" onclick="copyDemoCommand(this)" aria-label="Copy command">${ICONS.copy}</button></div>
+      <p class="muted">Then open the folder it creates:</p>
+      <div class="ex-code"><code>cd spreadex-demo &amp;&amp; spreadex ui</code></div>
+    </div>
+    <h4 class="inp-h5">What you will see here</h4>
+    <div class="restabs">${RESULTS_PREVIEW.map(([icon, tone, t, d]) => `<div class="side-card restab"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span>
+      <div><strong>${t}</strong><span class="muted">${d}</span></div></div>`).join("")}</div>
+  </div>`;
+}
+
 async function renderResults() {
   const v = el("view");
-  if (!S.runs.length) {
-    v.innerHTML = `<div class="card"><div class="empty">No campaigns yet.<br>
-      <button class="primary" style="margin-top:14px" onclick="go('setup')">Set one up</button></div></div>`;
-    return;
-  }
+  if (!S.runs.length) { v.innerHTML = resultsEmpty(); return; }
   v.innerHTML = `<div class="runlist">${S.runs.map(r => `
     <button aria-current="${r.run_id === S.current}" onclick="pickRun('${esc(r.run_id)}')">
       ${esc(r.run_id.replace("T", " ").replace("Z", ""))} · ${num(r.executed)} executed${r.failures ? ` · <span class="bad">${r.failures} failing</span>` : ""}
