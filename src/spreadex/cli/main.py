@@ -493,6 +493,54 @@ def cmd_generators(args) -> int:
 
 # ------------------------------------------------------------------- report
 
+def cmd_runs(args) -> int:
+    """The same history the Workbench shows: list, cancel, or delete campaigns."""
+    from ..api import data
+    from ..core.lock import active_run, cancel_file
+
+    config = _load(args)
+    state = config.state_dir
+    action = getattr(args, "runs_action", None) or "list"
+    if not state.is_dir():
+        print("No campaigns yet. Run one with `spreadex run`.")
+        return 0
+    if action == "list":
+        runs = data.list_runs(state)
+        if not runs:
+            print("No campaigns yet. Run one with `spreadex run`.")
+        for r in runs:
+            size = r["size_bytes"] / 1024
+            print(f"{r['run_id']:<24} {r['status']:<9} "
+                  f"{(r['origin'] or '-'):<3} {r['executed']:>6} executed "
+                  f"{r['findings']:>3} findings {size:8.1f} KiB")
+        return 0
+    info = active_run(state)
+    if action == "cancel":
+        if not info or info.get("run_id") != args.run_id:
+            _die(f"{args.run_id} is not running.", code=1)
+        cancel_file(state, args.run_id).write_text("")
+        print(f"Asked {args.run_id} to stop after its current input.")
+        return 0
+    if action == "delete":
+        if info is not None and info.get("run_id") in (args.run_id, None):
+            _die(f"{args.run_id} is running; cancel it first with "
+                 f"`spreadex runs cancel {args.run_id}`.", code=1)
+        if not args.yes:
+            answer = input(f"Permanently delete {args.run_id} and its results? [y/N] ")
+            if answer.strip().lower() not in ("y", "yes"):
+                print("Kept.")
+                return 0
+        with CorpusStore(state) as store:
+            try:
+                out = store.delete_run(args.run_id)
+            except KeyError:
+                _die(f"No run {args.run_id!r}.", code=1)
+        print(f"Deleted {args.run_id}: {out['inputs_removed']} input(s) only it used, "
+              f"{out['bytes_freed'] / 1024:.1f} KiB freed.")
+        return 0
+    return 2
+
+
 def cmd_results(args) -> int:
     """The latest campaign by default; the history on request.
 
@@ -633,7 +681,7 @@ def build_parser() -> argparse.ArgumentParser:
     # line: argparse lists every registered name there, help text or not.
     sub = p.add_subparsers(
         dest="command_name", required=True,
-        metavar="{init,doctor,run,demo,ui,grammar,generators,results,replay,export}")
+        metavar="{init,doctor,run,demo,ui,grammar,generators,results,runs,replay,export}")
 
     s = sub.add_parser("init", help="create spreadex.yaml in this project")
     s.add_argument("directory", nargs="?", help="project root (default: .)")
@@ -727,6 +775,18 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("report")  # no help=: registered, but not advertised
     s.add_argument("--limit", type=int, default=20)
     s.set_defaults(func=cmd_results, all=True, run_id=None)
+
+    s = sub.add_parser("runs", help="list, cancel or delete past campaigns")
+    rsub = s.add_subparsers(dest="runs_action")
+    rsub.add_parser("list", help="every campaign, newest first").set_defaults(func=cmd_runs)
+    rc = rsub.add_parser("cancel", help="stop a running campaign after its current input")
+    rc.add_argument("run_id")
+    rc.set_defaults(func=cmd_runs)
+    rd = rsub.add_parser("delete", help="permanently delete a campaign and reclaim its storage")
+    rd.add_argument("run_id")
+    rd.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
+    rd.set_defaults(func=cmd_runs)
+    s.set_defaults(func=cmd_runs)
 
     s = sub.add_parser("replay", help="inspect or re-run a past campaign")
     s.add_argument("run_id", nargs="?")

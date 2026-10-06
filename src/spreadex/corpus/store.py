@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,6 +87,14 @@ class CorpusStore:
         existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(failures)")}
         if "example_stderr" not in existing:
             self._conn.execute("ALTER TABLE failures ADD COLUMN example_stderr TEXT")
+        run_cols = {row["name"] for row in self._conn.execute("PRAGMA table_info(runs)")}
+        if "status" not in run_cols:
+            self._conn.execute("ALTER TABLE runs ADD COLUMN status TEXT")
+            self._conn.execute(
+                "UPDATE runs SET status = CASE WHEN finished_at IS NULL THEN 'aborted' "
+                "ELSE 'finished' END")
+        if "origin" not in run_cols:
+            self._conn.execute("ALTER TABLE runs ADD COLUMN origin TEXT")
 
     def close(self) -> None:
         if self._conn is not None:
@@ -180,12 +189,14 @@ class CorpusStore:
         gen_budget_s: float | None = None,
         exec_budget_s: float | None = None,
         signal_name: str | None = None,
+        origin: str | None = None,
     ) -> Path:
         self.conn.execute(
             """INSERT INTO runs(run_id, started_at, config_hash, seed,
-                                gen_budget_s, exec_budget_s, signal_name)
-               VALUES (?,?,?,?,?,?,?)""",
-            (run_id, utcnow(), config_hash, seed, gen_budget_s, exec_budget_s, signal_name),
+                                gen_budget_s, exec_budget_s, signal_name, status, origin)
+               VALUES (?,?,?,?,?,?,?,'running',?)""",
+            (run_id, utcnow(), config_hash, seed, gen_budget_s, exec_budget_s, signal_name,
+             origin),
         )
         self.conn.commit()
         d = self.runs_dir / run_id
@@ -205,12 +216,101 @@ class CorpusStore:
             candidate = f"{base}-{n}"
         return candidate
 
-    def finish_run(self, run_id: str, manifest_hash: str | None = None) -> None:
+    def finish_run(self, run_id: str, manifest_hash: str | None = None,
+                   status: str = "finished") -> None:
         self.conn.execute(
-            "UPDATE runs SET finished_at=?, manifest_hash=? WHERE run_id=?",
-            (utcnow(), manifest_hash, run_id),
+            "UPDATE runs SET finished_at=?, manifest_hash=?, status=? WHERE run_id=?",
+            (utcnow(), manifest_hash, status, run_id),
         )
         self.conn.commit()
+
+    def set_status(self, run_id: str, status: str) -> None:
+        self.conn.execute("UPDATE runs SET status=? WHERE run_id=?", (status, run_id))
+        self.conn.commit()
+
+    def mark_abandoned(self) -> None:
+        """Runs still 'running' when nobody holds the project lock died without
+        finishing. Call only while holding, or having checked, the lock."""
+        self.conn.execute("UPDATE runs SET status='aborted' WHERE status='running'")
+        self.conn.commit()
+
+    def run_blob_bytes(self, run_id: str) -> int:
+        """Bytes that deleting this run would free: inputs only it executed."""
+        row = self.conn.execute(
+            """SELECT COALESCE(SUM(i.size_bytes), 0) b FROM inputs i
+               WHERE i.blob_hash IN (SELECT blob_hash FROM executions WHERE run_id=?)
+                 AND NOT EXISTS (SELECT 1 FROM executions e
+                                 WHERE e.blob_hash=i.blob_hash AND e.run_id<>?)""",
+            (run_id, run_id),
+        ).fetchone()
+        return int(row["b"])
+
+    def delete_run(self, run_id: str) -> dict:
+        """Forget one run and reclaim what only it used.
+
+        Inputs are shared: `input_origins` is keyed by (blob, generator), not by
+        run, so it is never deleted per run. An input goes only when this run
+        executed it and no other run did, and no surviving failure points at it.
+        Inputs that were generated but never executed by any run are corpus, not
+        run output, and stay.
+        """
+        c = self.conn
+        if not c.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone():
+            raise KeyError(run_id)
+        candidates = [r["blob_hash"] for r in c.execute(
+            "SELECT DISTINCT blob_hash FROM executions WHERE run_id=?", (run_id,))]
+        c.commit()  # close any implicit transaction so BEGIN starts ours
+        try:
+            c.execute("BEGIN")
+            c.execute("DELETE FROM executions WHERE run_id=?", (run_id,))
+            # Failures first seen here: re-point at the earliest later sighting, or drop.
+            for f in c.execute("SELECT signature FROM failures WHERE first_seen_run=? "
+                               "OR last_seen_run=?", (run_id, run_id)).fetchall():
+                sig = f["signature"]
+                seen = c.execute(
+                    """SELECT e.run_id, r.started_at, COUNT(*) n FROM executions e
+                       JOIN runs r ON r.run_id=e.run_id WHERE e.signature=?
+                       GROUP BY e.run_id ORDER BY r.started_at""", (sig,)).fetchall()
+                if not seen:
+                    c.execute("DELETE FROM failures WHERE signature=?", (sig,))
+                    continue
+                example = c.execute("SELECT blob_hash FROM executions WHERE signature=? "
+                                    "ORDER BY run_id, rank LIMIT 1", (sig,)).fetchone()
+                c.execute(
+                    """UPDATE failures SET first_seen_run=?, first_seen_at=?, last_seen_run=?,
+                           occurrences=?,
+                           example_blob_hash=CASE WHEN example_blob_hash IN
+                               (SELECT blob_hash FROM executions WHERE signature=?)
+                               THEN example_blob_hash ELSE ? END
+                       WHERE signature=?""",
+                    (seen[0]["run_id"], seen[0]["started_at"], seen[-1]["run_id"],
+                     sum(r["n"] for r in seen), sig, example["blob_hash"], sig))
+            c.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
+            orphans = []
+            for h in candidates:
+                used = c.execute(
+                    """SELECT 1 FROM executions WHERE blob_hash=?
+                       UNION SELECT 1 FROM failures
+                       WHERE example_blob_hash=? OR minimized_blob_hash=? LIMIT 1""",
+                    (h, h, h)).fetchone()
+                if not used:
+                    orphans.append(h)
+            freed = 0
+            for h in orphans:
+                row = c.execute("SELECT size_bytes FROM inputs WHERE blob_hash=?", (h,)).fetchone()
+                freed += (row["size_bytes"] or 0) if row else 0
+                c.execute("DELETE FROM inputs WHERE blob_hash=?", (h,))  # origins cascade
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+        for h in orphans:
+            self._blob_path(h).unlink(missing_ok=True)
+        d = self.run_dir(run_id)
+        if d.exists():
+            freed += sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
+            shutil.rmtree(d, ignore_errors=True)
+        return {"run_id": run_id, "inputs_removed": len(orphans), "bytes_freed": freed}
 
     def run_dir(self, run_id: str) -> Path:
         return self.runs_dir / run_id

@@ -57,7 +57,7 @@ def run(tmp_path_factory):
 def test_the_overview_counts_match_what_ran(run):
     cfg, rid = run
     d = data.results_overview(cfg.state_dir, rid)
-    assert d["executed"] == len(INPUTS) and d["complete"] is True and d["number"] == 1
+    assert d["executed"] == len(INPUTS) and d["complete"] is True and d["run_id"] == rid and "number" not in d
     v = d["verdicts"]
     assert v["ok"] == 4 and v["expected_rejection"] == 3 and v["crash"] == 3 and v["timeout"] == 1
     assert d["duration_s"] is not None and d["duration_s"] >= 0
@@ -224,7 +224,7 @@ def test_the_campaigns_list_carries_what_each_row_shows(run):
     cfg, rid = run
     rows = data.list_runs(cfg.state_dir)
     r = next(x for x in rows if x["run_id"] == rid)
-    assert r["number"] == 1 and r["complete"] is True and r["executed"] == len(INPUTS)
+    assert r["run_id"] == rid and "number" not in r and r["complete"] is True and r["executed"] == len(INPUTS)
     assert r["findings"] == 2 and r["failures"] == 4          # 2 signatures over 4 failing inputs
     assert r["target"] and r["duration_s"] is not None and r["duration_s"] >= 0
     assert isinstance(r["generators"], list)
@@ -238,7 +238,7 @@ def test_the_list_numbers_runs_in_the_order_they_started(run, tmp_path):
         s.conn.commit()
     try:
         rows = data.list_runs(cfg.state_dir)
-        assert [r["number"] for r in rows][:2] == [2, 1] and rows[0]["run_id"] == "2099-01-01T00-00-00Z"
+        assert rows[0]["run_id"] == "2099-01-01T00-00-00Z" and rows[1]["run_id"] == rid
         assert rows[0]["complete"] is False and rows[0]["duration_s"] is None
     finally:
         with CorpusStore(cfg.state_dir) as s:

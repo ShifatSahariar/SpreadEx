@@ -206,7 +206,6 @@ def start_run(server, body: dict) -> dict[str, Any]:
     The configuration is re-read from the project rather than taken from the
     request, so what runs is exactly what the user reviewed and saved.
     """
-    from ..core.campaign import Campaign
     from ..core.config import find_config
 
     path = find_config(server.spreadex_config.project_root)
@@ -216,7 +215,29 @@ def start_run(server, body: dict) -> dict[str, Any]:
         config = load_config(path)
     except ConfigError as exc:
         return {"ok": False, "error": str(exc)}
+    return _launch(server, config, body)
 
+
+def _busy(server, config) -> dict | None:
+    """Refusal if a campaign is already running here -- from this UI, another UI, or the CLI."""
+    from ..core.lock import active_run
+
+    info = active_run(config.state_dir)
+    if info is not None or server.spreadex_jobs.busy:
+        rid = (info or {}).get("run_id")
+        where = "the command line" if (info or {}).get("origin") == "cli" else "the Workbench"
+        return {"ok": False, "conflict": True, "active_run": rid,
+                "error": f"A campaign is already running ({rid or 'starting'}, started from {where}). "
+                         "Open it, or cancel it first."}
+    return None
+
+
+def _launch(server, config, body: dict, label: str = "campaign") -> dict[str, Any]:
+    from ..core.campaign import Campaign
+
+    refused = _busy(server, config)
+    if refused:
+        return refused
     jobs = int(body.get("jobs") or 1)
     budget = body.get("budget")
     if budget:
@@ -244,7 +265,8 @@ def start_run(server, body: dict) -> dict[str, Any]:
                 mgr.install(gid, log=job.log)
                 installed.append(gid)
         job.log(f"Running: {command}")
-        result = Campaign(config, log=job.log).run(jobs=jobs)
+        campaign = Campaign(config, log=job.log, stop_event=stop, origin="ui")
+        result = campaign.run(jobs=jobs)
         return {
             "installed": installed,
             "run_id": result.run_id,
@@ -253,12 +275,81 @@ def start_run(server, body: dict) -> dict[str, Any]:
             "new_signatures": len(result.new_signatures),
         }
 
+    import threading
+    stop = threading.Event()
     try:
-        server.spreadex_jobs.start("run", "campaign", work)
+        server.spreadex_jobs.start("run", label, work)
     except RuntimeError as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "conflict": True, "error": str(exc)}
+    server.spreadex_stop = stop
     # Echo the command back so the UI can show what it just set going.
     return {"ok": True, "command": command, "installing": to_install}
+
+
+def cancel_run(server, run_id: str) -> dict[str, Any]:
+    """Stop the running campaign after its current input. Works for a run this server
+    started (via its stop event) and for one started elsewhere (via the cancel file)."""
+    from ..core.lock import active_run, cancel_file
+
+    state_dir = server.spreadex_config.state_dir
+    info = active_run(state_dir)
+    if not info or info.get("run_id") != run_id:
+        return {"ok": False, "error": f"{run_id} is not running"}
+    stop = getattr(server, "spreadex_stop", None)
+    if stop is not None and server.spreadex_jobs.busy:
+        stop.set()
+    path = cancel_file(state_dir, run_id)
+    if path.parent.is_dir():
+        path.write_text("")
+    return {"ok": True, "run_id": run_id, "cancelling": True}
+
+
+def delete_run(server, run_id: str) -> dict[str, Any]:
+    """Permanently forget a run, reclaiming results and inputs only it used."""
+    from ..core.lock import active_run
+    from ..corpus.store import CorpusStore
+
+    state_dir = server.spreadex_config.state_dir
+    info = active_run(state_dir)
+    if info is not None and info.get("run_id") in (run_id, None):
+        return {"ok": False, "conflict": True,
+                "error": f"{run_id} is running; cancel it before deleting it"}
+    if not state_dir.is_dir():
+        return {"ok": False, "error": f"no run {run_id!r}"}
+    with CorpusStore(state_dir) as store:
+        try:
+            out = store.delete_run(run_id)
+        except KeyError:
+            return {"ok": False, "error": f"no run {run_id!r}"}
+    return {"ok": True, **out}
+
+
+def rerun(server, run_id: str, body: dict) -> dict[str, Any]:
+    """Run again with the configuration that run recorded, not whatever is saved now."""
+    import json
+    import tempfile
+
+    state_dir = server.spreadex_config.state_dir
+    manifest = state_dir / "runs" / run_id / "manifest.json"
+    try:
+        raw = json.loads(manifest.read_text()).get("config")
+    except (OSError, ValueError):
+        raw = None
+    if not raw:
+        return {"ok": False, "error": f"{run_id} has no recorded configuration to re-run"}
+    # Relative paths in the config resolve against its file's folder, so the copy is read
+    # from the project root -- and removed as soon as it has been parsed.
+    root = server.spreadex_config.project_root
+    fd, tmp = tempfile.mkstemp(prefix=".spreadex-rerun-", suffix=".yaml", dir=root)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            yaml.safe_dump(raw, fh)
+        config = load_config(Path(tmp))
+    except ConfigError as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        os.unlink(tmp)
+    return _launch(server, config, {**body, "install_missing": True}, label=f"re-run of {run_id}")
 
 
 # -------------------------------------------------------- assistance (opt-in)

@@ -187,31 +187,31 @@ def test_the_two_budget_cards_stack_on_a_narrow_screen():
     assert "@media (max-width: 900px) { .rbudgets { grid-template-columns: minmax(0, 1fr); } }" in CSS
 
 
-# ------------------------------------------------ Results before any run
+# ------------------------------------------------ Campaigns before any run
 
-def test_results_with_no_run_is_a_page_not_a_one_line_card():
-    e = JS[JS.index("function resultsEmpty"):JS.index("async function renderResults")]
-    for t in ("No results yet", "Set up a campaign", "See a real result first", "spreadex demo",
-              "What you will see here", "copyDemoCommand(this)"):
+def _empty():
+    return JS[JS.index("function campaignsEmpty"):JS.index("async function renderResults")]
+
+
+def test_campaigns_with_no_runs_is_a_quiet_history_page_not_a_tour():
+    e = _empty()
+    for t in ("Campaigns", "No campaigns yet", "Set up a campaign", "re-run", "delete"):
         assert t in e, t
-    r = JS[JS.index("async function renderResults"):][:300]
-    assert "resultsEmpty()" in r and "No campaigns yet" not in JS
+    # onboarding belongs to Home
+    for t in ("See a real result first", "What you will see here", "spreadex demo", "Overview", "Corpus"):
+        assert t not in e, t
+    assert "RESULTS_PREVIEW" not in JS and "resultsEmpty" not in JS
 
 
-def test_the_empty_results_page_describes_the_real_tabs_and_shows_no_made_up_numbers():
-    tabs = JS[JS.index("const RESULTS_PREVIEW"):JS.index("function resultsEmpty")]
-    names = re.findall(r'\["\w+", "\w+", "(\w+)"', tabs)
-    assert names == ["Overview", "Generators", "Budget", "Findings", "Corpus"]
-    real = JS[JS.index("const RESULT_TABS"):][:600]
-    for n in names:
-        assert f't: "{n}"' in real, n
-    e = JS[JS.index("function resultsEmpty"):JS.index("async function renderResults")]
-    assert not re.search(r">\s*\d{2,}\s*<", e), "no sample figures on an empty page"
+def test_campaigns_reads_the_persisted_history_not_the_config_file():
+    r = JS[JS.index("async function renderResults"):][:900]
+    assert "await loadRuns()" in r and "campaignsEmpty()" in r and "campaignsList()" in r
+    assert "configured" not in r and "configured" not in _empty()
 
 
-def test_an_unconfigured_folder_is_told_why_there_is_nothing():
-    e = JS[JS.index("function resultsEmpty"):JS.index("async function renderResults")]
-    assert "S.project?.configured === false" in e and "has no" in e and "spreadex.yaml" in e
+def test_the_demo_walkthrough_lives_on_home():
+    h = JS[JS.index("function showDemoHint"):][:900]
+    assert "spreadex demo --ui" in h and "copyDemoCommand(this)" in h
 
 
 def test_the_whole_script_parses():

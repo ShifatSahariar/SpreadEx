@@ -11,6 +11,7 @@ rather than rewrites.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ from . import sources
 from .budget import Clock, uniform_allocation
 from ..exec.inputs import InputFiles
 from .config import Config
+from .lock import RunLock, cancel_file
 from .manifest import Manifest, capture_environment, probe_target_version
 
 Logger = Callable[[str], None]
@@ -65,21 +67,53 @@ def new_run_id() -> str:
 
 
 class Campaign:
-    def __init__(self, config: Config, log: Logger = print) -> None:
+    def __init__(self, config: Config, log: Logger = print,
+                 stop_event: threading.Event | None = None, origin: str = "cli") -> None:
         self.config = config
         self.log = log
         self.store = CorpusStore(config.state_dir)
+        #: Set from another thread (the UI) to stop after the current input.
+        self.stop_event = stop_event or threading.Event()
+        self.origin = origin
+        self.run_id: str | None = None
+
+    def cancelled(self) -> bool:
+        """Asked to stop -- by the event, or by a `cancel` file another process wrote."""
+        if self.stop_event.is_set():
+            return True
+        if self.run_id and cancel_file(self.config.state_dir, self.run_id).exists():
+            self.stop_event.set()
+            return True
+        return False
 
     # ------------------------------------------------------------------ run
 
     def run(self, run_id: str | None = None, signal_override: str | None = None,
             jobs: int = 1) -> CampaignResult:
+        lock = RunLock(self.config.state_dir)
+        lock.acquire(origin=self.origin)
+        try:
+            with self.store as store:
+                store.mark_abandoned()  # we hold the lock: anything 'running' is dead
+                # Only a generated id is made unique; an id the caller chose and reused stays an error.
+                run_id = run_id or store.unique_run_id(new_run_id())
+            self.run_id = run_id
+            lock.set_run(run_id)
+            try:
+                return self._run(run_id, signal_override, jobs)
+            except BaseException as exc:
+                with self.store as store:
+                    store.finish_run(run_id, status="cancelled"
+                                     if isinstance(exc, KeyboardInterrupt) else "failed")
+                raise
+        finally:
+            lock.release()
+
+    def _run(self, run_id: str, signal_override: str | None, jobs: int) -> CampaignResult:
         cfg = self.config
         signal_name = signal_override or cfg.signal
 
         with self.store as store:
-            # Only a generated id is made unique; an id the caller chose and reused stays an error.
-            run_id = run_id or store.unique_run_id(new_run_id())
             run_dir = store.start_run(
                 run_id,
                 config_hash=cfg.hash(),
@@ -87,6 +121,7 @@ class Campaign:
                 gen_budget_s=cfg.budget.generation_s,
                 exec_budget_s=cfg.budget.execution_s,
                 signal_name=signal_name,
+                origin=self.origin,
             )
             result = CampaignResult(run_id=run_id, run_dir=run_dir,
                                     exec_budget_s=cfg.budget.execution_s)
@@ -211,6 +246,8 @@ class Campaign:
                     if clock.exhausted():
                         self.log(f"  execution budget exhausted after {rank} inputs")
                         break
+                    if self.cancelled():
+                        break
                     try:
                         observations, judgement = execute(item)
                     except RuntimeError as exc:
@@ -232,7 +269,7 @@ class Campaign:
                 with ThreadPoolExecutor(max_workers=jobs) as pool:
                     while not stop or pending:
                         while not stop and len(pending) < jobs:
-                            if clock.exhausted():
+                            if clock.exhausted() or self.cancelled():
                                 stop = True
                                 break
                             nxt = next(it, None)
@@ -257,6 +294,8 @@ class Campaign:
                     self.log(f"  execution budget exhausted after {result.executed} inputs")
 
             store.commit()
+            if self.cancelled():
+                self.log(f"  cancelled after {result.executed} inputs")
             result.exec_elapsed_s = clock.elapsed()
             result.verdicts = store.run_summary(run_id)
             result.signatures = [
@@ -288,6 +327,7 @@ class Campaign:
             manifest.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             mh = manifest.hash()
             manifest.write(run_dir / "manifest.json")
-            store.finish_run(run_id, manifest_hash=mh)
+            store.finish_run(run_id, manifest_hash=mh,
+                             status="cancelled" if self.cancelled() else "finished")
 
         return result

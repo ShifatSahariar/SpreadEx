@@ -930,7 +930,7 @@ def test_the_workspace_routes_need_the_token_and_404_cleanly(served):
 def test_the_overview_inputs_and_finding_routes_return_what_the_data_layer_does(served):
     base, token, rid = _first_run(served)
     _, d = get(base + f"/api/runs/{rid}", token)
-    assert d["number"] == 1 and d["complete"] and "by_generator" in d and "timeline" in d and "findings" in d
+    assert "number" not in d and d["complete"] and "by_generator" in d and "timeline" in d and "findings" in d
     _, page = get(base + f"/api/runs/{rid}/inputs?limit=3&verdict=ok", token)
     assert len(page["items"]) <= 3 and all(i["verdict"] == "ok" for i in page["items"])
     _, odd = get(base + f"/api/runs/{rid}/inputs?limit=abc&offset=x", token)
@@ -977,4 +977,4 @@ def test_the_progress_route_is_cheap_token_gated_and_404s(served):
         get(base + "/api/runs/nope/progress", token)
     assert e.value.code == 404
     _, runs = get(base + "/api/runs", token)
-    assert {"number", "target", "generators", "findings", "duration_s"} <= set(runs["runs"][0])
+    assert {"run_id", "target", "generators", "findings", "duration_s"} <= set(runs["runs"][0])

@@ -47,11 +47,24 @@ def _failure_signatures(store: CorpusStore, run_id: str) -> int:
         (run_id,)).fetchone()["c"]
 
 
+def run_status(row, live_run_id: str | None) -> str:
+    """The recorded status, except that 'running' is believed only while the run holds the lock."""
+    status = row["status"] or ("finished" if row["finished_at"] else "aborted")
+    if status == "running" and row["run_id"] != live_run_id:
+        return "aborted"
+    return status
+
+
 def list_runs(state_dir: Path) -> list[dict[str, Any]]:
     """Every run, newest first, with what the campaigns list shows without opening each one."""
+    from ..core.lock import active_run
+    live = (active_run(state_dir) or {}).get("run_id")
     with CorpusStore(state_dir) as store:
         out = []
         for row in store.list_runs(limit=200):
+            run_dir = store.run_dir(row["run_id"])
+            dir_bytes = sum(p.stat().st_size for p in run_dir.rglob("*") if p.is_file()) \
+                if run_dir.is_dir() else 0
             summary = store.run_summary(row["run_id"])
             executed = sum(summary.values())
             failures = sum(summary.get(k, 0) for k in ("crash", "timeout", "divergence"))
@@ -61,8 +74,6 @@ def list_runs(state_dir: Path) -> list[dict[str, Any]]:
             started, finished = _parse_time(row["started_at"]), _parse_time(row["finished_at"])
             out.append({
                 "run_id": row["run_id"],
-                "number": store.conn.execute("SELECT COUNT(*) c FROM runs WHERE started_at <= ?",
-                                             (row["started_at"],)).fetchone()["c"],
                 "started_at": row["started_at"],
                 "finished_at": row["finished_at"],
                 "duration_s": (finished - started).total_seconds() if started and finished else None,
@@ -73,6 +84,10 @@ def list_runs(state_dir: Path) -> list[dict[str, Any]]:
                 "findings": _failure_signatures(store, row["run_id"]),
                 "verdicts": summary,
                 "complete": bool(row["finished_at"]),
+                "status": run_status(row, live),
+                "origin": row["origin"],
+                # What deleting this run would free: its own files plus inputs no other run used.
+                "size_bytes": dir_bytes + store.run_blob_bytes(row["run_id"]),
                 "target": (targets[0].get("name") if targets else None),
                 "generators": sorted((corpus.get("generator_counts") or {}).keys()),
             })
@@ -86,6 +101,7 @@ def run_progress(state_dir: Path, run_id: str) -> dict[str, Any] | None:
     much to do every second, so the live view polls this instead.
     """
     from datetime import datetime, timezone
+    from ..core.lock import active_run
     with CorpusStore(state_dir) as store:
         row = store.conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
         if row is None:
@@ -106,6 +122,7 @@ def run_progress(state_dir: Path, run_id: str) -> dict[str, Any] | None:
         return {
             "run_id": run_id,
             "complete": bool(row["finished_at"]),
+            "status": run_status(row, (active_run(state_dir) or {}).get("run_id")),
             "started_at": row["started_at"],
             "elapsed_s": (now - started).total_seconds() if started and not row["finished_at"] else None,
             "gen_budget_s": row["gen_budget_s"], "exec_budget_s": row["exec_budget_s"],
@@ -443,7 +460,6 @@ def results_overview(state_dir: Path, run_id: str) -> dict[str, Any] | None:
             duration = None
     corpus = manifest.get("corpus", {}) or {}
     base.update({
-        "number": all_runs.index(run_id) + 1 if run_id in all_runs else None,
         "complete": bool(finished),
         "duration_s": duration,
         "findings": findings,

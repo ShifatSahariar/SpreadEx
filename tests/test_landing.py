@@ -9,10 +9,17 @@ INDEX = (ROOT / "src/spreadex/api/static/index.html").read_text()
 CSS = (ROOT / "src/spreadex/api/static/app.css").read_text()
 
 
-def test_initial_view_has_the_three_project_states():
-    assert 'if (!project.configured) return "landing";' in APP
-    assert 'return runs.length ? "results" : "setup";' in APP
-    assert 'go(initialView(S.project, S.runs));' in APP
+def test_initial_view_lands_in_the_agreed_order():
+    """Active run (handled first in the bootstrap) -> a saved view that is still valid -> the
+    latest campaign -> Review & run for a configured project -> Setup for a new one."""
+    iv = APP[APP.index("function initialView"):APP.index("function savedViewValid")]
+    order = ['savedViewValid(saved', 'runs.length', 'project.configured', 'step: "sut"']
+    positions = [iv.index(x) for x in order]
+    assert positions == sorted(positions)
+    assert 'current: runs[0].run_id' in iv and 'step: "run"' in iv
+    boot = APP[APP.index("(async function () {"):]
+    assert boot.index('"/api/active"') < boot.index("initialView(")
+    assert "initialView(S.project, S.runs, loadView(), stepReachable)" in boot
 
 
 def test_landing_enters_the_existing_setup_step_without_config_writes():
@@ -45,12 +52,23 @@ def test_every_section_is_reachable_and_the_current_one_is_marked():
     so what matters is that each one resolves and that the current section is
     marked rather than merely styled.
     """
-    for tab in ("tab-home", "tab-setup", "tab-generators",
-                "tab-executions", "tab-results"):
+    for tab in ("tab-home", "tab-setup", "tab-results"):
         assert tab in INDEX, f"{tab} is missing from the shell"
         assert f'el("{tab}").setAttribute("aria-selected"' in APP, (
             f"{tab} never gets aria-selected, so no section is announced as current"
         )
+    # Executions and Generators duplicated other entries and were never marked current.
+    assert "tab-executions" not in INDEX and "tab-generators" not in INDEX
+
+
+def test_every_header_control_calls_a_function_that_exists():
+    import re
+    header = INDEX[INDEX.index("<header"):INDEX.index("</header>")]
+    handlers = re.findall(r'onclick="([^"]+)"', header)
+    assert handlers
+    for h in handlers:
+        for fn in re.findall(r"(\w+)\(", h):
+            assert re.search(rf"(async )?function {fn}\(", APP), f"{fn} (from {h!r}) is not defined"
 
 
 def test_read_only_mode_is_still_stated_on_the_start_page():
@@ -114,7 +132,7 @@ def test_every_icon_inherits_colour_and_is_hidden_from_assistive_tech():
     assert 'stroke="currentColor"' in APP
     assert 'aria-hidden="true"' in APP
     assert "focusable=\"false\"" in APP, "IE/Edge focus the SVG without this"
-    for name in ("home", "folder", "sliders", "play", "chart", "gear",
+    for name in ("home", "folder", "sliders", "chart", "gear",
                  "playSolid", "book", "arrow", "chart"):
         assert f"{name}:" in icons, f"ICONS.{name} is missing"
 

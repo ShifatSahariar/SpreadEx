@@ -85,6 +85,10 @@ class _Handler(BaseHTTPRequestHandler):
     def _json(self, payload, status=HTTPStatus.OK) -> None:
         self._send(status, json.dumps(payload).encode(), "application/json; charset=utf-8")
 
+    def _json_result(self, result: dict) -> None:
+        """An action's outcome; a clash with a running campaign is a 409."""
+        self._json(result, HTTPStatus.CONFLICT if result.get("conflict") else HTTPStatus.OK)
+
     def _error(self, status, message: str) -> None:
         self._json({"error": message}, status)
 
@@ -190,8 +194,21 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(setup.start_install(self.server, body))
             return
         if route == "/api/run":
-            self._json(setup.start_run(self.server, body))
+            self._json_result(setup.start_run(self.server, body))
             return
+        for action in ("cancel", "delete", "rerun"):
+            if route.startswith("/api/runs/") and route.endswith("/" + action):
+                run_id = route[len("/api/runs/"):-len(action) - 1]
+                if not run_id or "/" in run_id:
+                    break
+                if action == "cancel":
+                    result = setup.cancel_run(self.server, run_id)
+                elif action == "delete":
+                    result = setup.delete_run(self.server, run_id)
+                else:
+                    result = setup.rerun(self.server, run_id, body)
+                self._json_result(result)
+                return
         if route == "/api/assist":
             if not getattr(self.server, "spreadex_experimental", False):
                 self._error(HTTPStatus.FORBIDDEN,
@@ -329,6 +346,12 @@ class _Handler(BaseHTTPRequestHandler):
         if route == "/api/generators":
             from . import setup
             self._json(setup.generator_status(self.config))
+            return
+        if route == "/api/active":
+            # Decided by the project's OS lock, so a run started from the CLI counts too.
+            from ..core.lock import active_run
+            info = active_run(state_dir) if self._has_corpus() else None
+            self._json({"active": info is not None, **(info or {})})
             return
         if route == "/api/activity":
             since = int((query.get("since") or ["0"])[0] or 0)

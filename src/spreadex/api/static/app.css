@@ -1232,15 +1232,6 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 @media (max-width: 900px) { .rbudgets { grid-template-columns: minmax(0, 1fr); } }
 
 /* Results, before there is a result */
-.resempty { display: grid; gap: 14px; max-width: 900px; margin: 0 auto; }
-.resempty-h { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.resempty-h h3 { margin: 0 0 4px; } .resempty-h p { margin: 0; font-size: .88rem; }
-.resempty-a { margin-left: auto; } .resempty-a .primary { display: inline-flex; align-items: center; gap: 8px; }
-.resempty-a svg { width: 16px; height: 16px; }
-.resempty .ex-code { margin: 8px 0; }
-.restabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
-.restab { display: flex; gap: 12px; align-items: flex-start; padding: 14px; }
-.restab strong { display: block; font-size: .9rem; } .restab .muted { display: block; font-size: .8rem; margin-top: 2px; }
 
 /* ===================================================== Results workspace */
 .resws { max-width: var(--content-max); margin: 0 auto; }
@@ -1440,3 +1431,19 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 @media (max-width: 900px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .reshead > .rback { grid-row: 1; grid-column: 1; } .reshead > .rtitle { grid-row: 1; grid-column: 2; } .reshead > .ractions { grid-row: 1; grid-column: 3; } .reshead > .kpis { grid-row: 2; }
+
+/* Steps that need an earlier one finished first: visible, so the path is clear, but not clickable. */
+.step:disabled { opacity: .45; cursor: not-allowed; }
+.step:disabled:hover { background: none; }
+/* Campaign row actions: Re-run / Export / Delete, or Cancel while running. */
+.clist .rowacts { text-align: right; }
+.clist .rowacts button + button { margin-left: 4px; }
+.clist .rowacts svg { width: 14px; height: 14px; }
+.runmenu .danger { color: var(--color-error); }
+/* Keep the actions in view when a narrow window scrolls the table sideways. */
+.clist .rowacts, .clist thead th:last-child { position: sticky; right: 0; background: var(--color-surface); }
+
+/* Campaigns with no history: one quiet card, not a tour. */
+.cempty { text-align: center; padding: 40px 24px; }
+.cempty h3 { margin: 0 0 6px; } .cempty p { max-width: 460px; margin: 0 auto 18px; }
+.cempty .primary { display: inline-flex; align-items: center; gap: 8px; }

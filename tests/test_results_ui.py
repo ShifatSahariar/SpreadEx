@@ -57,9 +57,12 @@ def test_the_five_tabs_exist_in_the_designed_order_and_findings_replaces_failure
 
 def test_the_header_has_the_designed_parts():
     h = BLOCK[BLOCK.index("function resultsHeader"):BLOCK.index("function toggleRunMenu")]
-    for t in ("Completed", "Not finished", "Generated", "Valid inputs", "Executed", "Crashes", "Timeouts",
-              "Divergences", "Export", "Copy replay command", "Run again"):
+    for t in ("statusPill(", "Generated", "Valid inputs", "Executed", "Crashes", "Timeouts",
+              "Divergences", "Export", "Copy replay command", "Run again", "deleteCampaign(", "canAct()"):
         assert t in h, t
+    st = BLOCK[BLOCK.index("const RUN_STATUS"):BLOCK.index("function fmtBytes")]
+    for t in ("Completed", "Cancelled", "Interrupted", "Failed", "Running"):
+        assert t in st, t
     assert 'role="listbox"' in h and "aria-haspopup" in h
 
 
@@ -106,7 +109,7 @@ def test_a_replay_that_does_not_reproduce_is_not_called_a_pass():
 
 
 def test_export_sends_the_token_header_instead_of_a_bare_link():
-    e = BLOCK[BLOCK.index("async function exportRun"):BLOCK.index("const RESULT_TABS")]
+    e = BLOCK[BLOCK.index("async function downloadExport"):BLOCK.index("const RESULT_TABS")]
     assert '"X-SpreadEx-Token": TOKEN' in e and "/export`" in e and "createObjectURL" in e
 
 
@@ -188,13 +191,16 @@ def test_running_a_campaign_lands_on_it_instead_of_a_list():
 
 def test_a_refreshed_page_returns_to_watching_the_running_campaign():
     boot = JS[JS.index("(async function () {"):]
-    assert '"/api/activity"' in boot and '!act.idle && !act.done && act.kind === "run"' in boot
-    assert 'S.rview = "live"' in boot and "setInterval(pollLive" in boot
+    # an in-process job, or any run holding the project lock (the CLI, another Workbench)
+    assert '"/api/activity"' in boot and '!job.idle && !job.done && job.kind === "run"' in boot
+    assert '"/api/active"' in boot and "startLive(act)" in boot
+    sl = JS[JS.index("function startLive"):JS.index("async function pollLive")]
+    assert 'S.rview = "live"' in sl and "setInterval(pollLive" in sl
 
 
 def test_finishing_opens_the_campaign_and_a_failure_stays_visible_with_a_way_back():
     p = JS[JS.index("async function pollLive"):JS.index("function paintLive")]
-    assert "return openCampaign(" in p and "L.error" in p
+    assert "openCampaign(L.runId)" in p and "L.error" in p and '"/api/active"' in p
     live = JS[JS.index("function liveBody"):]
     assert "The campaign stopped" in live and "Back to Review &amp; run" in live
 
@@ -228,3 +234,9 @@ def test_the_header_is_two_rows_so_the_title_is_never_squeezed():
 
 def test_each_header_part_is_pinned_to_its_cell_so_dom_order_cannot_reflow_it():
     assert ".reshead > .ractions { grid-row: 1; grid-column: 3; }" in CSS and ".reshead > .kpis { grid-row: 2; }" in CSS
+
+
+def test_a_campaign_is_named_by_its_run_id_not_its_position():
+    """Deleting an earlier campaign must not rename later ones, so no label comes from list order."""
+    assert "Campaign #" not in JS and ".number" not in JS
+    assert "function campaignName(id)" in JS and "campaignName(d.run_id)" in JS

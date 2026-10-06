@@ -77,11 +77,34 @@ const S = {
   rtab: "overview", rview: "list", live: null, detail: null,
   kind: null, sample: undefined, probe: null,
   generators: [], grammars: [], runs: [], current: null, polling: null,
+  // Steps the user has confirmed with Continue (or that a saved project already had), and the SUT
+  // command the last successful Test connection ran. Together they decide which steps are reachable.
+  confirmed: new Set(), verifiedSut: null,
 };
 
-function initialView(project, runs) {
-  if (!project.configured) return "landing";
-  return runs.length ? "results" : "setup";
+// Where a page load lands, in this order (an active run is handled before this is asked):
+// the view this tab was on, if it still makes sense -> the latest campaign -> Review & run for a
+// configured project with no campaigns -> the first setup step for a new one.
+function initialView(project, runs, saved, reachable) {
+  if (saved && savedViewValid(saved, runs, reachable)) return saved;
+  if (runs.length) return { tab: "results", rview: "run", current: runs[0].run_id };
+  if (project.configured) return { tab: "setup", step: "run" };
+  return { tab: "setup", step: "sut" };
+}
+function savedViewValid(v, runs, reachable) {
+  if (v.tab === "landing") return true;
+  if (v.tab === "results") return v.rview === "list" ? runs.length > 0
+    : v.rview === "run" && runs.some(r => r.run_id === v.current);
+  if (v.tab === "setup") return STEPS.some(x => x.id === v.step) && reachable(v.step);
+  return false;
+}
+const VIEW_KEY = "spreadex-view";
+function saveView() {
+  const v = { tab: S.tab, step: S.step, rview: S.rview === "live" ? "list" : S.rview, current: S.current };
+  try { sessionStorage.setItem(VIEW_KEY, JSON.stringify(v)); } catch (e) { /* blocked storage */ }
+}
+function loadView() {
+  try { return JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null"); } catch (e) { return null; }
 }
 
 // ---------------------------------------------------------------- icons
@@ -242,7 +265,6 @@ const ICONS = {
   home: I(`<path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" /> <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />`),
   folder: I(`<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />`),
   sliders: I(`<path d="M10 5H3" /> <path d="M12 19H3" /> <path d="M14 3v4" /> <path d="M16 17v4" /> <path d="M21 12h-9" /> <path d="M21 19h-5" /> <path d="M21 5h-7" /> <path d="M8 10v4" /> <path d="M8 12H3" />`),
-  play: I(`<rect x="3" y="3" width="18" height="18" rx="2" /> <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" />`),
   gear: I(`<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /> <circle cx="12" cy="12" r="3" />`),
   book: I(`<path d="M12 5v16" /> <path d="M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z" />`),
   arrow: I(`<path d="M5 12h14" /> <path d="m12 5 7 7-7 7" />`),
@@ -320,16 +342,21 @@ function go(tab) {
   paintNavIcons();
   el("tab-home").setAttribute("aria-selected", tab === "landing");
   el("tab-setup").setAttribute("aria-selected", tab === "setup");
-  el("tab-generators").setAttribute("aria-selected", false);
-  el("tab-executions").setAttribute("aria-selected", false);
   el("tab-results").setAttribute("aria-selected", tab === "results");
   el("steps").style.display = tab === "setup" ? "" : "none";
-  // The Results menu opens the campaigns list, except while one is running: then it is that one.
-  if (tab === "results" && S.rview !== "live") S.rview = S.live?.active ? "live" : "list";
+  // The Campaigns menu opens the list, except while one is running: then it is that one.
+  if (tab === "results" && S.rview !== "live" && S.rview !== "run") S.rview = S.live?.active ? "live" : "list";
+  if (tab === "setup" && !stepReachable(S.step)) { S.step = firstOpenStep(); renderSteps(); }
+  saveView();
   if (tab === "landing") renderLanding();
   else tab === "setup" ? renderStep() : renderResults();
 }
-function gotoStep(id) { S.step = id; renderSteps(); renderStep(); }
+// A step is reachable when every step before it is complete; an unreachable one sends you to the
+// first step that still needs doing. Moving back, or among completed steps, is always allowed.
+function gotoStep(id) {
+  S.step = stepReachable(id) ? id : firstOpenStep();
+  saveView(); renderSteps(); renderStep();
+}
 
 function copyDemoCommand(button) {
   const command = "spreadex demo --ui";
@@ -485,7 +512,9 @@ function showDemoHint() {
   holder.innerHTML = holder.innerHTML
     ? ""
     : `<div class="note">A real campaign against a hundred-line system under test with one
-         documented bug. In a terminal:<pre>spreadex demo</pre>Then reload this page.</div>`;
+         documented bug, in about twenty seconds. Run it from any folder:
+         <div class="ex-code"><code>spreadex demo --ui</code><button type="button" class="ex-copy" onclick="copyDemoCommand(this)" aria-label="Copy command">${ICONS.copy}</button></div>
+         It writes <span class="mono">spreadex-demo</span> beside you and opens the Workbench on its results.</div>`;
 }
 
 
@@ -493,11 +522,21 @@ function showDemoHint() {
 // exists -- so jumping ahead with an empty step 1 does not paint it as done.
 function stepDone(id) {
   const c = cfg();
-  if (id === "sut") return targets().some(t => (t.command || []).length);
-  if (id === "grammar") return !!(c.grammar?.source || c.corpus?.path);
-  if (id === "generators") return !!((c.generators || []).length || c.corpus?.path);
-  if (id === "strategy") return !!c.oracle;
+  if (id === "sut") return targets().some(t => (t.command || []).length) && S.verifiedSut === sutKey(c.sut);
+  if (id === "grammar") return !!(c.grammar?.source || c.corpus?.path) && S.confirmed.has(id);
+  if (id === "generators") return !!((c.generators || []).length || c.corpus?.path) && S.confirmed.has(id);
+  if (id === "strategy") return !!c.oracle && S.confirmed.has(id);
   return false;
+}
+function stepReachable(id) {
+  const i = STEPS.findIndex(x => x.id === id);
+  return i >= 0 && STEPS.slice(0, i).every(x => stepDone(x.id));
+}
+function firstOpenStep() { return (STEPS.find(x => !stepDone(x.id)) || STEPS[STEPS.length - 1]).id; }
+// What Test connection checked. Changing any of it means the command has to be tested again.
+function sutKey(sut) {
+  const s = sut || {}, t = (s.targets || [])[0] || s;
+  return JSON.stringify([t.command || [], t.cwd || "", t.env || {}, s.input_mode || "file"]);
 }
 
 function renderSteps() {
@@ -511,7 +550,8 @@ function renderSteps() {
   host.innerHTML = `<ol class="steps-row">${STEPS.map((s, i) => `
     <li class="step-item tone-${s.tone} ${done[i] ? "done" : ""}">
       <button type="button" class="step" onclick="gotoStep('${s.id}')"
-              ${s.id === S.step ? 'aria-current="step"' : ""}>
+              ${s.id === S.step ? 'aria-current="step"' : ""}
+              ${stepReachable(s.id) ? "" : `disabled title="Finish the steps before this one first"`}>
         <span class="n">${s.n}</span>
         <span class="step-ico">${ICONS[s.icon]}</span>
         <span class="step-text"><span class="t">${esc(s.t)}${done[i]
@@ -1261,6 +1301,7 @@ function commitStrategy() {
     el("err").innerHTML = `<div class="note bad" role="alert">Failure signatures is on but has no patterns. Add one, or turn the check off.</div>`;
     return;
   }
+  S.confirmed.add("strategy");
   gotoStep("run");
 }
 
@@ -1450,6 +1491,7 @@ async function verifyCommand() {
   if (r.memory_mb) body.memory_mb = r.memory_mb;
   try { S.probe = await api("/api/probe", body); }
   catch (e) { S.probe = { ok: false, error: String(e.message || e) }; }
+  S.probe.key = sutKey({ command: r.argv, cwd: r.cwd, env: r.env, input_mode: r.input_mode });
   S.probeShowDetails = false;
   stepSut();
 }
@@ -1579,6 +1621,15 @@ function commitSut() {
   const r = readSut();
   el("err").innerHTML = "";
   if (r.problem) { showSutProblem(r); return; }
+  const key = sutKey({ command: r.argv, cwd: r.cwd, env: r.env, input_mode: r.input_mode });
+  if (key !== S.verifiedSut && !(S.probe?.ok && S.probe.key === key)) {
+    showSutProblem({ problem: S.probe?.key === key && !S.probe.ok
+      ? "The last Test connection failed. Fix the command, then test it again."
+      : "Test the connection first: the command has not been run since it was entered or changed.",
+      focus: "sut-test" });
+    return;
+  }
+  S.verifiedSut = key;
   const d = sutDraft();
   const opts = {};
   if (r.cwd) opts.cwd = r.cwd;
@@ -2375,6 +2426,11 @@ function commitGrammar() {
   if (d.ext && !/^\.[A-Za-z0-9_+-]{1,12}$/.test(d.ext)) {
     err("File extension: use a dot and letters or digits, like .js or .sql."); el("inp-ext")?.focus(); return;
   }
+  // Different inputs can need different generators: a change sends the later steps back for review.
+  if ((cfg().grammar?.source || "") !== source || (cfg().corpus?.path || "") !== corpus) {
+    S.confirmed.delete("generators"); S.confirmed.delete("strategy");
+  }
+  S.confirmed.add("grammar");
   S.config.grammar = source ? { source } : undefined;
   S.config.corpus = corpus ? { path: corpus } : undefined;
   S.config.input_extension = d.ext || undefined;
@@ -2843,6 +2899,7 @@ function commitGenerators() {
     return;
   }
   // Generators that are not installed are installed when the run starts (see the review screen).
+  S.confirmed.add("generators");
   gotoStep("strategy");
 }
 
@@ -2887,7 +2944,7 @@ function refreshRunPanels() {
 function readiness() {
   const c = cfg(), r = runState();
   const items = [
-    { id: "sut", t: "SUT", ok: targets().some(t => (t.command || []).length), fix: "sut", why: "Add the command that runs your program." },
+    { id: "sut", t: "SUT", ok: stepDone("sut"), fix: "sut", why: "Add the command that runs your program and test the connection." },
     { id: "grammar", t: "Grammar", ok: !!(c.grammar?.source || c.corpus?.path), fix: "grammar", why: "Choose a grammar, or a folder of inputs." },
     { id: "generators", t: "Generators", ok: !!((c.generators || []).length || c.corpus?.path), fix: "generators", why: "Select at least one generator." },
     { id: "strategy", t: "Strategy", ok: !!c.oracle, fix: "strategy", why: "Choose what to detect." },
@@ -3184,21 +3241,24 @@ function resCard(title, body, { tip, right, cls = "" } = {}) {
 
 // ------- the header every tab shares
 
-function runTitle(d) { return `Campaign #${d.number ?? "?"}`; }
+// A campaign is named by its run id, which never changes: deleting another campaign cannot
+// rename this one, and it is the same id the CLI, exports and replay use.
+function campaignName(id) { return `Campaign ${id}`; }
+function runTitle(d) { return campaignName(d.run_id); }
 
 function resultsHeader(d) {
   const v = d.verdicts || {}, c = d.corpus || {};
   const t = (d.targets || [])[0] || {};
   const kpi = (tone, icon, n, label) => `<div class="kpi ${tone}"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span>
       <div><strong>${num(n)}</strong><span>${label}</span></div></div>`;
-  const status = d.complete ? `<span class="rstatus ok">${ICONS.success} Completed</span>` : `<span class="rstatus warn">${ICONS.alert} Not finished</span>`;
+  const status = statusPill((S.runs.find(r => r.run_id === S.current) || {}).status || (d.complete ? "finished" : "aborted"));
   return `<header class="reshead">
     <button type="button" class="rback" onclick="showCampaigns()" aria-label="Back to campaigns" title="Back to campaigns">${ICONS.back}</button>
     <div class="rtitle">
       <div class="rtitle-1"><div class="runpick"><button type="button" class="runpick-b" aria-haspopup="listbox" aria-expanded="${!!S.runMenu}" onclick="toggleRunMenu()">
           <h2>${esc(runTitle(d))}</h2>${(S.runs || []).length > 1 ? ICONS.chevron : ""}</button>
           ${S.runMenu ? `<div class="runmenu" role="listbox">${S.runs.map((r, i) => `<button type="button" role="option" aria-selected="${r.run_id === S.current}" onclick="pickRun('${esc(r.run_id)}')">
-            <strong>#${S.runs.length - i}</strong><span>${esc(fmtDate(r.started_at))} ${esc(fmtTime(r.started_at))}</span><span class="${r.failures ? "bad" : "muted"}">${r.failures ? r.failures + " failing" : "no failures"}</span></button>`).join("")}</div>` : ""}</div>
+            <strong>${esc(r.run_id)}</strong><span>${esc(fmtDate(r.started_at))} ${esc(fmtTime(r.started_at))}</span><span class="${r.failures ? "bad" : "muted"}">${r.failures ? r.failures + " failing" : "no failures"}</span></button>`).join("")}</div>` : ""}</div>
         ${status}</div>
       <div class="rtitle-2"><strong>${esc(t.name || "sut")}</strong>${t.version ? ` <span class="muted">${esc(String(t.version).split("\n")[0].slice(0, 40))}</span>` : ""}</div>
       <div class="rtitle-3"><span>${ICONS.clock} ${esc(fmtDate(d.started_at))} · ${esc(fmtTime(d.started_at))}</span><span>${ICONS.playOutline} ${esc(fmtDur(d.duration_s))}</span><span>seed ${esc(String(d.seed))}</span></div>
@@ -3215,7 +3275,9 @@ function resultsHeader(d) {
       <div class="runpick"><button type="button" class="ghost rmore" aria-haspopup="menu" aria-expanded="${!!S.actMenu}" aria-label="More actions" onclick="toggleActMenu()">${ICONS.dots}</button>
         ${S.actMenu ? `<div class="runmenu right" role="menu">
           <button type="button" role="menuitem" onclick="copyReplayCommand()">Copy replay command</button>
-          <button type="button" role="menuitem" onclick="S.actMenu = false; go('setup'); gotoStep('run')">Run again…</button></div>` : ""}</div>
+          ${canAct() ? `<button type="button" role="menuitem" onclick="rerunCampaign(S.current)">Run again with this configuration</button>
+          <button type="button" role="menuitem" onclick="S.actMenu = false; go('setup'); gotoStep('run')">Edit setup, then run…</button>
+          <button type="button" role="menuitem" class="danger" onclick="deleteCampaign(S.current)">Delete campaign…</button>` : ""}</div>` : ""}</div>
       <button type="button" class="ghost rexport" onclick="exportRun()">${ICONS.download} Export</button>
     </div></header>`;
 }
@@ -3227,14 +3289,16 @@ function copyReplayCommand() {
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(`spreadex replay ${S.current}`).catch(() => {});
 }
 // The export needs the token header, so it is fetched and saved rather than linked.
+async function downloadExport(id) {
+  const r = await fetch(`/api/runs/${encodeURIComponent(id)}/export`, { headers: { "X-SpreadEx-Token": TOKEN } });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  const url = URL.createObjectURL(await r.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: `spreadex-${id}.zip` });
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
 async function exportRun() {
-  try {
-    const r = await fetch(`/api/runs/${encodeURIComponent(S.current)}/export`, { headers: { "X-SpreadEx-Token": TOKEN } });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-    const url = URL.createObjectURL(await r.blob());
-    const a = Object.assign(document.createElement("a"), { href: url, download: `spreadex-${S.current}.zip` });
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-  } catch (e) { S.exportError = String(e.message || e); paintRun(); }
+  try { await downloadExport(S.current); }
+  catch (e) { S.exportError = String(e.message || e); paintRun(); }
 }
 
 const RESULT_TABS = [
@@ -3642,57 +3706,146 @@ function tabCorpus(d) {
 
 // ------- Campaigns: the list Results opens on, and the live view of the one that is running
 
-function showCampaigns() { S.rview = "list"; S.runMenu = S.actMenu = false; renderResults(); }
-function openCampaign(id) { S.current = id; S.rview = "run"; S.rtab = "overview"; S.runMenu = false; renderResults(); }
+function showCampaigns() { S.rview = "list"; S.runMenu = S.actMenu = false; saveView(); renderResults(); }
+function openCampaign(id) {
+  // The running one opens live; a finished one opens its results.
+  if (S.live?.active && S.live.runId === id) { S.rview = "live"; return go("results"); }
+  S.current = id; S.rview = "run"; S.rtab = "overview"; S.runMenu = false; saveView(); renderResults();
+}
+
+const RUN_STATUS = {
+  finished:  ["ok",   "success", "Completed"],
+  cancelled: ["warn", "stop",    "Cancelled"],
+  aborted:   ["warn", "alert",   "Interrupted"],
+  failed:    ["bad",  "error",   "Failed"],
+};
+function statusPill(status) {
+  if (status === "running") return `<span class="rstatus live"><span class="pulse" aria-hidden="true"></span> Running</span>`;
+  const [tone, icon, label] = RUN_STATUS[status] || RUN_STATUS.aborted;
+  return `<span class="rstatus ${tone}">${ICONS[icon]} ${label}</span>`;
+}
+function fmtBytes(n) {
+  if (!n) return "0 KB";
+  return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// ---- campaign actions. Each one changes something on disk, so a read-only Workbench offers none.
+
+function canAct() { return !S.project?.read_only; }
+
+async function cancelCampaign(id, ev) {
+  ev?.stopPropagation();
+  try {
+    const r = await api(`/api/runs/${encodeURIComponent(id)}/cancel`, {});
+    if (r.ok === false) throw new Error(r.error);
+    if (S.live) S.live.cancelling = true;
+  } catch (e) { S.listError = String(e.message || e); }
+  S.tab === "results" && S.rview === "live" ? paintLive() : renderResults();
+}
+
+async function rerunCampaign(id, ev) {
+  ev?.stopPropagation();
+  S.actMenu = false;
+  try {
+    const r = await api(`/api/runs/${encodeURIComponent(id)}/rerun`, {});
+    if (r.ok === false) throw new Error(r.error);
+  } catch (e) {
+    S.listError = S.actionError = String(e.message || e);
+    return S.rview === "run" ? paintRun() : renderResults();
+  }
+  startLive();
+}
+
+async function deleteCampaign(id, ev) {
+  ev?.stopPropagation();
+  S.actMenu = false;
+  const r = (S.runs || []).find(x => x.run_id === id);
+  const label = campaignName(id);
+  if (!confirm(`Permanently delete ${label}?\n\nIts results, logs and the inputs no other campaign used (about ${fmtBytes(r?.size_bytes)}) are removed. Inputs shared with other campaigns are kept. This cannot be undone.`)) return;
+  try {
+    const out = await api(`/api/runs/${encodeURIComponent(id)}/delete`, {});
+    if (out.ok === false) throw new Error(out.error);
+    S.listError = "";
+  } catch (e) { S.listError = String(e.message || e); }
+  await loadRuns();
+  S.rview = "list"; saveView(); renderResults();
+}
 
 function campaignsList() {
   const runs = S.runs || [];
-  const live = S.live?.active && S.live.runId ? runs.find(r => r.run_id === S.live.runId) : null;
-  const status = r => r.complete ? `<span class="rstatus ok">${ICONS.success} Completed</span>`
-    : (live && live.run_id === r.run_id ? `<span class="rstatus live"><span class="pulse" aria-hidden="true"></span> Running</span>` : `<span class="rstatus warn">${ICONS.alert} Not finished</span>`);
-  const rows = runs.map(r => `<tr class="click" tabindex="0" onclick="openCampaign('${esc(r.run_id)}')" onkeydown="if (event.key === 'Enter') openCampaign('${esc(r.run_id)}')">
-      <td><strong>Campaign #${r.number}</strong></td><td>${status(r)}</td>
+  const live = runs.find(r => r.status === "running");
+  const act = (r) => !canAct() ? "" : r.status === "running"
+    ? `<button type="button" class="ghost small" onclick="cancelCampaign('${esc(r.run_id)}', event)">${ICONS.stop} Cancel</button>`
+    : `<button type="button" class="ghost small" onclick="rerunCampaign('${esc(r.run_id)}', event)" ${live ? "disabled" : ""} title="Run again with the configuration this campaign used">${ICONS.rerun} Re-run</button>
+       <button type="button" class="ghost small" onclick="exportCampaign('${esc(r.run_id)}', event)">${ICONS.download} Export</button>
+       <button type="button" class="ghost small" onclick="deleteCampaign('${esc(r.run_id)}', event)" title="Delete (frees about ${esc(fmtBytes(r.size_bytes))})" aria-label="Delete ${esc(campaignName(r.run_id))}">${ICONS.trash}</button>`;
+  const rows = runs.map(r => `<tr class="click" tabindex="0" onclick="openCampaign('${esc(r.run_id)}')" onkeydown="if (event.key === 'Enter' && event.target === this) openCampaign('${esc(r.run_id)}')">
+      <td><strong class="mono">${esc(r.run_id)}</strong>${r.origin === "cli" ? ` <span class="muted">CLI</span>` : ""}</td><td>${statusPill(r.status)}</td>
       <td>${esc(fmtDate(r.started_at))} <span class="muted">${esc(fmtTime(r.started_at))}</span></td>
       <td>${esc(r.target || "—")}</td>
       <td>${(r.generators || []).map(g => `<span class="vtag blue">${esc(g)}</span>`).join(" ") || `<span class="muted">—</span>`}</td>
       <td>${num(r.executed)}</td>
       <td>${r.findings ? `<span class="count bad">${r.findings}</span>` : `<span class="muted">none</span>`}</td>
-      <td>${esc(fmtDur(r.duration_s))}</td><td class="chevcell">${ICONS.arrow}</td></tr>`).join("");
+      <td>${esc(fmtDur(r.duration_s))}</td><td>${esc(fmtBytes(r.size_bytes))}</td>
+      <td class="rowacts">${act(r)}</td></tr>`).join("");
   return `<div class="resws">
-    <div class="listhead"><div><h2>Campaigns</h2><p class="muted">${runs.length} run${runs.length === 1 ? "" : "s"} in this project. Open one to see what happened.</p></div>
-      <button type="button" class="primary" onclick="go('setup'); gotoStep('run')">${ICONS.playOutline} Run a campaign</button></div>
-    ${live ? `<button type="button" class="livebanner" onclick="openCampaign('${esc(live.run_id)}')"><span class="pulse" aria-hidden="true"></span><span><strong>Campaign #${live.number} is running</strong><span class="muted"> — watch it live</span></span>${ICONS.arrow}</button>` : ""}
-    <section class="rescard"><div class="tscroll"><table class="rtable clist"><thead><tr><th>Campaign</th><th>Status</th><th>Started</th><th>SUT</th><th>Generators</th><th>Executed</th><th>Findings</th><th>Duration</th><th></th></tr></thead>
+    <div class="listhead"><div><h2>Campaigns</h2><p class="muted">${runs.length} run${runs.length === 1 ? "" : "s"} in this project, from the Workbench and the command line. Open one to see what happened.</p></div>
+      ${canAct() ? `<button type="button" class="primary" onclick="go('setup'); gotoStep('run')" ${live ? "disabled title=\"A campaign is already running\"" : ""}>${ICONS.playOutline} Run a campaign</button>` : ""}</div>
+    ${S.listError ? `<div class="note bad" role="alert">${esc(S.listError)}</div>` : ""}
+    ${live ? `<button type="button" class="livebanner" onclick="watchActive()"><span class="pulse" aria-hidden="true"></span><span><strong>${esc(campaignName(live.run_id))} is running</strong><span class="muted"> — watch it live</span></span>${ICONS.arrow}</button>` : ""}
+    <section class="rescard"><div class="tscroll"><table class="rtable clist"><thead><tr><th>Campaign</th><th>Status</th><th>Started</th><th>SUT</th><th>Generators</th><th>Executed</th><th>Findings</th><th>Duration</th><th>Size</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>${rows}</tbody></table></div></section></div>`;
+}
+
+async function exportCampaign(id, ev) {
+  ev?.stopPropagation();
+  try { await downloadExport(id); S.listError = ""; }
+  catch (e) { S.listError = `Export failed: ${e.message || e}`; renderResults(); }
 }
 
 // ---- live: one background job at a time, so what is running is never ambiguous
 
 
-function startLive() {
+// `external` is the project lock's record of a run this server did not start; `since` is when a
+// run it did start began, for a page reloaded mid-run.
+function startLive(external, since) {
   clearInterval(S.livePoll);
-  S.live = { active: true, runId: null, lines: [], total: 0, error: "", done: false, progress: null, startedAt: Date.now() };
+  const at = external?.started_at || since;
+  S.live = { active: true, runId: external?.run_id || null, external: !!external, lines: [], total: 0, error: "", done: false,
+             progress: null, startedAt: at ? Date.parse(at) : Date.now() };
   S.rview = "live";
   go("results");
   S.livePoll = setInterval(pollLive, 900);
   pollLive();
+}
+// The banner on the list: back to the live view of whatever is running, whoever started it.
+async function watchActive() {
+  if (S.live?.active) { S.rview = "live"; return go("results"); }
+  try { const act = await api("/api/active"); if (act.active) return startLive(act); } catch (e) { /* fall through */ }
+  await loadRuns(); renderResults();
 }
 
 async function pollLive() {
   const L = S.live; if (!L || !L.active || L.busy) return;
   L.busy = true;
   try {
-    const a = await api(`/api/activity?since=${L.total}`);
-    if (!a.idle) {
-      L.lines.push(...(a.lines || [])); L.total = a.total_lines ?? L.total + (a.lines || []).length;
+    // A run this server started has a job with a log; one started elsewhere (the CLI, another
+    // Workbench) is followed through the project lock and the database alone.
+    const a = L.external ? { idle: true } : await api(`/api/activity?since=${L.total}`);
+    const job = !a.idle && a.kind === "run";
+    if (job) { L.lines.push(...(a.lines || [])); L.total = a.total_lines ?? L.total + (a.lines || []).length; }
+    const act = await api("/api/active");
+    if (act.active && act.run_id) L.runId = act.run_id;
+    if (L.runId) {
       const runs = (await api("/api/runs")).runs; S.runs = runs;
-      const mine = L.runId ? runs.find(r => r.run_id === L.runId) : runs.find(r => !r.complete && Date.parse(r.started_at) >= L.startedAt - 5000);
-      if (mine) { L.runId = mine.run_id; L.number = mine.number; L.progress = await api(`/api/runs/${encodeURIComponent(mine.run_id)}/progress`); }
-      if (a.done) {
-        L.done = true; L.active = false; clearInterval(S.livePoll);
-        if (a.ok === false) { L.error = a.error || "The campaign failed."; }
-        else { await loadRuns(); return openCampaign(L.runId || S.runs[0]?.run_id); }
-      }
+      const mine = runs.find(r => r.run_id === L.runId);
+      if (mine) { L.progress = await api(`/api/runs/${encodeURIComponent(mine.run_id)}/progress`); }
+    }
+    const finished = job ? a.done : !act.active;
+    if (finished) {
+      L.done = true; L.active = false; clearInterval(S.livePoll);
+      if (job && a.ok === false) { L.error = a.error || "The campaign failed."; }
+      else { await loadRuns(); L.busy = false; return L.runId ? openCampaign(L.runId) : showCampaigns(); }
     }
   } catch (e) { /* a missed poll is fine; the next one catches up */ }
   L.busy = false;
@@ -3709,12 +3862,14 @@ function liveBody() {
   const bar = p && p.elapsed_s != null && total ? Math.min(100, Math.round(100 * p.elapsed_s / total)) : null;
   const last = p?.latest;
   return `<header class="reshead live"><button type="button" class="rback" onclick="showCampaigns()" aria-label="Back to campaigns">${ICONS.back}</button>
-      <div class="rtitle"><div class="rtitle-1"><h2>${L.number ? "Campaign #" + L.number : "Starting campaign"}</h2>
-        ${L.error ? `<span class="rstatus bad">${ICONS.error} Failed</span>` : `<span class="rstatus live"><span class="pulse" aria-hidden="true"></span> Running</span>`}</div>
-        <div class="rtitle-3"><span>${ICONS.clock} ${esc(fmtDur((Date.now() - (L.startedAt || Date.now())) / 1000))} since you pressed Run</span></div></div>
+      <div class="rtitle"><div class="rtitle-1"><h2>${L.runId ? esc(campaignName(L.runId)) : "Starting campaign"}</h2>
+        ${L.error ? `<span class="rstatus bad">${ICONS.error} Failed</span>` : L.cancelling ? `<span class="rstatus warn">${ICONS.stop} Cancelling&hellip;</span>` : `<span class="rstatus live"><span class="pulse" aria-hidden="true"></span> Running</span>`}</div>
+        <div class="rtitle-3"><span>${ICONS.clock} ${esc(fmtDur((Date.now() - (L.startedAt || Date.now())) / 1000))} since it started${L.external ? " (from the command line or another Workbench)" : ""}</span></div></div>
+      ${canAct() && L.runId && !L.done ? `<div class="ractions"><button type="button" class="ghost" onclick="cancelCampaign('${esc(L.runId)}')" ${L.cancelling ? "disabled" : ""}
+          title="Stop after the input that is running now; what has run so far is kept">${ICONS.stop} Cancel campaign</button></div>` : ""}
       <div class="kpis">${kpi("blue", "playOutline", p?.executed || 0, "Executed")}${kpi("green", "success", v.ok || 0, "Passed")}${kpi("blue", "doc", v.expected_rejection || 0, "Rejected")}
         ${kpi("red", "bug", v.crash || 0, "Crashes")}${kpi("amber", "clock", v.timeout || 0, "Timeouts")}</div></header>
-    <div class="stagebar" role="list" aria-label="Campaign stages">${STAGES.map(([id, t], i) => `<div class="stg ${i < idx ? "done" : i === idx ? "now" : ""}" role="listitem" ${i === idx ? 'aria-current="step"' : ""}><span>${i < idx ? ICONS.check : i + 1}</span>${t}</div>`).join("")}</div>
+    ${L.external ? "" : `<div class="stagebar" role="list" aria-label="Campaign stages">${STAGES.map(([id, t], i) => `<div class="stg ${i < idx ? "done" : i === idx ? "now" : ""}" role="listitem" ${i === idx ? 'aria-current="step"' : ""}><span>${i < idx ? ICONS.check : i + 1}</span>${t}</div>`).join("")}</div>`}
     ${L.error ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-t">The campaign stopped</div><div class="res-s">${esc(L.error)}</div></div>
         <button type="button" class="ghost small res-btn" onclick="go('setup'); gotoStep('run')">Back to Review &amp; run</button></div>`
       : `<section class="rescard"><div class="rescard-h"><h4>Progress</h4></div>
@@ -3725,52 +3880,44 @@ function liveBody() {
             <span class="fc-tags">${vtag(last.verdict)}<span class="muted">${esc(last.id)} · input #${last.first_rank + 1}</span></span></span></div>
           <div class="muted livecount">${p.findings.length} finding${p.findings.length === 1 ? "" : "s"} so far</div>`
         : `<div class="empty">Nothing has failed yet.</div>`}</section>
-      <section class="rescard"><div class="rescard-h"><h4>Log</h4></div><pre class="livelog" aria-live="off">${esc(L.lines.slice(-14).join("\n")) || "Waiting for the first message…"}</pre></section></div>`;
+      <section class="rescard"><div class="rescard-h"><h4>Log</h4></div>${L.external
+        ? `<div class="empty">This campaign was started outside this Workbench, so its log is in the terminal that started it. The figures above come from the project's results as they are written.</div>`
+        : `<pre class="livelog" aria-live="off">${esc(L.lines.slice(-14).join("\n")) || "Waiting for the first message…"}</pre>`}</section></div>`;
 }
 
 // ------- the page
 
-const RESULTS_PREVIEW = [
-  ["chart", "green", "Overview", "How many inputs ran, passed, were refused as expected, or failed."],
-  ["grid", "purple", "Generators", "Which generator produced what, how fast, and how its inputs compare."],
-  ["clock", "blue", "Budget", "What the run was given, what it spent, and when findings appeared."],
-  ["bug", "red", "Findings", "Each distinct failure, the input, why it was classified so, and a replay."],
-  ["database", "orange", "Corpus", "Every executed input, searchable, so a run can be inspected and replayed."],
-];
-
-function resultsEmpty() {
-  const unconf = S.project?.configured === false;
-  return `<div class="resempty">
-    <div class="side-card resempty-h">
-      <span class="stile green" aria-hidden="true">${ICONS.chart}</span>
-      <div><h3>No results yet</h3>
-        <p class="muted">Results appear here once a campaign has run. ${unconf ? "This folder has no <span class=\"mono\">spreadex.yaml</span> yet, so start with the setup." : "Set up a campaign, or look at a finished one first."}</p></div>
-      <div class="resempty-a">
-        <button type="button" class="primary" onclick="go('setup')">${ICONS.playOutline} ${unconf ? "Set up a campaign" : "Go to setup"}</button></div>
-    </div>
-    <div class="side-card">
-      <h4><span class="h-ico green">${ICONS.terminal}</span> See a real result first</h4>
-      <p class="muted">The quick demo runs the genuine pipeline on a tiny calculator with one documented bug, in about twenty seconds. In a terminal:</p>
-      <div class="ex-code"><code>spreadex demo --ui</code><button type="button" class="ex-copy" onclick="copyDemoCommand(this)" aria-label="Copy command">${ICONS.copy}</button></div>
-      <p class="muted">When it finishes it opens the Workbench on the demo, with its results. Run it from any folder: it writes <span class="mono">spreadex-demo</span> beside you and leaves this project alone.</p>
-    </div>
-    <h4 class="inp-h5">What you will see here</h4>
-    <div class="restabs">${RESULTS_PREVIEW.map(([icon, tone, t, d]) => `<div class="side-card restab"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span>
-      <div><strong>${t}</strong><span class="muted">${d}</span></div></div>`).join("")}</div>
-  </div>`;
+// Campaigns is the project's run history whether or not it has any runs yet. Teaching what a
+// result looks like belongs to Home; here an empty history is just that, and the way to fill it.
+function campaignsEmpty() {
+  return `<div class="resws">
+    <div class="listhead"><div><h2>Campaigns</h2><p class="muted">Manage previous and active testing campaigns.</p></div></div>
+    <section class="rescard cempty">
+      <h3>No campaigns yet</h3>
+      <p class="muted">Runs you launch from SpreadEx or the command line appear here. You can open, re-run,
+        export, or permanently delete them from this page.</p>
+      ${canAct() ? `<button type="button" class="primary" onclick="go('setup')">${ICONS.playOutline} Set up a campaign</button>` : ""}
+    </section></div>`;
 }
 
 async function renderResults() {
   const v = el("view");
   if (S.rview === "live" && S.live) { v.innerHTML = `<div class="resws" id="live-root">${liveBody()}</div>`; return; }
-  if (!S.runs.length) { v.innerHTML = resultsEmpty(); return; }
-  if (S.rview !== "run") { v.innerHTML = campaignsList(); return; }
+  if (S.rview !== "run") {
+    // Always the persisted history of this project, read fresh: a campaign may have been run or
+    // deleted from the command line since this page loaded.
+    try { await loadRuns(); } catch (e) { v.innerHTML = failureCard(e); return; }
+    if (S.tab !== "results" || S.rview === "run") return;   // the user moved on meanwhile
+    v.innerHTML = S.runs.length ? campaignsList() : campaignsEmpty();
+    return;
+  }
+  if (!S.runs.length) { S.rview = "list"; v.innerHTML = campaignsEmpty(); return; }
   v.innerHTML = `<div id="detail"><div class="empty">Loading…</div></div>`;
   // The overview is fetched once per run; the tabs read from what came back. (run_detail shuffles
   // the corpus hundreds of times for the random baseline, so it is not cheap.)
   try { S.detail = await api(`/api/runs/${encodeURIComponent(S.current)}`); }
   catch (e) { el("detail").innerHTML = failureCard(e); return; }
-  S.rf = null; S.rc = null; S.runMenu = S.actMenu = false; S.exportError = "";
+  S.rf = null; S.rc = null; S.runMenu = S.actMenu = false; S.exportError = ""; S.actionError = "";
   paintRun();
   if (S.rtab === "corpus") loadCorpus();
   if (S.rtab === "findings") ensureFinding();
@@ -3786,6 +3933,7 @@ function paintRun() {
   const n = (d.findings || []).length;
   el("detail").innerHTML = `<div class="resws">${resultsHeader(d)}
     ${S.exportError ? `<div class="note bad" role="alert">Export failed: ${esc(S.exportError)}</div>` : ""}
+    ${S.actionError ? `<div class="note bad" role="alert">${esc(S.actionError)}</div>` : ""}
     <div class="rtabs2" role="tablist">${RESULT_TABS.map(t => `<button type="button" role="tab" class="${tab === t.id ? "on" : ""}" aria-selected="${tab === t.id}" onclick="pickResultTab('${t.id}')">
       ${ICONS[t.icon]}<span>${t.t}</span>${t.id === "findings" && n ? `<span class="rbadge">${n}</span>` : ""}</button>`).join("")}</div>
     <div class="restab-body">${body}</div></div>`;
@@ -3808,18 +3956,26 @@ function paintRun() {
     S.strat = null;
     S.run = null;
     await loadRuns();
-    renderSteps();
-    // A page refreshed (or opened) while a campaign is running goes straight back to watching it.
+    // What is already saved on disk was reviewed when it was written: its steps count as done,
+    // and its command as tested, until the user changes them.
+    if (S.project.configured) {
+      S.verifiedSut = sutKey(S.config.sut);
+      ["grammar", "generators", "strategy"].forEach(id => S.confirmed.add(id));
+    }
+    // A page refreshed (or opened) while a campaign is running goes straight back to watching it --
+    // whether this Workbench started it or not.
     try {
-      const act = await api("/api/activity");
-      if (!act.idle && !act.done && act.kind === "run") {
-        S.live = { active: true, runId: null, lines: [], total: 0, error: "", done: false, progress: null, startedAt: Date.now() - 1000 };
-        S.rview = "live"; go("results");
-        S.livePoll = setInterval(pollLive, 900); pollLive();
-        return;
-      }
+      const job = await api("/api/activity");
+      const act = await api("/api/active");
+      if (!job.idle && !job.done && job.kind === "run") { renderSteps(); return startLive(null, act.started_at); }
+      if (act.active) { renderSteps(); return startLive(act); }
     } catch (e) { /* no job info is not an error */ }
-    go(initialView(S.project, S.runs));
+    const v = initialView(S.project, S.runs, loadView(), stepReachable);
+    if (v.step) S.step = v.step;
+    if (v.rview) S.rview = v.rview;
+    if (v.current) S.current = v.current;
+    renderSteps();
+    go(v.tab);
   } catch (e) {
     const noToken = !TOKEN || /token/i.test(e.message);
     el("view").innerHTML = noToken
