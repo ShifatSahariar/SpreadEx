@@ -97,7 +97,8 @@ def installation_checks() -> list[Check]:
             "reinstall spreadex; the package data did not ship",
         ))
 
-    cache = Path.home() / ".cache" / "spreadex"
+    from ..generators.manager import DEFAULT_CACHE
+    cache = Path(DEFAULT_CACHE)   # honours SPREADEX_CACHE, like the installer
     if cache.is_dir():
         size = sum(f.stat().st_size for f in cache.rglob("*") if f.is_file())
         gens = cache / "generators"
@@ -109,6 +110,43 @@ def installation_checks() -> list[Check]:
         checks.append(Check("generator storage", OK,
                             f"nothing installed yet ({cache})"))
     return checks
+
+
+def _run_once(target, config) -> Check:
+    """Run the target on one sample input, the way a campaign will, and catch a broken setup.
+
+    A program that exists can still fail to start the system: a script path it cannot open, a
+    missing module. Then every input of a campaign would be reported as a crash, so it is worth
+    one execution now. The sample is a corpus input when there is one, otherwise a tiny file.
+    """
+    import tempfile
+
+    from ..exec.runner import run_one
+    from ..exec.setup_check import setup_failure
+
+    name = f"target '{target.name}' runs"
+    corpus = (config.raw.get("corpus") or {}).get("path")
+    sample = None
+    if corpus:
+        folder = (config.project_root / corpus)
+        files = sorted(p for p in folder.iterdir() if p.is_file()) if folder.is_dir() else []
+        sample = files[0] if files else None
+    with tempfile.TemporaryDirectory() as tmp:
+        if sample is None:
+            sample = Path(tmp) / "sample.txt"
+            sample.write_text("1\n")
+        try:
+            obs = run_one(target, sample)
+        except (RuntimeError, OSError) as exc:
+            return Check(name, FAIL, str(exc).splitlines()[0], "check the command in spreadex.yaml")
+    problem = setup_failure(obs)
+    if problem:
+        return Check(name, FAIL, problem,
+                     "fix the command in spreadex.yaml; until then every input would be reported as a crash")
+    if obs.timed_out:
+        return Check(name, WARN, f"no answer within {target.limits.timeout_s:g}s on a sample input",
+                     "raise sut.timeout, or check whether it waits for stdin (input_mode: stdin)")
+    return Check(name, OK, f"ran once on {sample.name}: exit {obs.exit_code}, {obs.duration_ms:.0f} ms")
 
 
 def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
@@ -126,6 +164,7 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
         found = shutil.which(exe) or (Path(exe).exists() and str(Path(exe).resolve()))
         if found:
             checks.append(Check(f"target '{t.name}'", OK, f"{exe} -> {found}"))
+            checks.append(_run_once(t, config))
         else:
             checks.append(Check(
                 f"target '{t.name}'", FAIL, f"{exe} not found on PATH",

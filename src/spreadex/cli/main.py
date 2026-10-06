@@ -31,12 +31,13 @@ def _load(args) -> "object":
 
 def cmd_init(args) -> int:
     root = Path(args.directory or ".").resolve()
+    root.mkdir(parents=True, exist_ok=True)     # `spreadex init new-project` creates it
     cfg_path = root / "spreadex.yaml"
     if cfg_path.exists() and not args.force:
         _die(f"{cfg_path} already exists (use --force to overwrite)")
 
     command = args.command or ["./your-parser", "{input}"]
-    text = render_template(command, grammar=args.grammar, oracle="crash")
+    text = render_template(command, grammar=args.grammar or "grammar.g4", oracle="crash")
     cfg_path.write_text(text)
 
     # The corpus store writes the directory and its .gitignore, so a project
@@ -49,10 +50,17 @@ def cmd_init(args) -> int:
 
     print(f"Created {cfg_path}")
     print(f"Created {state}/ (git-ignored)")
+    # Ask only for what was not given on the command line.
+    todo = []
+    if not args.command:
+        todo.append("set sut.command")
+    if not args.grammar:
+        todo.append("set an input source (grammar.source or corpus.path)")
+    steps = ([f"edit spreadex.yaml -- {' and '.join(todo)}"] if todo else []) + [
+        "spreadex doctor   (runs your system once to check the setup)", "spreadex run"]
     print("\nNext:")
-    print("  1. edit spreadex.yaml -- set sut.command and an input source")
-    print("  2. spreadex doctor")
-    print("  3. spreadex run")
+    for i, step in enumerate(steps, 1):
+        print(f"  {i}. {step}")
     return 0
 
 
@@ -234,9 +242,30 @@ def _print_result(r, config) -> None:
         if first:
             print(f"    first failure at input {first} of {r.executed}")
 
+    _print_rejection_hints(r, config)
     print(f"\n  Results: {r.run_dir}")
     print(f"  Replay:  spreadex replay {r.run_id}")
 
+
+def _print_rejection_hints(r, config) -> None:
+    """Crashes that read like the system rejecting input: say so, and how to tell SpreadEx."""
+    from ..core.firstrun import rejection_hints
+
+    if not r.failures:
+        return
+    with CorpusStore(config.state_dir) as store:
+        hints = rejection_hints(store, r.run_id)
+    if not hints:
+        return
+    print("\n  ! Some of these crashes look like your system REJECTING input, not crashing:")
+    for h in hints:
+        print(f"      {h['inputs']} input(s), exit {h['exit_code']}: {h['line'][:90]}")
+    print("    If that is your system's normal way to refuse invalid input, add to spreadex.yaml:")
+    print("      oracle:")
+    print("        rejection_patterns:")
+    for h in hints:
+        print(f"          - {json.dumps(h['pattern'])}")
+    print("    and those inputs will count as expected rejections instead of findings.")
 
 # ----------------------------------------------------------------------- ui
 
@@ -677,7 +706,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("init", help="create spreadex.yaml in this project")
     s.add_argument("directory", nargs="?", help="project root (default: .)")
     s.add_argument("--command", nargs="+", help="SUT command, e.g. --command java -jar sut.jar '{input}'")
-    s.add_argument("--grammar", default="grammar.g4")
+    s.add_argument("--grammar", default=None,
+                   help="your grammar file (default in the template: grammar.g4, to replace)")
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_init)
 
