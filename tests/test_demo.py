@@ -114,3 +114,27 @@ def test_the_rejection_pattern_matches_what_calc_actually_prints(tmp_path):
     pattern = load_config(project / "spreadex.yaml").raw["oracle"]["rejection_patterns"][0]
     r = run_calc(tmp_path, "1 +")
     assert re.search(pattern, r.stderr, re.MULTILINE)
+
+
+def test_demo_ui_opens_the_workbench_on_the_demo_project(tmp_path, monkeypatch):
+    """`spreadex demo --ui` ends with the results in front of the user, on the demo's own project, so
+    nobody has to remember `cd` + `spreadex ui` -- and their own folder is left alone."""
+    from spreadex.cli.main import main
+
+    calls = {}
+
+    def fake_serve(config, **kw):
+        calls["root"], calls["kw"] = config.project_root, kw
+
+    monkeypatch.setattr("spreadex.api.serve", fake_serve)
+    target = tmp_path / "d"
+    assert main(["demo", str(target), "--no-run", "--ui", "--port", "8123"]) == 0
+    assert calls["root"] == target.resolve()
+    assert calls["kw"]["port"] == 8123 and calls["kw"]["open_browser"] is True and calls["kw"]["host"] == "127.0.0.1"
+
+
+def test_demo_without_ui_does_not_start_a_server(tmp_path, monkeypatch, capsys):
+    from spreadex.cli.main import main
+    monkeypatch.setattr("spreadex.api.serve", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not serve")))
+    assert main(["demo", str(tmp_path / "d"), "--no-run"]) == 0
+    assert "spreadex run" in capsys.readouterr().out

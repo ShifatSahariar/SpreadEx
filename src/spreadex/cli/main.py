@@ -267,6 +267,20 @@ def cmd_ui(args) -> int:
 
 # --------------------------------------------------------------------- demo
 
+def _open_demo_ui(project: Path, args) -> int:
+    """Open the Workbench on the demo project, so its results are one step away."""
+    from ..api import serve
+
+    config = load_config(project / "spreadex.yaml")
+    print(f"\n  Opening the Workbench on {project} (Ctrl-C to stop)\n")
+    try:
+        serve(config, host="127.0.0.1", port=args.port, open_browser=True)
+    except OSError as exc:
+        _die(f"could not start the UI on 127.0.0.1:{args.port}: {exc}\n"
+             f"  Fix: pass --port to pick another, or stop whatever is using it.", code=1)
+    return 0
+
+
 def cmd_demo(args) -> int:
     """Materialise the bundled demo project and run a real campaign in it.
 
@@ -290,6 +304,8 @@ def cmd_demo(args) -> int:
     print("  calc.bnf      one grammar; SpreadEx derives each generator's dialect from it")
     print("  spreadex.yaml the campaign, exactly as it will run")
     if args.no_run:
+        if args.ui:
+            return _open_demo_ui(project, args)
         print(f"\nNext: cd {project} && spreadex run")
         return 0
 
@@ -340,6 +356,8 @@ def cmd_demo(args) -> int:
         print("  Nothing failed this time. calc.py does have a real defect -- an incomplete")
         print("  zero guard -- but whether a campaign reaches it depends on what the")
         print("  generators produced under this budget. A longer budget makes it likelier.")
+    if args.ui:
+        return _open_demo_ui(project, args)
     print(f"\n  Look closer:  cd {project} && spreadex ui")
     return 0
 
@@ -613,6 +631,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-run", action="store_true",
                    help="write the project but do not run the campaign")
     s.add_argument("--jobs", type=int, default=4, help="parallel executions")
+    s.add_argument("--ui", action="store_true",
+                   help="when it is done, open the Workbench on the demo so its results are in front of you")
+    s.add_argument("--port", type=int, default=8777, help="port for --ui (default 8777)")
     s.set_defaults(func=cmd_demo)
 
     s = sub.add_parser("ui", help="browse this project's campaigns in a local browser UI")

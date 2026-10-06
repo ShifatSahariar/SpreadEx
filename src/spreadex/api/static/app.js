@@ -328,7 +328,7 @@ function go(tab) {
 function gotoStep(id) { S.step = id; renderSteps(); renderStep(); }
 
 function copyDemoCommand(button) {
-  const command = "spreadex demo";
+  const command = "spreadex demo --ui";
   const copied = () => {
     button.textContent = "Copied";
     setTimeout(() => { button.textContent = "Copy command"; }, 1400);
@@ -3747,9 +3747,8 @@ function resultsEmpty() {
     <div class="side-card">
       <h4><span class="h-ico green">${ICONS.terminal}</span> See a real result first</h4>
       <p class="muted">The quick demo runs the genuine pipeline on a tiny calculator with one documented bug, in about twenty seconds. In a terminal:</p>
-      <div class="ex-code"><code>spreadex demo</code><button type="button" class="ex-copy" onclick="copyDemoCommand(this)" aria-label="Copy command">${ICONS.copy}</button></div>
-      <p class="muted">Then open the folder it creates:</p>
-      <div class="ex-code"><code>cd spreadex-demo &amp;&amp; spreadex ui</code></div>
+      <div class="ex-code"><code>spreadex demo --ui</code><button type="button" class="ex-copy" onclick="copyDemoCommand(this)" aria-label="Copy command">${ICONS.copy}</button></div>
+      <p class="muted">When it finishes it opens the Workbench on the demo, with its results. Run it from any folder: it writes <span class="mono">spreadex-demo</span> beside you and leaves this project alone.</p>
     </div>
     <h4 class="inp-h5">What you will see here</h4>
     <div class="restabs">${RESULTS_PREVIEW.map(([icon, tone, t, d]) => `<div class="side-card restab"><span class="stile ${tone}" aria-hidden="true">${ICONS[icon]}</span>
