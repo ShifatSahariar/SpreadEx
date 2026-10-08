@@ -11,6 +11,8 @@ rather than rewrites.
 
 from __future__ import annotations
 
+import json
+
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -144,12 +146,7 @@ class Campaign:
                     "signal": signal_name,
                 },
                 environment=capture_environment(),
-                targets=[
-                    {"name": t.name, "command": t.command,
-                     "version": t.version or probe_target_version(t.command),
-                     "timeout_s": t.limits.timeout_s}
-                    for t in cfg.targets
-                ],
+                targets=[_target_provenance(t) for t in cfg.targets],
             )
 
             # 1. Generate -----------------------------------------------------
@@ -170,15 +167,23 @@ class Campaign:
             # 2. Store + validate --------------------------------------------
             items: list[Item] = []
             origins: dict[str, set[str]] = {}   # blob -> every source that produced it
+            produced: list[tuple[str, str]] = []
             for gi in generated:
                 text = gi.data.decode("utf-8", errors="replace")
                 valid = bool(text.strip())  # v0.1: non-empty. Grammar-level
                                             # validation arrives with the adapter.
                 h = store.add_input(gi.data, gi.generator, valid=valid, gen_cost_ms=gi.cost_ms)
                 origins.setdefault(h, set()).add(gi.generator)
+                produced.append((h, gi.generator))
                 if valid:
                     items.append(Item(blob_hash=h, text=text, generator=gi.generator))
             store.commit()
+            # Which inputs each source produced in THIS run, in order: the store is content-
+            # addressed across runs, so without this list a run's own inputs could not be
+            # replayed later (`spreadex record`) without regenerating them.
+            with open(run_dir / "inputs.jsonl", "w") as fh:
+                for h, g in produced:
+                    fh.write(json.dumps({"blob": h, "generator": g}) + "\n")
             # De-duplicate by content: the same program from two generators is
             # one unit of execution budget, not two.
             seen: set[str] = set()
@@ -251,6 +256,45 @@ class Campaign:
                 observations = [run_one(t, path, input_hash=item.blob_hash) for t in cfg.targets]
                 return observations, oracle.judge(observations)
 
+            # Set when the system under test could not be started at all (a missing program,
+            # runtime or working directory, or the launcher's own "could not start" message on the
+            # first input). That is a failed campaign, not a finding: every input would otherwise
+            # be recorded as a crash or the run would end early looking finished.
+            startup_error: list[str] = []
+
+            def check_started(observations) -> bool:
+                """On the first input only: did the system start? Records why not.
+
+                A launcher's "could not start" wording can also be ordinary output of the system
+                under test (a generated program that prints it, an interpreter reporting a missing
+                module). So a match is confirmed by running the same command on an EMPTY input:
+                only a failure that does not depend on the input is an infrastructure failure.
+                """
+                if result.executed:
+                    return True
+                import tempfile
+
+                from ..exec.setup_check import setup_failure
+
+                for t, obs in zip(cfg.targets, observations):
+                    why = setup_failure(obs, t)
+                    if not why:
+                        continue
+                    with tempfile.TemporaryDirectory() as tmp:
+                        empty = Path(tmp) / f"empty{cfg.input_extension or ''}"
+                        empty.write_bytes(b"")
+                        try:
+                            again = setup_failure(run_one(t, empty), t)
+                        except RuntimeError as exc:
+                            again = str(exc)
+                    if again:
+                        startup_error.append(f"target {t.name!r} did not start: {why}")
+                        return False
+                    self.log(f"  note: the first input's output looks like a launcher error ({why}), "
+                             f"but the same command ran on an empty input, so it is treated as the "
+                             f"system's own output")
+                return True
+
             def persist(rank, item, observations, judgement) -> None:
                 nonlocal failures_so_far
                 store.record_execution(run_id, item.blob_hash, rank, observations, judgement)
@@ -275,7 +319,9 @@ class Campaign:
                     try:
                         observations, judgement = execute(item)
                     except RuntimeError as exc:
-                        self.log(f"  ! {exc}")
+                        startup_error.append(str(exc))
+                        break
+                    if not check_started(observations):
                         break
                     persist(rank, item, observations, judgement)
             else:
@@ -310,7 +356,11 @@ class Campaign:
                             try:
                                 observations, judgement = fut.result()
                             except RuntimeError as exc:
-                                self.log(f"  ! {exc}")
+                                if not startup_error:
+                                    startup_error.append(str(exc))
+                                stop = True
+                                continue
+                            if startup_error or not check_started(observations):
                                 stop = True
                                 continue
                             persist(rank, item, observations, judgement)
@@ -318,6 +368,17 @@ class Campaign:
                     self.log(f"  execution budget exhausted after {result.executed} inputs")
 
             store.commit()
+            if startup_error:
+                # Recorded as a failed run (so history shows it), then raised: the CLI exits non-zero
+                # and the Workbench reports it, instead of either calling this a completed campaign.
+                manifest.results = {"executed": result.executed, "error": startup_error[0]}
+                manifest.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                manifest.write(run_dir / "manifest.json")
+                store.finish_run(run_id, manifest_hash=manifest.hash(), status="failed")
+                raise CampaignStartupError(
+                    f"The campaign failed: the system under test could not be started.\n  {startup_error[0]}\n"
+                    f"  Nothing was tested. Fix the command or install what it needs, then check with "
+                    f"`spreadex doctor`.")
             if self.cancelled():
                 self.log(f"  cancelled after {result.executed} inputs")
             result.exec_elapsed_s = clock.elapsed()
@@ -340,6 +401,7 @@ class Campaign:
                 "generation_stats": result.generation_stats,
                 "selection": result.selection,
                 "generation_mode": (cfg.raw.get("generation") or {}).get("mode", "count"),
+                "grammars": _grammar_provenance(cfg),
                 "allocation_s": allocation,
             }
             manifest.results = {
@@ -356,3 +418,48 @@ class Campaign:
                              status="cancelled" if self.cancelled() else "finished")
 
         return result
+
+
+class CampaignStartupError(RuntimeError):
+    """The system under test could not be started, so the campaign tested nothing."""
+
+
+def _target_provenance(t) -> dict:
+    """How a target was run, and -- for a pinned runtime -- exactly which artifact ran."""
+    from .. import runtimes
+
+    used = sorted({r for part in t.command for r in runtimes.references(part)})
+    pinned = []
+    for name in used:
+        rt = runtimes.get(name)
+        pinned.append({"name": rt.name, "title": rt.title, "version": rt.version, "url": rt.url,
+                       "sha256": rt.sha256, "licence": rt.licence,
+                       "verified": runtimes.verified(name) is not None})
+    version = t.version or (f"{pinned[0]['title']} {pinned[0]['version']}" if pinned
+                            else probe_target_version(t.command))
+    out = {"name": t.name, "command": t.command, "version": version, "timeout_s": t.limits.timeout_s}
+    if pinned:
+        out["runtimes"] = pinned
+    return out
+
+
+def _grammar_provenance(cfg) -> dict:
+    """Each generator's grammar file and the sha256 of its content (replayed ones have none)."""
+    import hashlib
+
+    try:
+        replayed = sources.recorded_sources(cfg)
+    except Exception:
+        replayed = {}
+    out = {}
+    for gid in cfg.generators or []:
+        if gid in replayed:
+            continue
+        path = sources.grammar_for(cfg, gid)
+        if path is not None and path.is_file():
+            try:
+                rel = str(path.relative_to(cfg.project_root))
+            except ValueError:
+                rel = str(path)
+            out[gid] = {"path": rel, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    return out

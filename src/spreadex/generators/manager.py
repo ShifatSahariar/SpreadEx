@@ -152,6 +152,9 @@ class GeneratorManager:
         """Is it usable, and from where? The environment wins over the host, so
         a campaign is not silently affected by whatever is on PATH."""
         gen = self.get(generator_id)
+        if gen.install.get("type") == "none":
+            # Nothing to install (a generator this version only replays from a recording).
+            return Status(gen, False, None, "", gen.install.get("reason") or "nothing to install")
         check = gen.check or {}
         kind = check.get("type", "command")
 
@@ -239,6 +242,8 @@ class GeneratorManager:
 
     def install(self, generator_id: str, log=print, upgrade: bool = False) -> Status:
         gen = self.get(generator_id)
+        if gen.install.get("type") == "none":
+            raise GeneratorError(f"{gen.name}: {gen.install.get('reason') or 'nothing to install'}")
         if gen.install.get("type") != "python":
             raise GeneratorError(
                 f"Generator {gen.id!r} declares install type "
@@ -339,6 +344,11 @@ class GeneratorManager:
             if not st.installed:
                 missing.append(gid)
 
+        # A generator with nothing to install cannot be fixed by installing: say why instead.
+        for gid in missing:
+            gen = self.get(gid)
+            if gen.install.get("type") == "none":
+                raise GeneratorError(f"{gen.name}: {gen.install.get('reason') or 'nothing to install'}")
         if missing and not auto_install:
             names = ", ".join(self.get(m).name for m in missing)
             raise GeneratorError(

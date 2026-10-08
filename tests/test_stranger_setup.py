@@ -59,6 +59,8 @@ def test_the_validator_now_runs_from_its_bare_name(tmp_path):
     ("Error: Unable to access jarfile rhino.jar", 1),
     ("Traceback (most recent call last):\n  File \"x\", line 1\nModuleNotFoundError: No module named 'lark'", 1),
     ("sh: myparser: command not found", 127),
+    # Seen on Linux: a default JVM under the 2 GB per-input limit (2026-10-08, Rhino in Docker).
+    ("Error occurred during initialization of VM\nCould not allocate compressed class space: 1073741824 bytes", 1),
 ])
 def test_a_system_that_did_not_start_is_recognised(stderr, exit_code):
     assert setup_failure(_obs(stderr, exit_code))
@@ -179,6 +181,10 @@ def test_every_catalog_generator_is_pinned_to_an_exact_version():
     from spreadex.generators.manager import GeneratorManager, load_catalog
 
     for gid, gen in load_catalog().items():
+        if gen.install.get("type") == "none":
+            # Installs nothing (replays recordings); its live artifact is pinned by commit instead.
+            assert "@" in gen.install.get("upstream", ""), f"{gid} names no pinned upstream"
+            continue
         assert GeneratorManager.pinned_version(gen), f"{gid} is not pinned"
 
 

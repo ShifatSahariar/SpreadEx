@@ -17,6 +17,10 @@ def test_catalog_loads_and_is_complete():
     assert {"fuzzingbook", "fandango", "grammarinator", "isla"} <= set(catalog)
     for gen in catalog.values():
         assert gen.name and gen.summary and gen.homepage and gen.license
+        if gen.install.get("type") == "none":
+            # Replay-only in this version (Fuzz4All): nothing to install, and it says why.
+            assert gen.install.get("reason") and gen.capabilities.get("recorded")
+            continue
         assert gen.install.get("type") == "python"
         assert gen.install.get("package")
         assert gen.check.get("type") in {"command", "python_import"}

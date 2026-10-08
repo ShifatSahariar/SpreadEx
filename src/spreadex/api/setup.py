@@ -136,20 +136,23 @@ UPCOMING_GENERATORS = [
                    "title": "Dharma: a generation-based, context-free grammar fuzzer",
                    "note": "No paper; open-source repository since 2015"},
      "summary": "Mozilla's generational grammar fuzzer."},
-    {"id": "fuzz4all", "name": "Fuzz4All", "family": "llm-based",
-     "reference": {"venue": "ICSE", "year": 2024, "authors": "Xia et al.",
-                   "title": "Fuzz4All: Universal Fuzzing with Large Language Models"},
-     "summary": "LLM-driven universal fuzzer. Planned; no model is bundled."},
 ]
 
 
 def generator_status(config) -> dict[str, Any]:
     from ..grammar import RENDERERS
 
+    from ..core.sources import recorded_sources
+
     mgr = GeneratorManager()
+    try:
+        recorded = recorded_sources(config) if config.configured else {}
+    except Exception:          # a broken `generation:` entry is reported by doctor and on run
+        recorded = {}
     out = []
     for status in mgr.status_all():
         gen = status.generator
+        replay_only = gen.install.get("type") == "none"
         out.append({
             "id": gen.id,
             "name": gen.name,
@@ -166,6 +169,11 @@ def generator_status(config) -> dict[str, Any]:
             "where": status.where,
             "emittable": gen.id in RENDERERS,
             "selected": gen.id in (config.generators or []),
+            # A generator this version can only replay from a recording (e.g. Fuzz4All, whose
+            # live generation needs an LLM provider): usable only where a recording is configured.
+            "replay_only": replay_only,
+            "recorded": gen.id in recorded,
+            "unavailable": (gen.install.get("reason") if replay_only and gen.id not in recorded else None),
         })
     # Named in the research tool or planned, but not generators SpreadEx can run. Shown inactive
     # so nobody wonders where they are; never selectable, never written to the config.
@@ -201,9 +209,18 @@ def missing_generators(config) -> list[str]:
     The install recipe comes only from the catalog (package name and pinned version), never from
     a model or from anything the request supplies.
     """
+    from ..core.sources import recorded_sources
+
     mgr = GeneratorManager()
+    try:
+        replayed = recorded_sources(config)
+    except GeneratorError:
+        replayed = {}
+    # A replayed generator needs nothing installed; a replay-only one cannot be installed at all.
     return [gid for gid in (config.generators or [])
-            if gid in mgr.catalog and not mgr.status(gid).installed]
+            if gid in mgr.catalog and gid not in replayed
+            and (getattr(mgr.get(gid), "install", None) or {}).get("type") != "none"
+            and not mgr.status(gid).installed]
 
 
 def start_run(server, body: dict) -> dict[str, Any]:
@@ -884,3 +901,74 @@ def demo_open(server, body: dict, return_url: str) -> dict[str, Any]:
         url = start_background(config, embedded_in=server.spreadex_config.project_root,
                                spreadex_demo={"return_url": return_url})
     return {"ok": True, "url": url + ("&tour=1" if body.get("tour", True) else ""), "root": str(root)}
+
+
+# ------------------------------------------------------------------ bundled examples
+
+def examples_status(server) -> dict[str, Any]:
+    """The bundled examples other than the guided demo (which has /api/demo): what each needs,
+    and whether it has been opened before."""
+    from .. import examples, runtimes
+    from . import registry
+
+    out = []
+    for ex in examples.EXAMPLES.values():
+        if ex.name == "minicalc":
+            continue
+        root = examples.root(ex.name)
+        state = root / ".spreadex"
+        has_runs = False
+        if (state / "corpus.db").is_file():
+            from ..corpus.store import CorpusStore
+            with CorpusStore(state) as store:
+                has_runs = store.latest_run_id() is not None
+        out.append({
+            "name": ex.name, "title": ex.title, "summary": ex.summary, "tags": list(ex.tags),
+            "exists": (root / "spreadex.yaml").is_file(), "has_runs": has_runs,
+            "live": registry.find_live(root) is not None,
+            "runtimes": [{"name": r, "title": runtimes.get(r).title, "version": runtimes.get(r).version,
+                          "installed": runtimes.verified(r) is not None} for r in ex.runtimes],
+        })
+    return {"examples": out}
+
+
+def example_open(server, body: dict, return_url: str) -> dict[str, Any]:
+    """Prepare a bundled example as its own project and hand back its Workbench's address.
+
+    Downloads and verifies any pinned runtime first. The example is a separate project under
+    SpreadEx's own state with its own Workbench; the project this Workbench serves is not touched.
+    """
+    from .. import examples, runtimes
+    from ..core.config import load_config
+    from ..core.lock import RunInProgress
+    from . import registry
+    from .server import project_token, start_background
+
+    name = str(body.get("name") or "")
+    try:
+        ex = examples.get(name)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if ex.name == "minicalc":
+        return {"ok": False, "error": "the guided demo opens with /api/demo/open"}
+    log: list[str] = []
+    try:
+        for rt in ex.runtimes:
+            runtimes.ensure(rt, log=log.append)
+    except runtimes.RuntimeUnavailable as exc:
+        return {"ok": False, "error": str(exc), "log": log}
+    try:
+        root = examples.reset(ex.name) if body.get("reset") else examples.ensure(ex.name)
+    except RunInProgress:
+        return {"ok": False, "conflict": True,
+                "error": f"The {ex.title} example has a campaign running. Open it, or cancel it before starting fresh."}
+    except OSError as exc:
+        return {"ok": False, "error": f"could not prepare the {ex.title} example: {exc}"}
+    config = load_config(root / "spreadex.yaml")
+    live = registry.find_live(root)
+    if live:
+        url = f"http://{live['host']}:{live['port']}/?token={project_token(config)}"
+    else:
+        url = start_background(config, embedded_in=server.spreadex_config.project_root,
+                               spreadex_example={"name": ex.name, "return_url": return_url})
+    return {"ok": True, "url": url + "&open=setup", "root": str(root), "log": log}

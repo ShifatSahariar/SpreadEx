@@ -20,7 +20,8 @@ RESEARCH_GRAMMARS = Path(__file__).resolve().parents[2] / "spreadex" / "examples
 def test_every_catalog_generator_has_an_adapter():
     from spreadex.generators import load_catalog
 
-    assert set(load_catalog()) == set(ADAPTERS), "catalog and adapters drifted apart"
+    runnable = {gid for gid, g in load_catalog().items() if g.install.get("type") != "none"}
+    assert runnable == set(ADAPTERS), "catalog and adapters drifted apart"
 
 
 def test_unknown_generator_lists_the_available_ones(tmp_path):

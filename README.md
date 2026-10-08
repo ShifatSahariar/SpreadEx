@@ -311,6 +311,19 @@ All four Tier-1 generators now run: FuzzingBook, Fandango, ISLa and Grammarinato
 
 Not yet: coverage collection, regression mode, adaptive allocation.
 
+**The Rhino showcase** (`spreadex example rhino`, or *Start from an example* in the Workbench):
+the public Rhino 1.9.1 release (pinned by SHA-256, downloaded on first use), Fandango and
+Grammarinator generating fresh inputs, and Fuzz4All replaying a corpus recorded earlier for the
+ClusGram study. It demonstrates the pipeline; it is not a controlled comparison of generators.
+Live Fuzz4All generation (with your own LLM provider) is not available yet.
+
+**Platforms.** Verified from a clean install on **macOS arm64** (Python 3.11): unit suite and all
+acceptance journeys. **Linux** is partly verified, in containers: the Rhino journey on arm64
+(Python 3.14) and the demo and stranger journeys on x86_64 (under emulation); the unit suite has not
+yet passed on Linux (one clustering test depends on platform numerics). **Windows is unverified:**
+the code has Windows branches (for example the campaign lock) and CI is configured for all three
+systems, but it has not run there yet.
+
 ## Development
 
 ```bash

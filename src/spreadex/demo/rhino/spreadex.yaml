@@ -1,0 +1,61 @@
+# Rhino showcase: a real JavaScript engine, three generators, Cluster Coverage, prioritization.
+#
+# The Rhino here is the PUBLIC Rhino 1.9.1 release from Maven Central, downloaded on first use
+# and verified by SHA-256 (`spreadex runtimes install rhino`). It is not the patched Rhino
+# snapshot used in the ClusGram and ICST studies, so findings here are not those studies' numbers.
+sut:
+  # ${SPREADEX_RUNTIME_RHINO} is the verified, cached rhino-all-1.9.1.jar.
+  # The -X flags keep the JVM's address-space reservations small enough to start under
+  # SpreadEx's per-input memory limit (without them Linux refuses to start the JVM).
+  command: ["java", "-Xmx256m", "-Xss1m", "-XX:ReservedCodeCacheSize=32m",
+            "-XX:CompressedClassSpaceSize=64m", "-XX:MaxMetaspaceSize=128m", "-XX:+UseSerialGC",
+            "-cp", "${SPREADEX_RUNTIME_RHINO}", "org.mozilla.javascript.tools.shell.Main", "{input}"]
+  timeout: 10s
+
+oracle:
+  type: crash
+  # Rhino exits 3 both for a script it refused and for an engine crash. What separates them:
+  # every script-level diagnostic starts with "js: ", an engine defect is a Java stack trace.
+  # crash_patterns are checked first, so the broad "js: " rule cannot hide a real bug.
+  crash_patterns:
+    - "^Exception in thread"
+    - "^\\s*at org\\.mozilla\\.javascript\\."
+    - "StackOverflowError"
+    - "OutOfMemoryError"
+    - "AssertionError"
+  rejection_patterns:
+    - "^js: "
+
+# Three generators, each with the grammar prepared for it (copied unchanged from ClusGram;
+# see grammars/PROVENANCE.md). Fandango and Grammarinator generate fresh inputs every run.
+# Fuzz4All replays a corpus it generated earlier with an LLM: live generation needs an API key.
+generators: [fandango, grammarinator, fuzz4all]
+grammar:
+  fandango: grammars/fandango/rhino.fan
+  grammarinator: grammars/grammarinator/rhino.g4
+
+generation:
+  count: 100            # requested from each generator; the actual counts are reported
+  fuzz4all:
+    mode: recorded
+    corpus: recorded/fuzz4all
+
+# Keep the generator whose inputs reach the most clusters, and prioritize those.
+selection: {by: cc, keep: 1}
+
+budget:
+  generation: 5m
+  execution: 5m
+
+embedding:
+  model: tfidf
+seed: 42
+
+# Shown in the Workbench's Generators step. Not used by the engine.
+presets:
+  not_recommended:
+    fuzzingbook: "Not recommended for this example: its large JavaScript grammar does not work well with FuzzingBook."
+  disclosure: >-
+    Fuzz4All's inputs come from a corpus generated earlier for the ClusGram study (gpt-4.1-mini);
+    Fandango and Grammarinator generate theirs in this run. This is a demonstration of the
+    pipeline, not a controlled comparison of the generators' effectiveness.

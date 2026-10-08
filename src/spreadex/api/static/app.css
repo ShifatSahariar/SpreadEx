@@ -1556,3 +1556,18 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .rsel-h { display: flex; align-items: center; gap: .35rem; margin: .9rem 0 .4rem; font-size: .9rem; }
 .ropts.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
 @media (max-width: 760px) { .ropts.three { grid-template-columns: minmax(0, 1fr); } }
+
+/* Step 1 starting point: an example project, or the user's own program. */
+.start-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0 6px; }
+.start-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: 10px 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); cursor: pointer; }
+.start-opt.on { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary) inset; }
+.start-opt .muted { font-size: .85rem; }
+.ex-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.ex-card { border: 1px solid var(--color-border); border-radius: 12px; padding: 14px 16px; background: var(--color-surface); }
+.ex-card h4 { margin: 0 0 2px; }
+.ex-card p { margin: 6px 0; }
+.ex-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.prep-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.prep-table th, .prep-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-border); }
+@media (max-width: 720px) { .start-row, .ex-cards { grid-template-columns: 1fr; } }

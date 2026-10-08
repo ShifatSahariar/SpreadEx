@@ -1,0 +1,14 @@
+{
+  "_what": "Frozen evidence for the Rhino example (public Rhino 1.9.1, Fandango 1.3.0 and Grammarinator 26.1 generating fresh, Fuzz4All replaying 100 recorded ClusGram inputs). Frozen after 3 identical fresh runs on 2026-10-08, macOS, -j 4. A difference on another OS is a reproducibility problem to report, not a value to update. first_failing_rank is the position in SpreadEx's priority order (0-based); the budget curve's completion position is not frozen because parallel execution reorders completions.",
+  "generators": ["fandango", "grammarinator", "fuzz4all"],
+  "inputs_per_generator": 100,
+  "sources": {"fandango": "fresh", "grammarinator": "fresh", "fuzz4all": "recorded"},
+  "selected": ["fandango"],
+  "dropped": ["grammarinator", "fuzz4all"],
+  "cc": {"fandango": 0.7037, "grammarinator": 0.3333, "fuzz4all": 0.1852},
+  "executed": 100,
+  "verdicts": {"ok": 53, "expected_rejection": 46, "timeout": 1},
+  "signatures": 1,
+  "first_failing_rank": 50,
+  "priority_order_sha256": "a9745a20fd3b6c45051aabf0622514e0b63586d65b33fcacde366dcc50511ab6"
+}

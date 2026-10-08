@@ -168,8 +168,17 @@ def _print_result(r, config) -> None:
             cost_s = r.generator_cost_ms.get(g, 0.0) / 1000
             rate = by_gen.get(g, {}).get("throughput_per_s", 0.0)
             bar = "#" * int(round(s * 20))
+            if by_gen.get(g, {}).get("source") == "recorded":
+                # Replayed, so this run spent nothing generating them: no cost or rate to show.
+                print(f"    {g:<16} {s:>5.2f} {n:>7} {100 * n / pool:>6.1f}% "
+                      f"{'recorded':>10} {'-':>8}  {bar}")
+                continue
             print(f"    {g:<16} {s:>5.2f} {n:>7} {100 * n / pool:>6.1f}% "
                   f"{cost_s:>9.1f}s {rate:>8.1f}  {bar}")
+        replayed = sorted(g for g, st in by_gen.items() if st.get("source") == "recorded")
+        if replayed:
+            print(f"    ! {', '.join(replayed)}: inputs REPLAYED from a saved recording, not generated in "
+                  f"this run,\n      so this is not a controlled comparison of the generators.")
 
         # Cluster coverage is comparable only when the generators were given a
         # comparable chance, so the basis of the comparison is stated every
@@ -351,6 +360,36 @@ def _open_demo_ui(project: Path, args) -> int:
     return 0
 
 
+def cmd_example(args) -> int:
+    """Write a bundled example project into a folder of its own, with its pinned runtime."""
+    from .. import examples, runtimes
+
+    try:
+        ex = examples.get(args.name)
+    except ValueError as exc:
+        _die(str(exc))
+    if ex.name == "minicalc":
+        _die("MiniCalc is the demo: use `spreadex demo`")
+    target = Path(args.directory or f"spreadex-{ex.name}").resolve()
+    if target.exists() and any(target.iterdir()) and not args.force:
+        _die(f"{target} already exists and is not empty.\n  Fix: choose another folder, or --force to "
+             f"restore the example's missing files there (your edits and campaigns are kept).")
+    try:
+        for rt in ex.runtimes:
+            runtimes.ensure(rt)
+    except runtimes.RuntimeUnavailable as exc:
+        _die(str(exc))
+    examples.ensure(ex.name, target)
+    print(f"{ex.title} example written to {target}")
+    print(f"  {ex.summary}")
+    print("\nNext:")
+    print(f"  cd {target}")
+    if ex.generators:
+        print(f"  spreadex generators install {' '.join(ex.generators)}")
+    print("  spreadex doctor\n  spreadex run")
+    return 0
+
+
 def cmd_demo(args) -> int:
     """Materialise the bundled demo project and run a real campaign in it.
 
@@ -511,6 +550,27 @@ def cmd_generators(args) -> int:
     return 0
 
 
+def cmd_runtimes(args) -> int:
+    from .. import runtimes
+
+    if getattr(args, "action", None) != "install":
+        for rt in runtimes.CATALOG.values():
+            cached = runtimes.verified(rt.name)
+            mark = "\u2713" if cached else "\u2717"
+            print(f"  {mark} {rt.name:<8} {rt.title} {rt.version} ({rt.licence}, Java {rt.java_min}+)"
+                  f"  {'installed' if cached else 'not installed'}")
+            if rt.note:
+                print(f"      {rt.note}")
+        print("\nInstall with: spreadex runtimes install <name>")
+        return 0
+    try:
+        for name in args.names:
+            runtimes.ensure(name)
+    except runtimes.RuntimeUnavailable as exc:
+        _die(str(exc), code=1)
+    return 0
+
+
 # ------------------------------------------------------------------- report
 
 def cmd_runs(args) -> int:
@@ -618,6 +678,47 @@ def _show_one_run(config, run_id: str | None) -> int:
 
 
 # ------------------------------------------------------------------- replay
+
+def cmd_record(args) -> int:
+    """Save one generator's inputs from a past run as a recording, replayable without regenerating."""
+    from ..generators.recorded import write
+    from ..generators import GeneratorError
+
+    config = _load(args)
+    with CorpusStore(config.state_dir) as store:
+        run_id = args.run_id
+        listing = store.run_dir(run_id) / "inputs.jsonl"
+        mpath = store.run_dir(run_id) / "manifest.json"
+        if not listing.is_file():
+            _die(f"run {run_id} has no list of its inputs (runs made before SpreadEx recorded one "
+                 f"cannot be exported)")
+        manifest = json.loads(mpath.read_text()) if mpath.is_file() else {}
+        seen, inputs = set(), []
+        for line in listing.read_text().splitlines():
+            row = json.loads(line)
+            if row["generator"] == args.generator and row["blob"] not in seen:
+                seen.add(row["blob"])
+                inputs.append(store.get_blob(row["blob"]))
+    if not inputs:
+        _die(f"{args.generator} produced no inputs in run {run_id}")
+    stats = next((st for st in (manifest.get("corpus") or {}).get("generation_stats") or []
+                  if st.get("generator") == args.generator), {})
+    provenance = {
+        "source": f"SpreadEx run {run_id}",
+        "spreadex_version": manifest.get("spreadex_version"),
+        "config_hash": manifest.get("config_hash"),
+        "seed": manifest.get("seed"),
+        "generation": stats,
+        "note": "Saved from a past run: replaying reproduces these inputs exactly without regenerating them.",
+    }
+    try:
+        write(Path(args.output), args.generator, inputs, provenance, suffix=args.suffix)
+    except GeneratorError as exc:
+        _die(str(exc))
+    print(f"Recorded {len(inputs)} {args.generator} inputs from run {run_id} to {args.output}")
+    print(f"Replay with:\n  generation:\n    {args.generator}: {{mode: recorded, corpus: {args.output}}}")
+    return 0
+
 
 def cmd_replay(args) -> int:
     config = _load(args)
@@ -727,6 +828,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="exit non-zero on failures (for CI)")
     s.set_defaults(func=cmd_run)
 
+    s = sub.add_parser("example", help="write a bundled example project (e.g. rhino) into its own folder")
+    s.add_argument("name", help="the example: rhino")
+    s.add_argument("directory", nargs="?", help="where to write it (default: ./spreadex-<name>)")
+    s.add_argument("--force", action="store_true", help="restore missing files in an existing folder")
+    s.set_defaults(func=cmd_example)
+
     s = sub.add_parser("demo", help="write a small demo project and run a real campaign in it")
     s.add_argument("directory", nargs="?", default="spreadex-demo",
                    help="where to write it (default: ./spreadex-demo)")
@@ -785,6 +892,14 @@ def build_parser() -> argparse.ArgumentParser:
     gi.set_defaults(func=cmd_generators)
     s.set_defaults(func=cmd_generators)
 
+    s = sub.add_parser("runtimes", help="list or install pinned runtimes an example needs (e.g. Rhino)")
+    rsub = s.add_subparsers(dest="action")
+    rsub.add_parser("list", help="list pinned runtimes").set_defaults(func=cmd_runtimes)
+    ri = rsub.add_parser("install", help="download and verify a pinned runtime")
+    ri.add_argument("names", nargs="+")
+    ri.set_defaults(func=cmd_runtimes)
+    s.set_defaults(func=cmd_runtimes)
+
     s = sub.add_parser("results", help="how the last campaign went")
     s.add_argument("run_id", nargs="?", help="a specific campaign (default: the latest)")
     s.add_argument("--all", action="store_true", help="list every campaign instead")
@@ -808,6 +923,13 @@ def build_parser() -> argparse.ArgumentParser:
     rd.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
     rd.set_defaults(func=cmd_runs)
     s.set_defaults(func=cmd_runs)
+
+    s = sub.add_parser("record", help="save one generator's inputs from a past run, to replay without regenerating")
+    s.add_argument("run_id")
+    s.add_argument("generator")
+    s.add_argument("-o", "--output", required=True, help="a new folder for the recording")
+    s.add_argument("--suffix", default=".txt", help="file extension for the saved inputs (default .txt)")
+    s.set_defaults(func=cmd_record)
 
     s = sub.add_parser("replay", help="inspect or re-run a past campaign")
     s.add_argument("run_id", nargs="?")

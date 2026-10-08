@@ -7,6 +7,11 @@ Two journeys, through the installed `spreadex` command only:
   B. a stranger's SUT   -- a small JSON validator: `spreadex init` -> `doctor` -> `run`,
                            then the suggested rejection rule is added to spreadex.yaml by
                            hand (the supported interface) and the campaign is run again.
+  R. the Rhino example  -- `spreadex runtimes install rhino` (pinned, SHA-256 verified),
+                           `spreadex example rhino` -> doctor -> run with Fandango and
+                           Grammarinator generating and Fuzz4All replaying a recording; the
+                           manifest and priority order are compared with rhino_expected.json,
+                           and a finding is replayed.
 
 Isolation: a fresh SPREADEX_HOME and SPREADEX_CACHE in a temporary folder, and host
 generators disabled, so every generator is installed from its pinned recipe here.
@@ -75,7 +80,7 @@ class Report:
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "report.json").write_text(json.dumps({
             "platform": platform.platform(), "python": sys.version.split()[0],
-            "passed": self.ok(), "journeys": {j: self.ok(j) for j in ("demo", "stranger")},
+            "passed": self.ok(), "journeys": {j: self.ok(j) for j in ("demo", "stranger", "rhino")},
             "timings_s": self.timings, "notes": self.notes, "checks": self.checks}, indent=1))
 
 
@@ -173,6 +178,82 @@ def demo_journey(r: Report, exe: str, work: Path, env: dict, cache: Path) -> Non
             results["verdicts"].get("expected_rejection", 0) == expected["expected_rejections"], results["verdicts"])
 
 
+# ----------------------------------------------------------------------- journey R
+
+def rhino_journey(r: Report, exe: str, work: Path, env: dict, cache: Path) -> None:
+    import hashlib
+    import sqlite3
+
+    expected = json.loads((HERE / "rhino_expected.json").read_text())
+    logs = r.out / "rhino"
+    logs.mkdir(parents=True, exist_ok=True)
+    print("\nR. the Rhino example")
+
+    code, out, t = run([exe, "runtimes", "install", "rhino"], work, env, logs / "runtime.log")
+    r.timings["install_runtime_rhino"] = round(t, 1)
+    jar = cache / "runtimes" / "rhino" / "1.9.1" / "rhino-all-1.9.1.jar"
+    r.check("rhino", "the pinned Rhino downloads and verifies", code == 0 and jar.is_file() and "verified" in out,
+            out[-400:])
+    project = work / "spreadex-rhino"
+    code, out, _ = run([exe, "example", "rhino", str(project)], work, env, logs / "example.log")
+    if not r.check("rhino", "`spreadex example rhino` writes the project", code == 0 and (project / "spreadex.yaml").is_file(),
+                   out[-400:]):
+        return
+    for gid in ("fandango", "grammarinator"):
+        code, out, t = run([exe, "generators", "install", gid], project, env, logs / f"install-{gid}.log")
+        r.timings[f"rhino_install_{gid}"] = round(t, 1)
+        r.check("rhino", f"{gid} installs", code == 0, out[-400:])
+    code, out, _ = run([exe, "doctor"], project, env, logs / "doctor.log")
+    r.check("rhino", "doctor passes (Java, runtime, generators, recording)", code == 0, out[-800:])
+    r.check("rhino", "doctor verifies the Fuzz4All recording", "replays a recording: 100 of 100 inputs" in out, out[-800:])
+
+    code, out, t = run([exe, "run", "-j", "4"], project, env, logs / "run.log")
+    r.timings["rhino_run"] = round(t, 1)
+    keep_artifacts(project, logs)
+    if not r.check("rhino", "campaign completes", code == 0, out[-600:]):
+        return
+    r.check("rhino", "the infinite loop is reported as a timeout, not as a confirmed defect",
+            "timeout" in out and "Crashes ............... 0" in out
+            and not any(w in out.lower() for w in ("defect", "bug found", "found a bug")), out[-1200:])
+    r.check("rhino", "the report says Fuzz4All was replayed, not generated",
+            "REPLAYED from a saved recording" in out and "not a controlled comparison" in out, out[-1200:])
+    m = latest_manifest(project)
+    corpus, results = m["corpus"], m["results"]
+    sel = corpus.get("selection") or {}
+    sources = {st["generator"]: st.get("source") for st in corpus.get("generation_stats") or []}
+    db = sqlite3.connect(project / ".spreadex" / "corpus.db")
+    order = [h for (h,) in db.execute("SELECT blob_hash FROM executions WHERE run_id=? ORDER BY rank", (m["run_id"],))]
+    failing = [rk for (rk,) in db.execute(
+        "SELECT rank FROM executions WHERE run_id=? AND verdict IN ('crash','timeout') ORDER BY rank", (m["run_id"],))]
+    db.close()
+    digest = hashlib.sha256(("\n".join(order) + "\n").encode()).hexdigest()
+    runtime = (m["targets"][0].get("runtimes") or [{}])[0]
+    r.notes["rhino_observed"] = {"generator_counts": corpus.get("generator_counts"), "sources": sources,
+                                 "selection": sel, "verdicts": results["verdicts"],
+                                 "signatures": len(results["signatures"]), "first_failing_rank": failing[:1],
+                                 "priority_order_sha256": digest}
+    r.check("rhino", "equal requested counts; actual counts as frozen",
+            corpus.get("generator_counts") == {g: expected["inputs_per_generator"] for g in expected["generators"]},
+            corpus.get("generator_counts"))
+    r.check("rhino", "generation modes are labelled", sources == expected["sources"], sources)
+    r.check("rhino", "the manifest names the pinned runtime",
+            runtime.get("version") == "1.9.1" and runtime.get("verified") is True and runtime.get("sha256") ==
+            "1cc2b468a51857747dcb29ae533e352a2abc04e81c5aa61e397dc774dd395329", runtime)
+    r.check("rhino", "grammar checksums are recorded", set(corpus.get("grammars") or {}) == {"fandango", "grammarinator"},
+            corpus.get("grammars"))
+    r.check("rhino", "CC selection as frozen", sel.get("selected") == expected["selected"]
+            and sorted(sel.get("dropped", [])) == sorted(expected["dropped"]), sel)
+    r.check("rhino", "CC scores as frozen",
+            all(abs((sel.get("scores") or {}).get(g, -1) - v) < 1e-4 for g, v in expected["cc"].items()), sel.get("scores"))
+    r.check("rhino", "verdicts as frozen", results["verdicts"] == expected["verdicts"]
+            and results["executed"] == expected["executed"], results["verdicts"])
+    r.check("rhino", "signatures as frozen", len(results["signatures"]) == expected["signatures"], len(results["signatures"]))
+    r.check("rhino", "first failing input at the frozen priority rank", failing[:1] == [expected["first_failing_rank"]], failing[:3])
+    r.check("rhino", "the whole priority order is identical", digest == expected["priority_order_sha256"], digest)
+    code, out, _ = run([exe, "replay", m["run_id"]], project, env, logs / "replay.log")
+    r.check("rhino", "the campaign can be replayed", code == 0, out[-600:])
+
+
 # ----------------------------------------------------------------------- journey B
 
 def stranger_journey(r: Report, exe: str, work: Path, env: dict) -> None:
@@ -228,7 +309,7 @@ def stranger_journey(r: Report, exe: str, work: Path, env: dict) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", default="acceptance-out", help="where to write the report and logs")
-    ap.add_argument("--only", choices=["demo", "stranger"], help="run one journey")
+    ap.add_argument("--only", choices=["demo", "stranger", "rhino"], help="run one journey")
     args = ap.parse_args()
 
     out = Path(args.out).resolve()
@@ -248,6 +329,8 @@ def main() -> int:
             demo_journey(r, exe, work, env, cache)
         if args.only in (None, "stranger"):
             stranger_journey(r, exe, work, env)
+        if args.only in (None, "rhino"):
+            rhino_journey(r, exe, work, env, cache)
     r.write()
     print(f"\nreport: {out / 'report.json'}")
     print("ACCEPTANCE " + ("PASSED" if r.ok() else "FAILED"))

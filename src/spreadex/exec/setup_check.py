@@ -19,6 +19,11 @@ _PATTERNS = [
     (re.compile(r"can't open file .*No such file or directory", re.I), "the script it runs was not found"),
     (re.compile(r"^.*: (No such file or directory|command not found)$", re.M), "a file or program in the command was not found"),
     (re.compile(r"Error: Could not find or load main class", re.I), "Java could not find the main class"),
+    # The JVM reserves more address space than SpreadEx's per-input memory limit allows (Linux
+    # enforces it; macOS does not). Every input would otherwise look like a crash.
+    (re.compile(r"Error occurred during initialization of VM", re.I),
+     "Java could not start under the memory limit; raise sut.memory_mb or add JVM flags such as "
+     "-Xmx256m -XX:CompressedClassSpaceSize=64m"),
     (re.compile(r"Error: Unable to access jarfile", re.I), "Java could not find the jar file"),
     (re.compile(r"^ModuleNotFoundError: No module named", re.M), "a Python module the system needs is not installed"),
     (re.compile(r"^Error: Cannot find module", re.M), "a Node.js module the system needs was not found"),

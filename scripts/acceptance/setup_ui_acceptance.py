@@ -10,6 +10,11 @@ real Chromium, only clicks, types and reads what is on screen:
              refused after a failed test; the fix opens step 2 and keeps 3-5 locked.
   init       a project made by `spreadex init`: opens at step 1 with the command prefilled (and
              kept when another card is picked) and steps 2-5 locked.
+  example    from a fresh project and from a configured one with history: Start from an example ->
+             Rhino opens a SEPARATE Workbench at step 1, command prefilled and untested, later steps
+             locked; the user's project is byte-for-byte untouched; Inputs shows the grammar per
+             generator; Generators shows FuzzingBook not recommended and Fuzz4All replaying a
+             recording; the file Review & run would write keeps every example setting.
   no-config  campaign history whose spreadex.yaml is then deleted while the Workbench is open:
              step 1 again, empty command, later steps locked, the old campaigns still listed,
              and the server refuses to launch from its stale state.
@@ -382,6 +387,62 @@ def stopped_cli_run(r: Report, exe: str, project: Path, env: dict, ui: Workbench
             status in ("aborted", "cancelled", "failed"), status)
 
 
+def snapshot(folder: Path) -> dict:
+    """Every file under a folder and its bytes' hash: to prove the folder was not touched."""
+    import hashlib
+    return {str(p.relative_to(folder)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(folder.rglob("*")) if p.is_file() and p.name != "ui-token"}
+
+
+def click_text(page, text: str) -> None:
+    page.get_by_role("button", name=text).first.click()
+
+
+def example(r: Report, page, project: Path) -> None:
+    before = snapshot(project)
+    goto_step(page, 1)
+    page.locator("[data-start='example']").click()
+    page.locator("[data-example='rhino'] .primary").wait_for()
+    page.locator("[data-example='rhino'] .primary").click()
+    page.wait_for_function("() => document.querySelector('.demo-tag') && /Example: Rhino/.test(document.querySelector('.demo-tag').textContent)",
+                           timeout=60000)
+    page.locator("#sut-cmd").wait_for()
+    r.check("the example opens in its own Workbench", "Example: Rhino" in page.locator(".demo-tag").inner_text())
+    r.check("it opens at step 1", "System under test" in current_step(page), current_step(page))
+    cmd = page.locator("#sut-cmd").input_value()
+    r.check("the Rhino command is prefilled", "${SPREADEX_RUNTIME_RHINO}" in cmd and "tools.shell.Main" in cmd, cmd)
+    r.check("it is not treated as tested: later steps locked", steps(page) == [True, False, False, False, False], steps(page))
+    r.check("no test result is shown before testing", "System ready!" not in page.locator("#probe").inner_text())
+    r.check("the user's project is untouched", snapshot(project) == before,
+            sorted(set(snapshot(project)) ^ set(before)))
+
+    text = test_connection(page)
+    r.check("Test connection passes on the pinned Rhino", "System ready!" in text, text)
+    click_text(page, "Continue to Inputs")
+    page.locator(".prep-table").wait_for()
+    table = page.locator(".prep-table").inner_text()
+    r.check("Inputs shows a grammar for each generator", "rhino.fan" in table and "rhino.g4" in table, table)
+    r.check("Inputs says Fuzz4All replays a recorded corpus",
+            "replays a recorded corpus" in page.locator("main").inner_text())
+    click_text(page, "Continue to Generators")
+    page.locator("[data-gen='fuzzingbook']").wait_for()
+    fb = page.locator("[data-gen='fuzzingbook']").inner_text()
+    r.check("FuzzingBook is marked not recommended, with the reason", "Not recommended for this example" in fb, fb)
+    f4a = page.locator("[data-gen='fuzz4all']").inner_text()
+    r.check("Fuzz4All is labelled as replaying a recording", "Replays a recording" in f4a, f4a)
+    click_text(page, "Continue to Testing strategy")
+    click_text(page, "Continue to Review & run")
+    page.locator("#preview").wait_for(state="attached")
+    y = page.locator("#preview").text_content()
+    r.check("the file Review & run would write keeps every example setting",
+            '"mode":"recorded"' in y and "rhino.fan" in y and "rhino.g4" in y and "presets:" in y
+            and "${SPREADEX_RUNTIME_RHINO}" in y, y[-600:])
+    notice = re.search(r"Installed on first run:[^\n]*", page.locator("main").inner_text())
+    r.check("no false install notice for a replayed generator",
+            not notice or "Fuzz4All" not in notice.group(0), notice.group(0) if notice else "")
+    r.check("the user's project is still untouched", snapshot(project) == before)
+
+
 def scenario(r: Report, browser, name: str, exe: str, project: Path, env: dict, body, before=None) -> None:
     r.scenario = name
     print(f"\n  -- {name}")
@@ -450,6 +511,14 @@ def main() -> int:
             r.scenario = "no-config"
             cli_run(r, exe, p_gone, env)
             scenario(r, browser, "no-config", exe, p_gone, env, lambda page, ui: no_config(r, page, ui, p_gone))
+
+            p_ex = work / "example-from-fresh"
+            p_ex.mkdir()
+            scenario(r, browser, "example-from-fresh", exe, p_ex, env, lambda page, ui: example(r, page, p_ex))
+            p_ex2 = init_project(exe, work / "example-from-configured", env, python, corpus=True)
+            r.scenario = "example-from-configured"
+            cli_run(r, exe, p_ex2, env)
+            scenario(r, browser, "example-from-configured", exe, p_ex2, env, lambda page, ui: example(r, page, p_ex2))
 
             p_back = init_project(exe, work / "returning", env, python, corpus=True)
             r.scenario = "returning"

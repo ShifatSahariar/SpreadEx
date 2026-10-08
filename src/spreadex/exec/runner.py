@@ -82,10 +82,13 @@ class Target:
         would otherwise resolve against the wrong directory and every single
         input would look like a crash.
         """
+        from ..runtimes import substitute
+
+        command = [substitute(part) if "${SPREADEX_RUNTIME_" in part else part for part in self.command]
         if self.base_dir is None:
-            return list(self.command)
+            return command
         out = []
-        for i, part in enumerate(self.command):
+        for i, part in enumerate(command):
             if part.startswith(("./", "../")) or (part.startswith("/") is False and "/" in part):
                 candidate = (self.base_dir / part).resolve()
                 if candidate.exists():

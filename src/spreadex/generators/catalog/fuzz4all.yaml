@@ -1,0 +1,25 @@
+id: fuzz4all
+name: Fuzz4All
+summary: An LLM writes test programs from documentation and an example, refining its prompt as it goes.
+homepage: https://github.com/fuzz4all/fuzz4all
+license: Apache-2.0
+notes: >-
+  This version replays a saved Fuzz4All corpus (generation.fuzz4all.mode: recorded), with its
+  provenance. Live generation needs an LLM provider and is not available yet.
+install:
+  # Nothing is installed for replaying a recording. Live generation will drive the authors'
+  # artifact pinned at this commit.
+  type: none
+  upstream: fuzz4all@0bf42fe
+  reason: >-
+    live Fuzz4All generation is not available in this version; replay a saved corpus with
+    `generation: {fuzz4all: {mode: recorded, corpus: <folder>}}`
+reference:
+  venue: ICSE
+  year: 2024
+  authors: 'Xia et al.'
+  title: 'Fuzz4All: Universal Fuzzing with Large Language Models'
+family: llm-based
+capabilities:
+  grammar: documentation
+  recorded: true

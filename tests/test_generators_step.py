@@ -42,7 +42,7 @@ def test_the_api_lists_real_generators_and_keeps_upcoming_ones_apart(tmp_path):
     real = {g["id"] for g in r["generators"]}
     soon = {u["id"] for u in r["upcoming"]}
     assert real == set(load_catalog()) and not (real & soon)
-    assert {"clusgram", "nautilus", "dharma", "fuzz4all"} <= soon and "llm" not in soon
+    assert {"clusgram", "nautilus", "dharma"} <= soon and "llm" not in soon
     assert all(u["family"] in FAMILIES for u in r["upcoming"])
     assert all(g["family"] in FAMILIES for g in r["generators"])
     assert {f["id"] for f in r["families"]} == FAMILIES
@@ -161,13 +161,24 @@ def test_an_incompatible_generator_cannot_be_ticked_unless_it_is_already_chosen(
     assert '${fit.ok || chosen ? "" : "disabled"}' in card
 
 
-def test_fuzz4all_is_listed_inactive_in_the_llm_family_and_cannot_be_run():
-    from spreadex.core.config import Config
+def test_fuzz4all_is_a_real_llm_generator_that_only_replays_a_recording(tmp_path):
+    """Live Fuzz4All needs an LLM provider this version does not have: it is listed, in the LLM
+    family, but usable only where a recording is configured -- and says why otherwise."""
+    from spreadex.core.config import Config, load_config
+
     r = setup.generator_status(Config.unconfigured(Path(".")))
-    f = next(u for u in r["upcoming"] if u["id"] == "fuzz4all")
-    assert f["name"] == "Fuzz4All" and f["family"] == "llm-based"
-    assert "fuzz4all" not in {g["id"] for g in r["generators"]}
+    f = next(g for g in r["generators"] if g["id"] == "fuzz4all")
+    assert f["family"] == "llm-based" and f["replay_only"] and not f["installed"]
+    assert not f["recorded"] and "live Fuzz4All generation is not available" in f["unavailable"]
+    assert "fuzz4all" not in {u["id"] for u in r["upcoming"]}
     assert "LLM generator" not in JS and 'fuzz4all: "gen-llm.png"' in JS
+
+    (tmp_path / "spreadex.yaml").write_text(
+        "sut: {command: [x, '{input}']}\noracle: {type: crash}\ngenerators: [fuzz4all]\n"
+        "generation: {fuzz4all: {mode: recorded, corpus: rec}}\n")
+    r = setup.generator_status(load_config(tmp_path / "spreadex.yaml"))
+    f = next(g for g in r["generators"] if g["id"] == "fuzz4all")
+    assert f["recorded"] and f["unavailable"] is None
 
 
 # ------------------------------------------------ install later, on the run
@@ -316,8 +327,10 @@ def test_the_api_carries_the_reference_for_real_and_upcoming_generators(tmp_path
     r = setup.generator_status(Config.unconfigured(tmp_path))
     assert all(g["reference"] for g in r["generators"])
     soon = {u["id"]: u["reference"] for u in r["upcoming"]}
+    # Fuzz4All moved from upcoming to the catalog (replay-only); its checked reference moved with it.
+    refs = {**soon, **{g["id"]: g["reference"] for g in r["generators"]}}
     for gid, (venue, year) in VERIFIED_UPCOMING.items():
-        assert (soon[gid]["venue"], soon[gid]["year"]) == (venue, year), gid
+        assert (refs[gid]["venue"], refs[gid]["year"]) == (venue, year), gid
     assert soon["clusgram"] == {"kind": "\u2014"}, "ClusGram is under review: a dash, no venue or year"
     assert "venue" not in soon["dharma"], "Dharma has no paper"
     assert soon["dharma"]["kind"] == "Mozilla's grammar fuzzer"

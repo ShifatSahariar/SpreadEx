@@ -52,6 +52,10 @@ class GenerationStats:
     hit_cap: bool = False     # ...and whether it reached it, which in time
                               # mode means the comparison was not really
                               # equal-time for this generator
+    #: "fresh" (generated in this run) or "recorded" (replayed from a saved recording).
+    source: str = "fresh"
+    #: For a replay: where it came from, its manifest checksum and the recording's provenance.
+    recording: dict | None = None
 
     @property
     def throughput_per_s(self) -> float:
@@ -70,6 +74,8 @@ class GenerationStats:
             "partial": self.partial,
             "cap": self.cap,
             "hit_cap": self.hit_cap,
+            "source": self.source,
+            **({"recording": self.recording} if self.recording else {}),
         }
 
 
@@ -212,11 +218,15 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
 
     if generators:
         mgr = manager or GeneratorManager()
-        # Never install implicitly: report and stop, naming the fix.
-        mgr.ensure(generators, log=log, auto_install=False)
-
-        derived = derive_grammars(config, generators, log=log)
         gen_cfg = config.raw.get("generation") or {}
+        recorded = recorded_sources(config)
+        fresh = [g for g in generators if g not in recorded]
+        # Never install implicitly: report and stop, naming the fix. A replayed generator needs
+        # nothing installed.
+        if fresh:
+            mgr.ensure(fresh, log=log, auto_install=False)
+
+        derived = derive_grammars(config, fresh, log=log) if fresh else {}
         mode = (gen_cfg.get("mode") or "count").lower()
 
         # Uniform allocation. The honest default, and the baseline any adaptive
@@ -232,6 +242,9 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
             cap = int(gen_cfg.get("count", 200))
 
         for gid in generators:
+            if gid in recorded:
+                out.extend(_replay(gid, recorded[gid], cap, mode, seconds, log, stats))
+                continue
             grammar = grammar_for(config, gid, derived)
             if grammar is None:
                 log(f"  ! {gid}: no grammar configured -- skipping")
@@ -274,6 +287,48 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
             )
 
     return out
+
+
+def recorded_sources(config) -> dict[str, Path]:
+    """Generators configured to replay a recording: {id: folder}.
+
+        generation:
+          fuzz4all: {mode: recorded, corpus: recorded/fuzz4all}
+
+    There is no fallback between modes: a generator asked to replay never generates instead,
+    and one asked to generate never replays.
+    """
+    gen_cfg = config.raw.get("generation") or {}
+    out = {}
+    for gid in config.generators or []:
+        entry = gen_cfg.get(gid)
+        if not isinstance(entry, dict):
+            continue
+        mode = entry.get("mode")
+        if mode == "recorded":
+            if not entry.get("corpus"):
+                raise GeneratorError(f"generation.{gid}: `mode: recorded` needs `corpus: <folder>`")
+            out[gid] = (config.project_root / entry["corpus"]).resolve()
+        elif mode not in (None, "live"):
+            raise GeneratorError(f"generation.{gid}.mode is {mode!r}; expected recorded or live")
+    return out
+
+
+def _replay(gid: str, folder: Path, cap: int, mode: str, seconds: float, log, stats) -> list[GeneratedInput]:
+    """Inputs from a recording, attributed to the generator that wrote them."""
+    from ..generators.recorded import load
+
+    st = GenerationStats(generator=gid, mode=mode, requested_count=None if mode == "time" else cap,
+                         requested_seconds=seconds, cap=cap, source="recorded")
+    rec = load(folder, gid, cap)
+    st.produced = len(rec.inputs)
+    st.hit_cap = st.produced >= cap
+    st.recording = {"path": str(folder), "manifest_sha256": rec.recording_sha256,
+                    "available": rec.available, "provenance": rec.provenance}
+    if stats is not None:
+        stats.append(st)
+    log(f"  {gid}: {len(rec.inputs)} inputs replayed from a recording (not generated in this run)")
+    return [GeneratedInput(data, gid, 0.0) for data in rec.inputs]
 
 
 def from_corpus(path: Path, log=print) -> list[GeneratedInput]:

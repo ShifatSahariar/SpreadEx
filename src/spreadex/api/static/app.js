@@ -14,6 +14,8 @@ const tokenStore = { get: k => { try { return sessionStorage.getItem(k) || local
 // Opened from the link `spreadex ui` printed (it carries the token): start on Home. A reload of a
 // tab keeps its place instead.
 const FRESH_OPEN = !!incoming.searchParams.get("token");
+// `?open=setup`: a bundled example was just opened from another Workbench: go to its wizard.
+const OPEN_SETUP = incoming.searchParams.get("open") === "setup";
 // `?tour=1`: the guided demo was just opened; read before the address is cleaned.
 const TOUR_START = incoming.searchParams.get("tour") === "1";
 if (TOUR_START && !incoming.searchParams.get("token")) {
@@ -546,11 +548,18 @@ async function paintDemoCard() {
 function stepDone(id) {
   const c = cfg();
   if (id === "sut") return targets().some(t => (t.command || []).length) && S.verifiedSut === sutKey(c.sut);
-  if (id === "grammar") return !!(c.grammar?.source || c.corpus?.path) && S.confirmed.has(id);
+  if (id === "grammar") return hasInputs(c) && S.confirmed.has(id);
   if (id === "generators") return !!((c.generators || []).length || c.corpus?.path) && S.confirmed.has(id);
   if (id === "strategy") return !!c.oracle && S.confirmed.has(id);
   return false;
 }
+// A grammar per generator (`grammar: {fandango: x.fan, ...}`), as a prepared example ships; the
+// engine uses each as written (core/sources.grammar_for).
+function perGenGrammars(c) {
+  return Object.entries((c || {}).grammar || {}).filter(([k, v]) => k !== "source" && typeof v === "string");
+}
+function hasInputs(c) { return !!(c.grammar?.source || c.corpus?.path || perGenGrammars(c).length); }
+
 // Every step can be opened once the project has a valid spreadex.yaml AND campaign history. Old
 // campaigns without a config (spreadex.yaml deleted, or no longer parsing) are kept and still
 // listed under Campaigns, but there is no setup to return to: the wizard starts at step 1.
@@ -953,7 +962,13 @@ function buildYaml() {
     }
   }
   lines.push("", `generators: [${(c.generators || []).join(", ")}]`);
-  if (c.grammar?.source) lines.push("", "grammar:", `  source: ${c.grammar.source}`);
+  // One grammar for every generator (`source`), and/or a prepared grammar per generator.
+  const perGen = Object.entries(c.grammar || {}).filter(([k, v]) => k !== "source" && typeof v === "string");
+  if (c.grammar?.source || perGen.length) {
+    lines.push("", "grammar:");
+    if (c.grammar?.source) lines.push(`  source: ${c.grammar.source}`);
+    perGen.forEach(([gid, p]) => lines.push(`  ${gid}: ${q(p)}`));
+  }
   if (c.corpus?.path) lines.push("", "corpus:", `  path: ${c.corpus.path}`);
   if (c.input_extension) lines.push("", `input_extension: ${q(c.input_extension)}`);
   if (c.generator_options && Object.keys(c.generator_options).length) {
@@ -969,11 +984,17 @@ function buildYaml() {
       Object.entries(c.semantics.native).forEach(([gid, p]) => lines.push(`    ${gid}: ${q(p)}`));
     }
   }
+  // Per-generator generation settings (e.g. `fuzz4all: {mode: recorded, corpus: ...}`) are kept.
+  const genPer = Object.entries(c.generation || {}).filter(([, v]) => v && typeof v === "object");
   if ((c.generation?.mode || "time") === "time" && !c.generation?.count) {
     lines.push("", "generation:", "  mode: time",
                `  per_generator: ${c.generation.per_generator || "30s"}`);
   } else if (c.generation?.count) {
     lines.push("", "generation:", `  count: ${c.generation.count}`);
+  }
+  if (genPer.length) {
+    if (!c.generation?.count && !((c.generation?.mode || "time") === "time")) lines.push("", "generation:");
+    genPer.forEach(([gid, v]) => lines.push(`  ${gid}: ${q(v)}`));
   }
   lines.push("", "budget:",
     `  generation: ${c.budget?.generation || "1m"}`,
@@ -983,6 +1004,12 @@ function buildYaml() {
   lines.push("", `selection_signal: ${c.selection_signal || "cc"}`,
     "embedding:", `  model: ${c.embedding?.model || "tfidf"}`,
     "", `seed: ${c.seed ?? 42}`, "");
+  // Settings the wizard does not edit are carried over unchanged, never dropped (JSON is YAML).
+  const known = new Set(["sut", "oracle", "generators", "grammar", "corpus", "input_extension", "generator_options",
+    "semantics", "generation", "budget", "selection", "selection_signal", "embedding", "seed"]);
+  Object.entries(c).filter(([k, v]) => !known.has(k) && v !== undefined && v !== null)
+    .forEach(([k, v]) => lines.push(`${k}: ${q(v)}`));
+  lines.push("");
   return lines.join("\n");
 }
 
@@ -1612,7 +1639,77 @@ function sutResult() {
     <button class="ghost small res-btn" onclick="toggleProbeDetails()" aria-expanded="${!!S.probeShowDetails}">${S.probeShowDetails ? "Hide details" : "View details"}</button></div>`;
 }
 
+// ---- Step 1's starting point: a bundled example (its own project) or the user's own program.
+// Shown outside the demo, an example and the tour; opening an example never changes this project, so
+// it is offered on a configured one too. The execution cards below are HOW a program runs;
+// choosing an example is WHAT is tested.
+const EXAMPLE_TITLES = { rhino: "Rhino", minicalc: "MiniCalc" };
+function showStartChoice() { return !S.project?.demo && !S.project?.example && !S.tour; }
+function startRow() {
+  if (!showStartChoice()) return "";
+  const mode = S.start || "own";
+  const opt = (id, label, sub) => `<button type="button" role="radio" class="start-opt ${mode === id ? "on" : ""}"
+      aria-checked="${mode === id}" data-start="${id}" onclick="pickStart('${id}')"><strong>${label}</strong><span class="muted">${sub}</span></button>`;
+  return `<div class="start-row" role="radiogroup" aria-label="Starting point" data-tour="sut-start">
+    ${opt("example", "Start from an example", "A ready project: system, grammars and generators")}
+    ${opt("own", "Configure my own program", "Bring your own system under test")}</div>`;
+}
+function pickStart(id) { if (id !== "example") stashSut(); S.start = id; stepSut(); }
+function stepExamples() {
+  const exs = (S.examples || []);
+  const rhino = exs.find(x => x.name === "rhino");
+  const rt = rhino?.runtimes?.[0];
+  const again = rhino && rhino.exists && rhino.has_runs;
+  el("view").innerHTML = `
+  <div class="sut">
+   <div class="sut-main">
+    <header class="sut-head">
+      <span class="sut-badge" aria-hidden="true">1</span>
+      <div><h3>Connect your system under test</h3>
+        <p class="why">Choose an example, or configure your own program. An example opens as its own project: this one is not changed.</p></div>
+    </header>
+    ${startRow()}
+    <div class="ex-cards">
+      <section class="ex-card" data-example="rhino">
+        <h4>Rhino <span class="muted">JavaScript engine</span></h4>
+        <p class="muted">Java 11+ &middot; real-world showcase</p>
+        <p>Sets up the pinned Rhino ${esc(rt?.version || "")} release${rt ? (rt.installed ? " (already downloaded and verified)" : " (downloaded once and verified by SHA-256)") : ""},
+          its execution command, a grammar prepared for each generator, and three generators.</p>
+        <div class="ex-actions">${again
+          ? `<button type="button" class="primary" onclick="openExample('rhino', false)">Continue Rhino example ${ICONS.arrow}</button>
+             <button type="button" class="ghost" onclick="exampleFresh('rhino')">Start fresh</button>`
+          : `<button type="button" class="primary" onclick="openExample('rhino', false)">Open Rhino example ${ICONS.arrow}</button>`}</div>
+      </section>
+      <section class="ex-card" data-example="minicalc">
+        <h4>MiniCalc <span class="muted">guided tutorial</span></h4>
+        <p class="muted">Small expression language &middot; beginner-friendly</p>
+        <p>A step-by-step tour of every part of SpreadEx on a tiny calculator with a known bug.</p>
+        <div class="ex-actions"><button type="button" class="ghost" onclick="startDemo(false)">Start guided demo ${ICONS.arrow}</button></div>
+      </section>
+    </div>
+    <div id="example-msg" aria-live="polite"></div>
+    <div id="demo-hint"></div>
+   </div>
+  </div>`;
+  if (!S.examples) api("/api/examples").then(r => { S.examples = r.examples; if (S.start === "example" && S.tab === "setup" && S.step === "sut") stepExamples(); }).catch(() => {});
+}
+async function openExample(name, reset) {
+  const msg = el("example-msg");
+  const rt = ((S.examples || []).find(x => x.name === name)?.runtimes || []).find(r => !r.installed);
+  if (msg) msg.innerHTML = `<div class="note" role="status">${rt ? `Downloading and verifying ${esc(rt.title)} ${esc(rt.version)}&hellip;` : "Preparing the example&hellip;"}</div>`;
+  try {
+    const r = await api("/api/examples/open", { name, reset: !!reset });
+    if (r.ok === false) throw new Error(r.error);
+    location.href = r.url;
+  } catch (e) { if (msg) msg.innerHTML = `<div class="note bad" role="alert">${esc(e.message || e)}</div>`; }
+}
+function exampleFresh(name) {
+  if (!confirm(`Start the ${EXAMPLE_TITLES[name] || name} example over? Its campaigns are deleted and its files restored. Your own project is not touched.`)) return;
+  openExample(name, true);
+}
+
 function stepSut() {
+  if (showStartChoice() && S.start === "example") return stepExamples();
   const d = sutDraft();
   if (S.sample === undefined) S.sample = "1 + 1\n";
   const ex = SUT_EXAMPLES.find(x => x.id === d.exampleTab) || SUT_EXAMPLES.find(x => x.id === "other");
@@ -1624,6 +1721,7 @@ function stepSut() {
       <div><h3>Connect your system under test</h3>
         <p class="why">Tell SpreadEx how to run one test input against your program. We'll verify the command before configuring input generation.</p></div>
     </header>
+    ${startRow()}
 
     <section class="sut-sec" aria-labelledby="sut-q">
       <h4 id="sut-q">How do you run your program?</h4>
@@ -2348,9 +2446,46 @@ async function stepGrammar(current = () => true) {
   if (!d.sem.text && d.sem.path) d.sem.text = (spec.texts || {})[d.sem.path] || "";
   // The assistant (and a returning user) can change the config under us.
   if (cfg().grammar?.source && cfg().grammar.source !== d.picked) { d.picked = cfg().grammar.source; d.mode = "provide"; }
+  if (perGenGrammars(cfg()).length && !cfg().grammar?.source && !d.oneGrammar) { paintPrepared(); return; }
   paintInputs();
   if (d.mode !== "none" && d.picked) analyseGrammar();
 }
+
+// A project with a prepared grammar for each generator (as the Rhino example ships): shown as it is,
+// generator by generator. Continue keeps it; one grammar for all generators stays available.
+function paintPrepared() {
+  const rows = perGenGrammars(cfg());
+  const name = id => ((S.generators || []).find(g => g.id === id) || {}).name || id;
+  const dialect = id => ((S.generators || []).find(g => g.id === id) || {}).dialect || "";
+  el("view").innerHTML = `
+  <div class="sut">
+   <div class="sut-main">
+    <header class="sut-head">
+      <span class="sut-badge blue" aria-hidden="true">2</span>
+      <div><h3>Define the input specification</h3>
+        <p class="why">This project gives each generator a grammar prepared for it, used exactly as written.</p></div>
+    </header>
+    <section class="sut-sec" data-tour="inputs-prepared">
+      <h4>Grammar for each generator</h4>
+      <table class="prep-table"><thead><tr><th>Generator</th><th>Grammar file</th><th>Format</th></tr></thead><tbody>
+        ${rows.map(([gid, path]) => `<tr><td>${esc(name(gid))}</td><td class="mono">${esc(path)}</td><td class="muted">${esc(dialect(gid))}</td></tr>`).join("")}
+      </tbody></table>
+      ${(cfg().generators || []).filter(g => !rows.some(([k]) => k === g)).map(g => {
+          const rec = (cfg().generation || {})[g];
+          return `<p class="muted">${esc(name(g))}: ${rec?.mode === "recorded"
+            ? `replays a recorded corpus (<span class="mono">${esc(rec.corpus || "")}</span>), so it needs no grammar here.`
+            : "no grammar here; see the Generators step."}</p>`; }).join("")}
+      <p class="muted">To give every generator one grammar instead, <button type="button" class="linkish" onclick="useOneGrammar()">choose one grammar</button>. The prepared files stay in the project.</p>
+    </section>
+    <div id="err"></div>
+    <div class="actions sut-actions">
+      <button type="button" class="primary" data-tour="inputs-continue" onclick="commitPrepared()">Continue to Generators ${ICONS.arrow}</button>
+    </div>
+   </div>
+  </div>`;
+}
+function useOneGrammar() { inpState().oneGrammar = true; paintInputs(); }
+function commitPrepared() { S.confirmed.add("grammar"); gotoStep("generators"); tourEvent("step.grammar"); }
 
 // ------------------------------------------------------- assistant (opt-in)
 
@@ -2521,7 +2656,9 @@ function commitGrammar() {
     S.confirmed.delete("generators"); S.confirmed.delete("strategy");
   }
   S.confirmed.add("grammar");
-  S.config.grammar = source ? { source } : undefined;
+  // Prepared per-generator grammars are kept: for those generators they still win over `source`.
+  const kept = Object.fromEntries(perGenGrammars(cfg()));
+  S.config.grammar = source || Object.keys(kept).length ? { ...kept, ...(source ? { source } : {}) } : undefined;
   S.config.corpus = corpus ? { path: corpus } : undefined;
   S.config.input_extension = d.ext || undefined;
   gotoStep("generators");
@@ -2577,7 +2714,13 @@ function genState() {
 // Inputs page shows; with no grammar nothing can run, which is said plainly.
 function genFit(g) {
   const d = genState(), a = d.analysis;
-  if (!cfg().grammar?.source) return { ok: false, why: "Needs a grammar. Your inputs come from a folder." };
+  // Replay-only (live generation needs what this version lacks): usable where a recording is set.
+  if (g.replay_only) return g.recorded ? { ok: true, how: "recorded" } : { ok: false, why: g.unavailable };
+  if ((cfg().grammar || {})[g.id]) return { ok: true, how: "prepared" };
+  const pre = (S.project?.example_presets?.not_recommended || {})[g.id];
+  if (pre) return { ok: false, why: pre };
+  if (!cfg().grammar?.source) return { ok: false, why: perGenGrammars(cfg()).length
+    ? "No grammar prepared for it in this project." : "Needs a grammar. Your inputs come from a folder." };
   if (!a || a.error) return { ok: false, why: a?.error ? "The grammar could not be read." : "Checking the grammar…" };
   if (!g.emittable) return { ok: false, why: "SpreadEx cannot write this generator's grammar dialect yet." };
   const s = (a.support || []).find(x => x.generator === g.id);
@@ -2599,8 +2742,10 @@ function genSplit() {
 
 // A generator that is not installed is not a problem: it is installed when the run starts, after
 // everything has been asked. Selecting it changes the wording from a state to a plan.
-function isPending(g) { return !g.installed && (cfg().generators || []).includes(g.id); }
+function isPending(g) { return !g.installed && !g.replay_only && (cfg().generators || []).includes(g.id); }
 function installTag(g) {
+  if (g.replay_only) return g.recorded ? `<span class="tag pend" title="Its inputs were generated earlier and are replayed exactly, not generated in this run.">Replays a recording</span>`
+                                       : `<span class="tag warn">Live generation not available</span>`;
   if (g.installed) return `<span class="tag ok">Installed</span>`;
   return isPending(g) ? `<span class="tag pend">Installs when you run</span>` : `<span class="tag warn">Not installed</span>`;
 }
@@ -2658,6 +2803,7 @@ function inputSpecBar() {
         ${gram ? `<span class="spec-i">${ICONS.doc}<span class="mono">${esc(gram.split("/").pop())}</span></span>
           ${how ? `<span class="spec-i">${ICONS.grid}<span>${how}</span></span>` : ""}
           ${start ? `<span class="spec-i">${ICONS.code}<span>Start: <span class="mono">${esc(start)}</span></span></span>` : ""}`
+          : perGenGrammars(c).length ? `<span class="spec-i">${ICONS.doc}<span>A prepared grammar for each generator (${perGenGrammars(c).length})</span></span>`
           : `<span class="spec-i">${ICONS.folder}<span>${c.corpus?.path ? `Inputs folder <span class="mono">${esc(c.corpus.path)}</span>` : "No grammar chosen"}</span></span>`}
       </div></div>
     <button type="button" class="ghost small specbar-edit" onclick="gotoStep('grammar')">${ICONS.edit} Edit</button></div>`;
@@ -2752,7 +2898,7 @@ function paintGenerators() {
       <div class="gsel-h"><h4>Selected generators <span class="muted">(${sel.length})</span></h4>
         ${sel.length ? `<button type="button" class="linkish" onclick="clearGenerators()">Clear all</button>` : ""}</div>
       ${sel.length ? sel.map(g => `<div class="gsel-row">${genLogo(g.id)}<strong>${esc(g.name)}</strong>
-        <span class="muted">${g.installed ? (cleanVersion(g.version) ? "v" + esc(cleanVersion(g.version)) : "") : "installs on run"}</span>
+        <span class="muted">${g.replay_only ? (g.recorded ? "replays a recording" : "live not available") : g.installed ? (cleanVersion(g.version) ? "v" + esc(cleanVersion(g.version)) : "") : "installs on run"}</span>
         <button type="button" class="gx" onclick="removeGen('${esc(g.id)}')" aria-label="Remove ${esc(g.name)}">&times;</button></div>`).join("")
         : `<div class="muted">None yet. Tick a generator, or click one to see its options.</div>`}
     </div>
@@ -3008,7 +3154,9 @@ function timeoutSecs() { return durationSeconds(sut().timeout || "5s") || 5; }
 // the saved file can never disagree with what is on screen.
 function syncRun() {
   const r = runState(), b = budgetFromRun(r, nGenerators(), timeoutSecs());
-  S.config.generation = b.generation;
+  // The budget replaces count/mode only; per-generator settings (e.g. a recorded Fuzz4All) are kept.
+  const perGen = Object.fromEntries(Object.entries(cfg().generation || {}).filter(([, v]) => v && typeof v === "object"));
+  S.config.generation = { ...perGen, ...b.generation };
   S.config.budget = b.budget;
   S.config.selection_signal = r.signal;
   // Only meaningful with something to choose from, and only with Cluster Coverage scores to choose by.
@@ -3044,7 +3192,7 @@ function readiness() {
       why: !targets().some(t => (t.command || []).length) ? "Add the command that runs your program and test the connection."
          : S.verifiedSut ? "The execution settings changed since they were last tested. Test the connection again."
          : "The connection has not been tested in this browser. Test it on step 1." },
-    { id: "grammar", t: "Grammar", ok: !!(c.grammar?.source || c.corpus?.path), fix: "grammar", why: "Choose a grammar, or a folder of inputs." },
+    { id: "grammar", t: "Grammar", ok: hasInputs(c), fix: "grammar", why: "Choose a grammar, or a folder of inputs." },
     { id: "generators", t: "Generators", ok: !!((c.generators || []).length || c.corpus?.path), fix: "generators", why: "Select at least one generator." },
     { id: "strategy", t: "Strategy", ok: !!c.oracle, fix: "strategy", why: "Choose what to detect." },
     { id: "budget", t: "Budget", ok: !runProblems(r).length, fix: null, why: runProblems(r)[0] || "" },
@@ -3084,6 +3232,7 @@ function summaryCard() {
   const cmd = t ? (t.command || []).slice(0, 2).join(" ") : "Not set";
   const d = inpState();
   const inputs = c.grammar?.source ? `${d.lang ? esc(langById(d.lang).t) + " · " : ""}<span class="mono">${esc(c.grammar.source.split("/").pop())}</span>`
+    : perGenGrammars(c).length ? `A prepared grammar for each generator (${perGenGrammars(c).length})`
     : c.corpus?.path ? `Folder <span class="mono">${esc(c.corpus.path)}</span>` : "Not chosen";
   const gens = (c.generators || []).map(id => ((S.generators || []).find(g => g.id === id) || { name: id }).name);
   const o = c.oracle || {};
@@ -3506,13 +3655,16 @@ function tabGenerators(d) {
   const sel = d.selection;
   const selTag = n => !sel ? "" : sel.selected.includes(n) ? ` <span class="vtag green">Selected by CC</span>`
     : sel.dropped.includes(n) ? ` <span class="vtag">Not selected</span>` : "";
+  // Inputs replayed from a recording were not generated in this run: every row says which.
+  const replayed = Object.fromEntries((d.generation_stats || []).filter(st => st.source === "recorded").map(st => [st.generator, st]));
+  const modeTag = n => replayed[n] ? ` <span class="vtag" title="${esc(replayed[n].recording?.provenance?.source || "a saved recording")}">Replayed recording</span>` : "";
   const sorts = { executed: g => -g.executed, findings: g => -g.findings, pass: g => -(g.pass_rate ?? -1), cc: g => -(g.cc ?? -1) };
   const key = S.gsort || "executed";
   const rows = [...gens].sort((a, b) => sorts[key](a) - sorts[key](b));
   const fv = g => ["crash", "timeout", "divergence"].map(k => g.verdicts[k] ? `<span class="count ${VERDICTS[k].tone}" title="${VERDICTS[k].label}">${g.verdicts[k]}</span>` : "").join("") || `<span class="muted">0</span>`;
   const ccMax = Math.max(1, ...gens.map(g => g.cc || 0));
   const table = `<div class="tscroll"><table class="rtable"><thead><tr><th>Generator</th><th>Generated</th><th>Valid</th><th>Executed</th><th>Failing inputs</th><th>Pass rate</th><th>Cluster coverage ${hint("hint-cc-col", "How much of the pooled input space this generator's inputs reach. It is relative to the pool in this run: add or remove a generator and every score changes.")}</th></tr></thead><tbody>
-    ${rows.map(g => `<tr><td><i class="dotc" style="background:${genColor(g.name, names)}"></i>${esc(g.name)}${selTag(g.name)}</td><td>${num(g.generated)}</td><td>${num(g.valid)}</td><td>${num(g.executed)}</td><td>${fv(g)}</td>
+    ${rows.map(g => `<tr><td><i class="dotc" style="background:${genColor(g.name, names)}"></i>${esc(g.name)}${selTag(g.name)}${modeTag(g.name)}</td><td>${num(g.generated)}</td><td>${num(g.valid)}</td><td>${num(g.executed)}</td><td>${fv(g)}</td>
       <td class="passcell"><span>${g.pass_rate == null ? "—" : (100 * g.pass_rate).toFixed(1) + "%"}</span><span class="o-b"><span style="width:${100 * (g.pass_rate || 0)}%;background:#16A34A"></span></span></td>
       <td class="passcell"><span>${g.cc == null ? "—" : g.cc.toFixed(3)}</span><span class="o-b"><span style="width:${g.cc == null ? 0 : 100 * g.cc / ccMax}%;background:#1687F8"></span></span></td></tr>`).join("")}</tbody></table></div>`;
   const sortSel = `<label class="sortby">Sort by <select onchange="S.gsort = this.value; paintRun()">${[["executed", "Executed inputs"], ["findings", "Findings"], ["pass", "Pass rate"], ["cc", "Cluster coverage"]]
@@ -3536,6 +3688,11 @@ function tabGenerators(d) {
 
   const totalValid = gens.reduce((s, g) => s + (g.valid || 0), 0), big = gens.reduce((a, g) => (!a || g.valid > a.valid ? g : a), null);
   const notes = [...(d.corpus?.signal_caveats || [])];
+  const names_r = Object.keys(replayed);
+  if (names_r.length) {
+    const model = names_r.map(n => replayed[n].recording?.provenance?.model).filter(Boolean)[0];
+    notes.push(`${names_r.join(", ")}: inputs replayed from a recording made earlier${model ? ` (${model})` : ""}, not generated in this run. The other generators generated theirs now, so this is not a controlled comparison of the generators.`);
+  }
   if (gens.length > 1 && big && totalValid && big.valid / totalValid > 0.5) notes.push(`${big.name} contributed ${fmtPct(big.valid, totalValid, 0)} of the comparison pool, so pool-relative cluster coverage favours it partly for that reason. Interpret the scores with care.`);
   const basis = d.generation_mode === "time" ? "Equal time" : d.generation_mode === "count" ? "Equal count" : "";
   const rec = ccRows.length > 1 ? `<div class="rec"><span class="stile green" aria-hidden="true">${ICONS.stats}</span><div><strong>SpreadEx recommendation</strong>
@@ -3543,7 +3700,7 @@ function tabGenerators(d) {
 
   if (!gens.length) return `<div class="empty">This run recorded no generator breakdown.</div>`;
   return `<div class="resgrid one">
-    ${resCard("Generator comparison", `${basis ? `<div class="muted rbasis">Comparison basis: ${basis}</div>` : ""}${sel ? `<div class="rnote" data-tour="gen-selection">${ICONS.info}<div>This campaign kept ${sel.selected.length === 1 ? "the generator" : `the <strong>${sel.selected.length}</strong> generators`} with the highest Cluster Coverage (${sel.selected.map(esc).join(", ")}). Inputs from ${sel.dropped.map(esc).join(", ")} were generated and measured, but not executed.</div></div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
+    ${resCard("Generator comparison", `${basis ? `<div class="muted rbasis">Comparison basis: ${basis}</div>` : ""}${sel ? `<div class="rnote" data-tour="gen-selection">${ICONS.info}<div>This campaign kept ${sel.selected.length === 1 ? "the generator" : `the <strong>${sel.selected.length}</strong> generators`} with the highest Cluster Coverage (${sel.selected.map(esc).join(", ")}). Inputs from ${sel.dropped.map(esc).join(", ")} were ${sel.dropped.some(n => replayed[n]) ? (sel.dropped.every(n => replayed[n]) ? "replayed" : "generated or replayed") : "generated"} and measured, but not executed.</div></div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
     ${rec}
     <div class="resgrid three">
       ${resCard("Executed inputs per generator", executedChart)}
@@ -4499,10 +4656,20 @@ new MutationObserver(tourSchedule).observe(document.getElementById("view") || do
 // The demo Workbench says what it is, and offers the way back.
 function paintDemoStrip() {
   let strip = el("demo-strip");
-  if (!S.project?.demo) { strip?.remove(); return; }
+  if (!S.project?.demo && !S.project?.example) { strip?.remove(); return; }
   if (!strip) {
     strip = Object.assign(document.createElement("div"), { id: "demo-strip", className: "demo-strip" });
     document.querySelector("header.topbar").insertAdjacentElement("afterend", strip);
+  }
+  if (S.project.example) {
+    const disclosure = S.project.example_presets?.disclosure;
+    strip.innerHTML = `<span class="demo-tag">Example: ${esc(EXAMPLE_TITLES[S.project.example] || S.project.example)}</span>
+      <span class="muted">A bundled example, separate from your project. Its campaigns run for real.</span>
+      ${disclosure ? hint("hint-example", disclosure) : ""}
+      <span class="grow"></span>
+      <button type="button" class="ghost small" onclick="exampleFresh('${esc(S.project.example)}')">Start fresh</button>
+      ${S.project.return_url ? `<a class="ghost small demo-back" href="${esc(S.project.return_url)}">${ICONS.back} Back to my project</a>` : ""}`;
+    return;
   }
   strip.innerHTML = `<span class="demo-tag">Demo Workspace</span>
     <span class="muted">A bundled example, separate from your project. Its campaigns run for real.</span>
@@ -4553,7 +4720,7 @@ function paintDemoStrip() {
     } catch (e) { /* no job info is not an error */ }
     // Just opened from Home: begin at step 1. (Reloaded mid-tour, it carries on from where it was.)
     if (S.project.demo && TOUR_START) { renderSteps(); return tourStart(); }
-    const v = FRESH_OPEN ? { tab: "landing" } : initialView(S.project, S.runs, loadView(), stepReachable);
+    const v = FRESH_OPEN && !OPEN_SETUP ? { tab: "landing" } : initialView(S.project, S.runs, OPEN_SETUP ? null : loadView(), stepReachable);
     if (v.step) S.step = v.step;
     if (v.rview) S.rview = v.rview;
     if (v.current) S.current = v.current;

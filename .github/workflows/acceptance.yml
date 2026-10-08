@@ -28,6 +28,11 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pyproject.toml
+      # The Rhino example runs on Java; its pinned runtime itself is downloaded and verified by SpreadEx.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
 
       - name: Install SpreadEx into a fresh virtual environment (not editable)
         run: |
@@ -53,12 +58,14 @@ jobs:
           mkdir -p logs
           start=$(date +%s)
           spreadex generators install fuzzingbook fandango grammarinator 2>&1 | tee logs/unit-generator-install.log
+          # The real-Rhino unit tests need the pinned jar (downloaded and SHA-256 verified).
+          spreadex runtimes install rhino 2>&1 | tee -a logs/unit-generator-install.log
           echo "unit generator install: $(( $(date +%s) - start ))s" | tee -a logs/timings.txt
           "$PY" -m pytest tests -q -p no:cacheprovider -m "not network" --ignore=tests/golden \
             -rfE --junitxml=logs/unit-junit.xml 2>&1 | tee logs/unit.log
           exit ${PIPESTATUS[0]}
 
-      - name: Acceptance A (demo) and B (stranger SUT)
+      - name: Acceptance A (demo), B (stranger SUT) and R (Rhino example)
         if: always()
         run: |
           "$PY" scripts/acceptance/run_acceptance.py --out acceptance-out 2>&1 | tee logs/acceptance.log

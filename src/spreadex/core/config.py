@@ -132,6 +132,10 @@ def _expand_env(entry: dict, config_path: Path) -> dict:
 
         def sub(m):
             name = m.group(1)
+            if name.startswith("SPREADEX_RUNTIME_"):
+                # A pinned runtime (spreadex/runtimes.py): resolved to its verified cached path
+                # when the command runs, so a config naming one loads before it is installed.
+                return m.group(0)
             value = os.environ.get(name)
             if value is None:
                 raise ConfigError(

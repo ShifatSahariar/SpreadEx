@@ -21,7 +21,7 @@ def test_initial_view_lands_in_the_agreed_order():
     assert 'project.configured' not in iv and 'step: "run"' not in iv
     boot = APP[APP.index("(async function () {"):]
     assert boot.index('"/api/active"') < boot.index("initialView(")
-    assert "initialView(S.project, S.runs, loadView(), stepReachable)" in boot
+    assert "initialView(S.project, S.runs, OPEN_SETUP ? null : loadView(), stepReachable)" in boot
 
 
 def test_landing_enters_the_existing_setup_step_without_config_writes():
@@ -819,8 +819,16 @@ def test_the_row_scrolls_before_a_title_can_wrap():
 def test_opening_from_the_spreadex_ui_link_lands_on_home():
     assert 'const FRESH_OPEN = !!incoming.searchParams.get("token");' in APP
     boot = APP[APP.index("(async function () {"):]
-    assert 'FRESH_OPEN ? { tab: "landing" } : initialView(' in boot
+    assert 'FRESH_OPEN && !OPEN_SETUP ? { tab: "landing" } : initialView(' in boot
     assert "!FRESH_OPEN && act.active" in boot
+
+
+def test_an_example_opened_from_another_workbench_lands_on_its_wizard():
+    """`open=setup` is set only by /api/examples/open, so a bundled example opens on step 1
+    (no runs) instead of Home; every other token link still lands on Home."""
+    assert 'const OPEN_SETUP = incoming.searchParams.get("open") === "setup";' in APP
+    setup_py = (ROOT / "src/spreadex/api/setup.py").read_text()
+    assert setup_py.count('"&open=setup"') == 1 and "def example_open" in setup_py
 
 
 def test_light_is_the_shipped_theme_and_a_choice_is_kept_for_the_machine():

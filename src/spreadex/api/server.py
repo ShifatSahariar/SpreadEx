@@ -204,6 +204,10 @@ class _Handler(BaseHTTPRequestHandler):
             _registry().set_pref("theme", theme)
             self._json({"ok": True, "theme": theme})
             return
+        if route == "/api/examples/open":
+            back = f"http://{self.headers.get('Host') or '127.0.0.1'}/"
+            self._json_result(setup.example_open(self.server, body, back))
+            return
         if route == "/api/demo/open":
             # Back to this Workbench from the demo: same origin, so the browser still holds its token.
             back = f"http://{self.headers.get('Host') or '127.0.0.1'}/"
@@ -298,7 +302,11 @@ class _Handler(BaseHTTPRequestHandler):
                 "theme": _registry().prefs().get("theme"),
                 # The guided demo's own Workbench says so, and where it was opened from.
                 "demo": bool(getattr(self.server, "spreadex_demo", None)),
-                "return_url": (getattr(self.server, "spreadex_demo", None) or {}).get("return_url"),
+                # A bundled example opened from another Workbench (not the guided demo).
+                "example": (getattr(self.server, "spreadex_example", None) or {}).get("name"),
+                "example_presets": (self.config.raw.get("presets") or {}) if self.config.configured else {},
+                "return_url": (getattr(self.server, "spreadex_demo", None)
+                               or getattr(self.server, "spreadex_example", None) or {}).get("return_url"),
                 # Can a run write its results? The review screen's Storage check. Looks at the state
                 # directory if it exists, otherwise at the project folder that would contain it.
                 "writable": _can_write(self.config.state_dir),
@@ -370,6 +378,10 @@ class _Handler(BaseHTTPRequestHandler):
         if route == "/api/generators":
             from . import setup
             self._json(setup.generator_status(self.config))
+            return
+        if route == "/api/examples":
+            from . import setup
+            self._json(setup.examples_status(self.server))
             return
         if route == "/api/demo":
             from . import setup
@@ -613,6 +625,7 @@ def make_server(config, host: str = "127.0.0.1", port: int | None = None, verbos
     httpd.spreadex_experimental = experimental
     httpd.spreadex_jobs = JobRunner()
     httpd.spreadex_demo = None
+    httpd.spreadex_example = None
     return httpd
 
 

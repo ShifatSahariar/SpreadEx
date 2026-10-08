@@ -158,6 +158,30 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
         return checks
     checks.append(Check("spreadex.yaml", OK, str(config.project_root / "spreadex.yaml")))
 
+    # Pinned runtimes a command refers to (${SPREADEX_RUNTIME_<NAME>}), and the Java they need.
+    from .. import runtimes
+
+    for name in sorted({r for t in config.targets for part in t.command for r in runtimes.references(part)}):
+        try:
+            rt = runtimes.get(name)
+        except runtimes.RuntimeUnavailable as exc:
+            checks.append(Check(f"runtime '{name}'", FAIL, str(exc), "correct the command in spreadex.yaml"))
+            continue
+        java = runtimes.java_major()
+        if java is None:
+            checks.append(Check(f"java for {name}", FAIL, f"no `java` on PATH; {rt.title} needs Java {rt.java_min}+",
+                                f"install a JDK {rt.java_min} or newer"))
+        elif java < rt.java_min:
+            checks.append(Check(f"java for {name}", FAIL, f"Java {java} found; {rt.title} {rt.version} needs {rt.java_min}+",
+                                f"install a JDK {rt.java_min} or newer"))
+        else:
+            checks.append(Check(f"java for {name}", OK, f"Java {java} (needs {rt.java_min}+)"))
+        cached = runtimes.verified(name)
+        checks.append(Check(f"runtime '{name}'", OK if cached else FAIL,
+                            f"{rt.title} {rt.version}, sha256 verified" if cached
+                            else f"{rt.title} {rt.version} is not installed",
+                            f"spreadex runtimes install {name}"))
+
     # Targets: the single most common source of a broken first run.
     for t in config.targets:
         exe = t.command[0]
@@ -200,8 +224,28 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
         from ..generators import GeneratorError, GeneratorManager
         from ..generators.adapters import ADAPTERS
 
+        from ..core.sources import recorded_sources
+        from ..generators.recorded import load as load_recording
+
         mgr = GeneratorManager()
+        try:
+            recorded = recorded_sources(config)
+        except GeneratorError as exc:
+            checks.append(Check("generation", FAIL, str(exc), "fix `generation:` in spreadex.yaml"))
+            recorded = {}
+        count = int((config.raw.get("generation") or {}).get("count", 200))
         for gid in config.generators:
+            if gid in recorded:
+                # Replayed, not generated: nothing to install; the recording itself must verify.
+                try:
+                    rec = load_recording(recorded[gid], gid, count)
+                    checks.append(Check(f"generator '{gid}'", OK,
+                                        f"replays a recording: {len(rec.inputs)} of {rec.available} inputs, "
+                                        f"checksums verified (not generated in this run)"))
+                except GeneratorError as exc:
+                    checks.append(Check(f"generator '{gid}'", FAIL, str(exc),
+                                        "restore the recording, or remove the generator"))
+                continue
             try:
                 gen = mgr.get(gid)
             except GeneratorError:
