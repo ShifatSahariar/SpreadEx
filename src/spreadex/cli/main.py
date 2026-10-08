@@ -808,7 +808,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("directory", nargs="?", help="project root (default: .)")
     s.add_argument("--command", nargs="+", help="SUT command, e.g. --command java -jar sut.jar '{input}'")
     s.add_argument("--grammar", default=None,
-                   help="your grammar file (default in the template: grammar.g4, to replace)")
+                   help="your grammar file, relative to the project (BNF, EBNF, ANTLR .g4, ...); "
+                        "if omitted, spreadex.yaml gets a placeholder (grammar.g4) to replace, "
+                        "or use corpus.path for a folder of inputs instead")
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_init)
 
