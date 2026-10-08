@@ -26,6 +26,8 @@ jobs:
               echo "::error::$heavy was pulled in by the default dependency set"; exit 1
             fi
           done
+      # Some tests run real generators; install the pinned ones (host generators stay off).
+      - run: spreadex generators install fuzzingbook fandango grammarinator
       - run: pytest tests/ -q -m "not network" --ignore=tests/golden
       # This runs WITHOUT the research repository, against outputs frozen from
       # it, so every fork and every pull request verifies the published

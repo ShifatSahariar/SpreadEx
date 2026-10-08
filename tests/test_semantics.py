@@ -127,6 +127,7 @@ def test_an_encrypted_pdf_is_refused_with_advice():
 
 
 def test_a_damaged_pdf_is_a_clean_error_not_a_traceback():
+    pytest.importorskip("pypdf", reason="reading PDFs is the optional `docs` extra")
     with pytest.raises(SpecError, match="Could not read that PDF"):
         extract_text("bad.pdf", b"%PDF-1.4 this is not a pdf")
 

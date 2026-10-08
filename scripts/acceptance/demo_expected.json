@@ -1,0 +1,13 @@
+{
+  "_what": "Frozen evidence for the bundled demo (spreadex 0.1.0a0, 3 identical fresh runs on 2026-10-06, macOS). The acceptance runner compares an installed `spreadex demo` against this; a difference on another OS is a reproducibility problem to report, not a value to update.",
+  "generators": ["fuzzingbook", "fandango", "grammarinator"],
+  "inputs_per_generator": 40,
+  "selected": ["fandango"],
+  "dropped": ["fuzzingbook", "grammarinator"],
+  "cc": {"fandango": 0.5294, "fuzzingbook": 0.3529, "grammarinator": 0.2941},
+  "executed": 45,
+  "crash_inputs": 6,
+  "signatures": 3,
+  "first_finding_position": 17,
+  "expected_rejections": 0
+}
