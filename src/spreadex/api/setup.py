@@ -972,3 +972,46 @@ def example_open(server, body: dict, return_url: str) -> dict[str, Any]:
         url = start_background(config, embedded_in=server.spreadex_config.project_root,
                                spreadex_example={"name": ex.name, "return_url": return_url})
     return {"ok": True, "url": url + "&open=setup", "root": str(root), "log": log}
+
+
+# ------------------------------------------------------------------ guides: CLI reference
+
+def cli_reference() -> dict[str, Any]:
+    """The command-line reference, read from the real argument parser (so it cannot drift).
+
+    Commands without help text are internal aliases and are left out.
+    """
+    import argparse
+
+    from ..cli.main import build_parser
+
+    def args_of(parser):
+        out = []
+        for a in parser._actions:
+            if isinstance(a, (argparse._HelpAction, argparse._SubParsersAction)) or a.help == argparse.SUPPRESS:
+                continue
+            out.append({"name": ", ".join(a.option_strings) if a.option_strings else a.dest,
+                        "positional": not a.option_strings,
+                        "optional": bool(a.option_strings) or a.nargs in ("?", "*"),
+                        "help": a.help or ""})
+        return out
+
+    parser = build_parser()
+    commands = []
+    for action in parser._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        helps = {c.dest: c.help for c in action._choices_actions}
+        for name, sub in action.choices.items():
+            if not helps.get(name):
+                continue
+            subs = []
+            for inner in sub._actions:
+                if isinstance(inner, argparse._SubParsersAction):
+                    inner_help = {c.dest: c.help for c in inner._choices_actions}
+                    subs = [{"name": n, "help": inner_help.get(n) or "", "args": args_of(p)}
+                            for n, p in inner.choices.items()]
+            commands.append({"name": name, "help": helps[name], "args": args_of(sub), "subcommands": subs})
+    globals_ = [{"name": ", ".join(a.option_strings), "help": a.help or ""}
+                for a in parser._actions if a.option_strings and not isinstance(a, argparse._HelpAction)]
+    return {"commands": commands, "global": globals_}

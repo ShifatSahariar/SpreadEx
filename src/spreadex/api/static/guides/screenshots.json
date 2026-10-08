@@ -1,0 +1,177 @@
+{
+ "sut-start": {
+  "project": "fresh",
+  "screen": "step1",
+  "caption": "Step 1 on a new project: choose a starting point, then how your program is run.",
+  "marks": [
+   {
+    "selector": "[data-tour='sut-start']",
+    "label": "Start from an example, or configure your own program"
+   },
+   {
+    "selector": ".sut-kinds",
+    "label": "How the program is started (not which program)"
+   },
+   {
+    "selector": "[data-tour='sut-command']",
+    "label": "The command; {input} becomes each test file"
+   },
+   {
+    "selector": "[data-tour='sut-test']",
+    "label": "Run it once on a sample"
+   }
+  ]
+ },
+ "sut-examples": {
+  "project": "fresh",
+  "screen": "step1-examples",
+  "caption": "Start from an example: each opens as its own project; this one is not changed.",
+  "marks": [
+   {
+    "selector": "[data-example='rhino']",
+    "label": "Rhino: a real JavaScript engine"
+   },
+   {
+    "selector": "[data-example='minicalc']",
+    "label": "MiniCalc: the guided tutorial"
+   }
+  ]
+ },
+ "sut-ready": {
+  "project": "own",
+  "screen": "step1-tested",
+  "caption": "A successful Test connection on a custom program.",
+  "marks": [
+   {
+    "selector": "#probe",
+    "label": "The result: here, System ready!"
+   }
+  ]
+ },
+ "inputs-modes": {
+  "project": "own",
+  "screen": "step2",
+  "caption": "Step 2: where inputs come from.",
+  "marks": [
+   {
+    "selector": ".inp-lang",
+    "label": "Optional language and file extension"
+   },
+   {
+    "selector": "[data-tour='inputs-grammar']",
+    "label": "Grammar, or a folder of inputs"
+   }
+  ]
+ },
+ "inputs-prepared": {
+  "project": "rhino",
+  "screen": "step2",
+  "caption": "The Rhino example gives each generator a grammar prepared for it.",
+  "marks": [
+   {
+    "selector": "[data-tour='inputs-prepared']",
+    "label": "Generator, grammar file and format"
+   }
+  ]
+ },
+ "generators-cards": {
+  "project": "rhino",
+  "screen": "step3",
+  "caption": "Step 3 in the Rhino example: two fresh generators and one replaying a recording.",
+  "marks": [
+   {
+    "selector": "[data-gen='fandango']",
+    "label": "Recommended, installed"
+   },
+   {
+    "selector": "[data-gen='fuzz4all']",
+    "label": "Replays a recording"
+   },
+   {
+    "selector": "[data-gen='fuzzingbook']",
+    "label": "Not recommended here, with the reason"
+   }
+  ]
+ },
+ "strategy-checks": {
+  "project": "rhino",
+  "screen": "step4",
+  "caption": "Step 4: what counts as a failure.",
+  "marks": [
+   {
+    "selector": ".preset-pick",
+    "label": "Use a preset"
+   },
+   {
+    "selector": ".schecks",
+    "label": "What to detect"
+   }
+  ]
+ },
+ "run-options": {
+  "project": "rhino",
+  "screen": "step5",
+  "caption": "Step 5: budgets, ordering and generator selection.",
+  "marks": [
+   {
+    "selector": "[data-tour='run-genbudget']",
+    "label": "Generation budget"
+   },
+   {
+    "selector": "[data-tour='run-execbudget']",
+    "label": "Execution budget"
+   },
+   {
+    "selector": "[data-tour='run-ordering']",
+    "label": "Test ordering and generator selection"
+   }
+  ]
+ },
+ "run-ready": {
+  "project": "rhino",
+  "screen": "step5-ready",
+  "caption": "The readiness check names anything still missing.",
+  "marks": [
+   {
+    "selector": "#run-ready",
+    "label": "Readiness, with Fix links"
+   },
+   {
+    "selector": "[data-tour='run-launch']",
+    "label": "Run campaign"
+   }
+  ]
+ },
+ "results-list": {
+  "project": "rhino",
+  "screen": "campaigns",
+  "caption": "Campaigns: every campaign of this project, with its status.",
+  "marks": []
+ },
+ "results-generators": {
+  "project": "rhino",
+  "screen": "run-generators",
+  "caption": "The Generators tab: CC selection, and Fuzz4All marked as a replayed recording.",
+  "marks": [
+   {
+    "selector": "[data-tour='gen-compare']",
+    "label": "Per-generator comparison and its basis"
+   }
+  ]
+ },
+ "results-findings": {
+  "project": "rhino",
+  "screen": "run-findings",
+  "caption": "A finding: the input, the output, the classification evidence, and Replay.",
+  "marks": [
+   {
+    "selector": "[data-tour='fd-class']",
+    "label": "Why it was classified this way"
+   },
+   {
+    "selector": "[data-tour='fd-replay']",
+    "label": "Run it again"
+   }
+  ]
+ }
+}

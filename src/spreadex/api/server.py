@@ -379,6 +379,10 @@ class _Handler(BaseHTTPRequestHandler):
             from . import setup
             self._json(setup.generator_status(self.config))
             return
+        if route == "/api/cli":
+            from . import setup
+            self._json(setup.cli_reference())
+            return
         if route == "/api/examples":
             from . import setup
             self._json(setup.examples_status(self.server))

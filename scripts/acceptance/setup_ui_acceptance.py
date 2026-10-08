@@ -15,6 +15,9 @@ real Chromium, only clicks, types and reads what is on screen:
              locked; the user's project is byte-for-byte untouched; Inputs shows the grammar per
              generator; Generators shows FuzzingBook not recommended and Fuzz4All replaying a
              recording; the file Review & run would write keeps every example setting.
+  guides     Help & Guides from the menu: seven sections with their screenshots, contextual Guide
+             links from a step and from a failed Test connection, example tabs, collapsed advanced
+             sections, the CLI reference from the parser, a phone-sized layout and dark theme.
   no-config  campaign history whose spreadex.yaml is then deleted while the Workbench is open:
              step 1 again, empty command, later steps locked, the old campaigns still listed,
              and the server refuses to launch from its stale state.
@@ -443,6 +446,78 @@ def example(r: Report, page, project: Path) -> None:
     r.check("the user's project is still untouched", snapshot(project) == before)
 
 
+GUIDE_SECTIONS = ["sut", "inputs", "generators", "strategy", "run", "results", "troubleshooting"]
+
+
+def guides(r: Report, page, project: Path, python: str) -> None:
+    page.locator("#tab-guides").click()
+    page.locator(".g-body h1").wait_for()
+    r.check("the Guides menu entry opens the guides", page.locator("#tab-guides").get_attribute("aria-selected") == "true"
+            and "System under test" in page.locator(".g-body h1").inner_text())
+    broken = []
+    for sec in GUIDE_SECTIONS:
+        page.locator(f"[data-guide='{sec}']").click()
+        page.locator(f"[data-guide-section='{sec}']").wait_for()
+        for img in page.locator(".g-fig img").all():
+            img.scroll_into_view_if_needed()
+            if not page.evaluate("(i) => i.complete && i.naturalWidth > 0", img.element_handle()):
+                broken.append((sec, img.get_attribute("src")))
+    r.check("all seven sections render, every screenshot loads", not broken, broken)
+
+    page.locator("[data-guide='troubleshooting']").click()
+    page.locator(".g-cmd").first.wait_for()
+    r.check("the CLI reference is generated", page.locator(".g-cmd").count() >= 10
+            and "spreadex runtimes" in page.locator("#g-cli").inner_text())
+
+    page.locator("[data-guide='sut']").click()
+    page.locator(".g-tabs").first.wait_for()
+    tabs = page.locator(".g-tabs").first
+    tabs.locator(".g-tabbar button").nth(1).click()
+    r.check("example tabs switch", tabs.locator(".g-tabpane").nth(1).is_visible()
+            and not tabs.locator(".g-tabpane").nth(0).is_visible())
+    r.check("advanced sections start collapsed",
+            page.locator("details.g-adv").count() > 0 and page.evaluate("() => [...document.querySelectorAll('details.g-adv')].every(d => !d.open)"))
+
+    # Contextual links: from a step title, and from a failed Test connection.
+    page.locator("#tab-setup").click()
+    page.locator("#sut-cmd").fill(f"{python} missing_script.py {{input}}")
+    test_connection(page)
+    page.get_by_role("button", name="How to fix this").click()
+    page.locator("[data-guide-section='sut']").wait_for()
+    page.wait_for_timeout(400)
+    in_view = page.evaluate("() => { const r = document.getElementById('g-common-problems').getBoundingClientRect(); return r.top < innerHeight && r.bottom > 0; }")
+    r.check("a failed Test connection links to its guide section", in_view)
+    page.locator("#tab-setup").click()
+    page.locator(".sut-head .guide-link").first.click()
+    page.locator("[data-guide-section='sut']").wait_for()
+    r.check("a step's Guide link opens the matching section", page.locator("[data-guide-section='sut']").count() == 1)
+
+    # A phone: the section picker replaces the list, and nothing scrolls sideways.
+    page.set_viewport_size({"width": 375, "height": 812})
+    page.locator(".g-pick select").select_option("generators")
+    page.locator("[data-guide-section='generators']").wait_for()
+    overflow = page.evaluate("() => document.documentElement.scrollWidth - document.documentElement.clientWidth")
+    menu = page.evaluate("() => { const t = document.querySelector('.tabs'); return t.scrollWidth - t.clientWidth; }")
+    r.check("on a phone: the picker works, no sideways scrolling, the whole menu fits", overflow <= 0 and menu <= 0,
+            {"page_overflow": overflow, "menu_overflow": menu})
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+    # Dark theme: callout text stays readable on its background.
+    page.evaluate("() => applyTheme('dark')")
+    page.locator("[data-guide='generators']").click()
+    page.locator(".g-call").first.wait_for()
+    ratios = page.evaluate("""() => [...document.querySelectorAll('.g-call, .g-prob-s, .g-prob-fix')].slice(0, 6).map(el => {
+      const rgb = c => (c.match(/[\d.]+/g) || [0, 0, 0]).slice(0, 3).map(Number);
+      const lum = c => { const v = rgb(c).map(x => { x /= 255; return x <= .03928 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4; });
+        return .2126 * v[0] + .7152 * v[1] + .0722 * v[2]; };
+      let bg = getComputedStyle(el).backgroundColor, n = el;
+      while (/rgba\(0, 0, 0, 0\)|transparent/.test(bg) && n.parentElement) { n = n.parentElement; bg = getComputedStyle(n).backgroundColor; }
+      const fg = getComputedStyle(el.querySelector('p, span, strong') || el).color;
+      const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x); return (a + .05) / (b + .05); })""")
+    page.evaluate("() => applyTheme('light')")
+    r.check("dark theme: callouts keep readable contrast (4.5:1)", ratios and min(ratios) >= 4.5, ratios)
+
+
 def scenario(r: Report, browser, name: str, exe: str, project: Path, env: dict, body, before=None) -> None:
     r.scenario = name
     print(f"\n  -- {name}")
@@ -511,6 +586,10 @@ def main() -> int:
             r.scenario = "no-config"
             cli_run(r, exe, p_gone, env)
             scenario(r, browser, "no-config", exe, p_gone, env, lambda page, ui: no_config(r, page, ui, p_gone))
+
+            p_g = work / "guides"
+            p_g.mkdir()
+            scenario(r, browser, "guides", exe, p_g, env, lambda page, ui: guides(r, page, p_g, python))
 
             p_ex = work / "example-from-fresh"
             p_ex.mkdir()

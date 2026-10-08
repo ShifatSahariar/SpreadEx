@@ -108,7 +108,7 @@ function initialView(project, runs, saved, reachable) {
   return { tab: "setup", step: "sut" };
 }
 function savedViewValid(v, runs, reachable) {
-  if (v.tab === "landing") return true;
+  if (v.tab === "landing" || v.tab === "guides") return true;
   if (v.tab === "results") return v.rview === "list" ? runs.length > 0
     : v.rview === "run" && runs.some(r => r.run_id === v.current);
   if (v.tab === "setup") return STEPS.some(x => x.id === v.step) && reachable(v.step);
@@ -116,7 +116,7 @@ function savedViewValid(v, runs, reachable) {
 }
 const VIEW_KEY = "spreadex-view";
 function saveView() {
-  const v = { tab: S.tab, step: S.step, rview: S.rview === "live" ? "list" : S.rview, current: S.current };
+  const v = { tab: S.tab, step: S.step, rview: S.rview === "live" ? "list" : S.rview, current: S.current, guide: S.guide?.id };
   try { sessionStorage.setItem(VIEW_KEY, JSON.stringify(v)); } catch (e) { /* blocked storage */ }
 }
 function loadView() {
@@ -363,12 +363,14 @@ function go(tab) {
   el("tab-home").setAttribute("aria-selected", tab === "landing");
   el("tab-setup").setAttribute("aria-selected", tab === "setup");
   el("tab-results").setAttribute("aria-selected", tab === "results");
+  el("tab-guides")?.setAttribute("aria-selected", tab === "guides");
   el("steps").style.display = tab === "setup" ? "" : "none";
   // The Campaigns menu opens the list, except while one is running: then it is that one.
   if (tab === "results" && S.rview !== "live" && S.rview !== "run") S.rview = S.live?.active ? "live" : "list";
   if (tab === "setup" && !stepReachable(S.step)) { S.step = firstOpenStep(); renderSteps(); }
   saveView();
   if (tab === "landing") { renderLanding(); paintDemoCard(); }
+  else if (tab === "guides") renderGuides();
   else tab === "setup" ? renderStep() : renderResults();
 }
 // A step is reachable when every step before it is complete; an unreachable one sends you to the
@@ -459,7 +461,7 @@ function renderLanding() {
             <h2 id="get-started-title">Get started</h2>
             <p>Set up a subject, choose generators, and run your first testing campaign.</p>
           </div>
-          <button class="link-arrow" onclick="go('setup')">View documentation ${ICONS.arrow}</button>
+          <button class="link-arrow" onclick="go('guides')">View documentation ${ICONS.arrow}</button>
         </div>
         <div class="start-cards">
           ${STEPS.map(card).join(`<span class="card-arrow">${ICONS.arrow}</span>`)}
@@ -1296,7 +1298,7 @@ function stepStrategy() {
    <div class="sut-main">
     <header class="sut-head">
       <span class="sut-badge orange" aria-hidden="true">4</span>
-      <div class="strat-title"><h3>What do you want to detect? ${hint("hint-strat", "SpreadEx runs every input, then these checks decide which results deserve your attention. Most generated input is invalid on purpose, so a refusal is not automatically a bug.")}</h3>
+      <div class="strat-title"><h3>What do you want to detect? ${guideLink("strategy")} ${hint("hint-strat", "SpreadEx runs every input, then these checks decide which results deserve your attention. Most generated input is invalid on purpose, so a refusal is not automatically a bug.")}</h3>
         <p class="why">Choose how results are judged.</p></div>
       <div class="preset-pick"><button type="button" class="ghost" aria-haspopup="menu" aria-expanded="${st.menu}" onclick="stratMenu()">Use a preset ${ICONS.chevron}</button>
         ${st.menu ? `<div class="preset-menu" role="menu">${Object.entries(STRATEGY_PRESETS).map(([id, p]) =>
@@ -1617,7 +1619,7 @@ function sutResult() {
   if (!r.ok) {
     return `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span>
       <div class="res-main"><div class="res-t">It did not run</div>
-      <div class="res-s">${esc(r.error)}</div></div></div>`;
+      <div class="res-s">${esc(r.error)}</div><div class="res-s">${guideLink("sut", "common-problems", "How to fix this")}</div></div></div>`;
   }
   const dead = r.timed_out;
   const facts = [["Command", `<span class="mono">${esc((r.command || []).join(" "))}</span>`],
@@ -1665,7 +1667,7 @@ function stepExamples() {
    <div class="sut-main">
     <header class="sut-head">
       <span class="sut-badge" aria-hidden="true">1</span>
-      <div><h3>Connect your system under test</h3>
+      <div><h3>Connect your system under test ${guideLink("sut")}</h3>
         <p class="why">Choose an example, or configure your own program. An example opens as its own project: this one is not changed.</p></div>
     </header>
     ${startRow()}
@@ -1718,7 +1720,7 @@ function stepSut() {
    <div class="sut-main">
     <header class="sut-head">
       <span class="sut-badge" aria-hidden="true">1</span>
-      <div><h3>Connect your system under test</h3>
+      <div><h3>Connect your system under test ${guideLink("sut")}</h3>
         <p class="why">Tell SpreadEx how to run one test input against your program. We'll verify the command before configuring input generation.</p></div>
     </header>
     ${startRow()}
@@ -2358,7 +2360,7 @@ function paintInputs() {
    <div class="sut-main">
     <header class="sut-head">
       <span class="sut-badge blue" aria-hidden="true">2</span>
-      <div><h3>Define the input specification</h3>
+      <div><h3>Define the input specification ${guideLink("inputs")}</h3>
         <p class="why">Tell SpreadEx what valid test inputs for your program look like and where they come from.</p></div>
     </header>
 
@@ -2462,7 +2464,7 @@ function paintPrepared() {
    <div class="sut-main">
     <header class="sut-head">
       <span class="sut-badge blue" aria-hidden="true">2</span>
-      <div><h3>Define the input specification</h3>
+      <div><h3>Define the input specification ${guideLink("inputs")}</h3>
         <p class="why">This project gives each generator a grammar prepared for it, used exactly as written.</p></div>
     </header>
     <section class="sut-sec" data-tour="inputs-prepared">
@@ -2844,7 +2846,7 @@ function paintGenerators() {
    <div class="sut-main">
     <header class="sut-head">
       <span class="sut-badge purple" aria-hidden="true">3</span>
-      <div><h3>Choose your input generators</h3>
+      <div><h3>Choose your input generators ${guideLink("generators")}</h3>
         <p class="why">Select one or more generators. SpreadEx will handle compatible grammar formats.</p></div>
     </header>
     ${inputSpecBar()}
@@ -3218,7 +3220,7 @@ function readyCard() {
   const bad = items.filter(i => !i.ok);
   return `<div class="ready-l ${ready ? "ok" : "warn"}">
       <span class="ready-ico" aria-hidden="true">${ready ? ICONS.success : ICONS.alert}</span>
-      <div><h4>${ready ? "Ready to run" : "Not ready yet"} ${hint("hint-ready", "Each item is checked from what you set in the earlier steps. A problem names the step to fix.")}</h4>
+      <div><h4>${ready ? "Ready to run" : "Not ready yet"} ${ready ? "" : guideLink("run", "common-problems", "Help")} ${hint("hint-ready", "Each item is checked from what you set in the earlier steps. A problem names the step to fix.")}</h4>
         ${ready ? "" : `<div class="ready-why" role="status">${bad.map(i => `${esc(i.why)}${i.fix ? ` <button type="button" class="linkish" onclick="gotoStep('${i.fix}')">Fix</button>` : ""}`).join("<br>")}</div>`}</div></div>
     <ul class="ready-list">${items.map(i => `<li class="${i.ok ? "ok" : "bad"}"><span aria-hidden="true">${i.ok ? ICONS.success : ICONS.error}</span>${esc(i.t)}</li>`).join("")}</ul>
     <div class="ready-est" id="run-est">${estimateLines()}</div>`;
@@ -3274,7 +3276,7 @@ async function stepRun(current = () => true) {
    <div class="sut-main">
     <header class="sut-head">
       <span class="sut-badge red" aria-hidden="true">5</span>
-      <div><h3>Review &amp; run</h3>
+      <div><h3>Review &amp; run ${guideLink("run")}</h3>
         <p class="why">Set the budget, review your configuration, and launch the campaign.</p></div>
     </header>
 
@@ -4067,7 +4069,7 @@ function campaignsList() {
       <td>${esc(fmtDur(r.duration_s))}</td><td>${esc(fmtBytes(r.size_bytes))}</td>
       <td class="rowacts">${act(r)}</td></tr>`).join("");
   return `<div class="resws">
-    <div class="listhead"><div><h2>Campaigns</h2><p class="muted">${runs.length} run${runs.length === 1 ? "" : "s"} in this project, from the Workbench and the command line. Open one to see what happened.</p></div>
+    <div class="listhead"><div><h2>Campaigns ${guideLink("results")}</h2><p class="muted">${runs.length} run${runs.length === 1 ? "" : "s"} in this project, from the Workbench and the command line. Open one to see what happened.</p></div>
       ${canAct() ? `<button type="button" class="primary" onclick="go('setup'); gotoStep('run')" ${live ? "disabled title=\"A campaign is already running\"" : ""}>${ICONS.playOutline} Run a campaign</button>` : ""}</div>
     ${S.listError ? `<div class="note bad" role="alert">${esc(S.listError)}</div>` : ""}
     ${live ? `<button type="button" class="livebanner" onclick="watchActive()"><span class="pulse" aria-hidden="true"></span><span><strong>${esc(campaignName(live.run_id))} is running</strong><span class="muted"> — watch it live</span></span>${ICONS.arrow}</button>` : ""}
@@ -4152,7 +4154,7 @@ function liveBody() {
       <div class="kpis">${kpi("blue", "playOutline", p?.executed || 0, "Executed")}${kpi("green", "success", v.ok || 0, "Passed")}${kpi("blue", "doc", v.expected_rejection || 0, "Rejected")}
         ${kpi("red", "bug", v.crash || 0, "Crashes")}${kpi("amber", "clock", v.timeout || 0, "Timeouts")}</div></header>
     ${L.external ? "" : `<div class="stagebar" data-tour="live-stages" role="list" aria-label="Campaign stages">${stages.map(([id, t], i) => `<div class="stg ${i < idx ? "done" : i === idx ? "now" : ""}" role="listitem" ${i === idx ? 'aria-current="step"' : ""}><span>${i < idx ? ICONS.check : i + 1}</span>${t}</div>`).join("")}</div>`}
-    ${L.error ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-t">The campaign stopped</div><div class="res-s">${esc(L.error)}</div></div>
+    ${L.error ? `<div class="res bad" role="alert"><span class="res-ico" aria-hidden="true">${ICONS.error}</span><div class="res-main"><div class="res-t">The campaign stopped</div><div class="res-s">${esc(L.error)}</div><div class="res-s">${guideLink("troubleshooting", "campaign-setup-failures", "Troubleshooting")}</div></div>
         <button type="button" class="ghost small res-btn" onclick="go('setup'); gotoStep('run')">Back to Review &amp; run</button></div>`
       : `<section class="rescard"><div class="rescard-h"><h4>Progress</h4></div>
         ${bar != null ? `<div class="usebar"><span class="o-b"><span style="width:${bar}%;background:#1687F8"></span></span><b>${bar}%</b></div><div class="muted">${esc(fmtDur(p.elapsed_s))} elapsed of up to ${esc(fmtDur(total))} (generation plus execution budget)</div>`
@@ -4173,7 +4175,7 @@ function liveBody() {
 // result looks like belongs to Home; here an empty history is just that, and the way to fill it.
 function campaignsEmpty() {
   return `<div class="resws">
-    <div class="listhead"><div><h2>Campaigns</h2><p class="muted">Manage previous and active testing campaigns.</p></div></div>
+    <div class="listhead"><div><h2>Campaigns ${guideLink("results")}</h2><p class="muted">Manage previous and active testing campaigns.</p></div></div>
     <section class="rescard cempty">
       <h3>No campaigns yet</h3>
       <p class="muted">Runs you launch from SpreadEx or the command line appear here. You can open, re-run,
@@ -4679,6 +4681,197 @@ function paintDemoStrip() {
     ${S.project.return_url ? `<a class="ghost small demo-back" href="${esc(S.project.return_url)}">${ICONS.back} Back to my project</a>` : ""}`;
 }
 
+// ------------------------------------------------------------- guides
+// Help & Guides: seven sections shipped as Markdown in static/guides/, rendered here. The renderer
+// escapes everything and understands only what the guides use, so a guide can never inject markup:
+//   # / ## / ### headings, paragraphs, - lists, | tables, ``` code, **bold**, `code`, [text](#guide/x#y)
+//   > [!NOTE|WARN|FAIL|OK] callouts          :::options  - **Name**: text  :::    (option cards)
+//   :::tabs  ::tab Name  ...  :::            :::problem Symptom / cause: / fix:  :::
+//   :::advanced Title ... :::  (collapsed)   {{img:id}} (screenshots.json)   {{cli}} (/api/cli)
+const GUIDES = [
+  { id: "sut",             n: 1, t: "System under test",         icon: "terminal",    tone: "green" },
+  { id: "inputs",          n: 2, t: "Inputs",                    icon: "doc",         tone: "blue" },
+  { id: "generators",      n: 3, t: "Generators",                icon: "sliders",     tone: "purple" },
+  { id: "strategy",        n: 4, t: "Testing strategy",          icon: "shield",      tone: "orange" },
+  { id: "run",             n: 5, t: "Review & run",              icon: "playOutline", tone: "red" },
+  { id: "results",         n: 6, t: "Results, findings & replay", icon: "chart",      tone: "slate" },
+  { id: "troubleshooting", n: 7, t: "Troubleshooting & CLI",     icon: "gear",        tone: "slate" },
+];
+const GUIDE_CACHE = { md: {}, shots: null, cli: null };
+
+// A small "Guide" link to the matching section; used beside step titles, results and errors.
+function guideLink(id, anchor = "", label = "Guide") {
+  return `<button type="button" class="guide-link" onclick="openGuide('${id}', '${anchor}')" title="Open the guide for this">${ICONS.book}<span>${esc(label)}</span></button>`;
+}
+function openGuide(id, anchor = "") { S.guide = { id, anchor }; go("guides"); }
+
+function slug(text) { return String(text).toLowerCase().replace(/<[^>]+>/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+
+function mdInline(text) {
+  let t = esc(text);
+  t = t.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
+  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/\*([^*\s][^*]*)\*/g, "<em>$1</em>");
+  // Links: in-guide (#guide/section#anchor) or https only.
+  t = t.replace(/\[([^\]]+)\]\((#guide\/[a-z-]+(?:#[a-z0-9-]+)?|https:\/\/[^)\s]+)\)/g, (_, label, href) => {
+    if (href.startsWith("#guide/")) {
+      const [sec, anc] = href.slice(7).split("#");
+      return `<a href="${href}" onclick="event.preventDefault(); openGuide('${sec}', '${anc || ""}')">${label}</a>`;
+    }
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+  return t;
+}
+
+// Lines -> HTML. Blocks opened with ":::name" close with a line that is exactly ":::".
+function mdBlocks(lines) {
+  const out = [];
+  let i = 0;
+  const para = [];
+  const flush = () => { if (para.length) { out.push(`<p>${mdInline(para.join(" "))}</p>`); para.length = 0; } };
+  const until = start => {           // the lines of a ::: block, honouring nesting and code fences
+    const body = []; let depth = 0, fence = false;
+    for (i = start; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.startsWith("```")) fence = !fence;
+      if (!fence && /^:::[a-z]/.test(l)) depth++;
+      if (!fence && l === ":::") { if (depth === 0) { i++; return body; } depth--; }
+      body.push(l);
+    }
+    return body;
+  };
+  while (i < lines.length) {
+    const l = lines[i];
+    if (l.startsWith("```")) {
+      flush(); const code = []; i++;
+      while (i < lines.length && !lines[i].startsWith("```")) code.push(lines[i++]);
+      i++; out.push(`<pre class="g-code"><code>${esc(code.join("\n"))}</code></pre>`); continue;
+    }
+    let m;
+    if ((m = /^(#{1,3}) (.+)$/.exec(l))) {
+      flush(); const lvl = m[1].length, id = slug(m[2]);
+      out.push(lvl === 1 ? `<h1 class="g-h1">${mdInline(m[2])}</h1>` : `<h${lvl} id="g-${id}" class="g-h${lvl}">${mdInline(m[2])}</h${lvl}>`);
+      i++; continue;
+    }
+    if ((m = /^\{\{img:([a-z0-9-]+)\}\}$/.exec(l.trim()))) { flush(); out.push(guideFigure(m[1])); i++; continue; }
+    if (l.trim() === "{{cli}}") { flush(); out.push(`<div id="g-cli" class="g-cli">Loading the command reference&hellip;</div>`); i++; continue; }
+    if ((m = /^> \[!(NOTE|WARN|FAIL|OK)\]\s*$/.exec(l))) {
+      flush(); const kind = m[1].toLowerCase(), body = []; i++;
+      while (i < lines.length && lines[i].startsWith(">")) body.push(lines[i++].replace(/^> ?/, ""));
+      const icon = { note: "info", warn: "alert", fail: "error", ok: "success" }[kind];
+      out.push(`<div class="g-call g-${kind}" role="note"><span class="g-call-i" aria-hidden="true">${ICONS[icon]}</span><div>${mdBlocks(body)}</div></div>`);
+      continue;
+    }
+    if ((m = /^:::(options|tabs|problem|advanced)\s*(.*)$/.exec(l))) {
+      flush(); const kind = m[1], arg = m[2]; const body = until(i + 1);
+      out.push(guideBlock(kind, arg, body)); continue;
+    }
+    if (/^\|/.test(l)) {
+      flush(); const rows = [];
+      while (i < lines.length && /^\|/.test(lines[i])) rows.push(lines[i++]);
+      const cells = r => r.replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const head = cells(rows[0]), bodyRows = rows.slice(2).map(cells);
+      out.push(`<div class="g-tablewrap"><table class="g-table"><thead><tr>${head.map(h => `<th>${mdInline(h)}</th>`).join("")}</tr></thead><tbody>${bodyRows.map(r => `<tr>${r.map(c => `<td>${mdInline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    if (/^- /.test(l)) {
+      flush(); const items = [];
+      while (i < lines.length && /^- /.test(lines[i])) items.push(lines[i++].slice(2));
+      out.push(`<ul class="g-list">${items.map(x => `<li>${mdInline(x)}</li>`).join("")}</ul>`); continue;
+    }
+    if (!l.trim()) { flush(); i++; continue; }
+    para.push(l.trim()); i++;
+  }
+  flush();
+  return out.join("\n");
+}
+
+function guideBlock(kind, arg, body) {
+  if (kind === "options") {
+    const items = body.filter(x => /^- /.test(x)).map(x => x.slice(2));
+    return `<div class="g-opts">${items.map(x => {
+      const m = /^\*\*([^*]+)\*\*(?:\s*\(([^)]*)\))?:?\s*(.*)$/.exec(x);
+      return m ? `<div class="g-opt"><div class="g-opt-t">${mdInline(m[1])}${m[2] ? ` <span class="g-tag">${mdInline(m[2])}</span>` : ""}</div><div class="g-opt-d">${mdInline(m[3])}</div></div>`
+               : `<div class="g-opt"><div class="g-opt-d">${mdInline(x)}</div></div>`;
+    }).join("")}</div>`;
+  }
+  if (kind === "tabs") {
+    const tabs = []; let cur = null;
+    body.forEach(x => { const m = /^::tab (.+)$/.exec(x); if (m) { cur = { t: m[1], lines: [] }; tabs.push(cur); } else if (cur) cur.lines.push(x); });
+    const gid = "gt" + Math.random().toString(36).slice(2, 8);
+    return `<div class="g-tabs" data-tabs="${gid}"><div class="g-tabbar" role="tablist">${tabs.map((t, k) => `<button type="button" role="tab" aria-selected="${k === 0}" class="${k === 0 ? "on" : ""}" onclick="guideTab(this, ${k})">${esc(t.t)}</button>`).join("")}</div>
+      ${tabs.map((t, k) => `<div class="g-tabpane" role="tabpanel" ${k ? "hidden" : ""}>${mdBlocks(t.lines)}</div>`).join("")}</div>`;
+  }
+  if (kind === "problem") {
+    const field = name => (body.find(x => x.startsWith(name + ":")) || "").slice(name.length + 1).trim();
+    return `<div class="g-prob"><div class="g-prob-s"><span class="g-call-i" aria-hidden="true">${ICONS.error}</span><strong>${mdInline(arg)}</strong></div>
+      <div class="g-prob-r"><span class="g-k">Likely cause</span><span>${mdInline(field("cause"))}</span></div>
+      <div class="g-prob-r g-prob-fix"><span class="g-k">${ICONS.success} Fix</span><span>${mdInline(field("fix"))}</span></div></div>`;
+  }
+  // advanced: collapsed by default
+  return `<details class="g-adv"><summary>${ICONS.gear}<span>${mdInline(arg || "Advanced")}</span></summary><div class="g-adv-b">${mdBlocks(body)}</div></details>`;
+}
+
+function guideTab(btn, k) {
+  const box = btn.closest(".g-tabs");
+  box.querySelectorAll(".g-tabbar button").forEach((b, j) => { b.classList.toggle("on", j === k); b.setAttribute("aria-selected", j === k); });
+  box.querySelectorAll(".g-tabpane").forEach((p, j) => { p.hidden = j !== k; });
+}
+
+function guideFigure(id) {
+  const s = (GUIDE_CACHE.shots || {})[id];
+  if (!s) return "";
+  return `<figure class="g-fig" id="fig-${esc(id)}"><div class="g-shot"><img src="/static/guides/img/${esc(id)}.png" alt="${esc(s.caption)}" loading="lazy"></div>
+    <figcaption>${esc(s.caption)}${(s.marks || []).length ? `<ol class="g-marks">${s.marks.map(m => `<li>${esc(m.label)}</li>`).join("")}</ol>` : ""}</figcaption></figure>`;
+}
+
+function cliHtml(ref) {
+  const args = a => a.length ? `<ul class="g-args">${a.map(x => `<li><code>${esc(x.name)}</code>${x.positional && !x.optional ? "" : x.positional ? " <span class=\"muted\">(optional)</span>" : ""}${x.help ? ` <span class="muted">${esc(x.help)}</span>` : ""}</li>`).join("")}</ul>` : "";
+  return ref.commands.map(c => `<div class="g-cmd" id="g-cli-${esc(c.name)}"><div class="g-cmd-h"><code>spreadex ${esc(c.name)}</code><span>${esc(c.help)}</span></div>
+    ${args(c.args)}${c.subcommands.length ? `<div class="g-subs">${c.subcommands.map(sc => `<div><code>spreadex ${esc(c.name)} ${esc(sc.name)}</code> <span class="muted">${esc(sc.help)}</span>${args(sc.args)}</div>`).join("")}</div>` : ""}</div>`).join("")
+    + `<p class="muted">Every command also accepts ${ref.global.map(g => `<code>${esc(g.name)}</code>`).join(", ")}.</p>`;
+}
+
+async function renderGuides() {
+  const cur = GUIDES.find(g => g.id === S.guide?.id) || GUIDES[0];
+  S.guide = { id: cur.id, anchor: S.guide?.anchor || "" };
+  const ticket = ++RENDER;
+  el("view").innerHTML = `<div class="card"><div class="empty">Loading the guide&hellip;</div></div>`;
+  try {
+    if (!GUIDE_CACHE.shots) GUIDE_CACHE.shots = await (await fetch("/static/guides/screenshots.json")).json();
+    if (!GUIDE_CACHE.md[cur.id]) {
+      const r = await fetch(`/static/guides/${cur.id}.md`);
+      if (!r.ok) throw new Error(`guide ${cur.id} is missing`);
+      GUIDE_CACHE.md[cur.id] = await r.text();
+    }
+  } catch (e) { el("view").innerHTML = `<div class="card"><div class="note bad" role="alert">${esc(e.message || e)}</div></div>`; return; }
+  if (ticket !== RENDER || S.tab !== "guides") return;
+  const body = mdBlocks(GUIDE_CACHE.md[cur.id].replace(/\r/g, "").split("\n"));
+  const toc = [...body.matchAll(/<h2 id="(g-[a-z0-9-]+)"[^>]*>(.*?)<\/h2>/g)].map(m => ({ id: m[1], t: m[2] }));
+  el("view").innerHTML = `
+  <div class="guides">
+    <nav class="g-nav" aria-label="Guides">
+      <div class="g-nav-h">${ICONS.book}<span>Guides</span></div>
+      <label class="g-pick"><span class="sr-only">Guide section</span><select onchange="openGuide(this.value)">${GUIDES.map(g => `<option value="${g.id}" ${g.id === cur.id ? "selected" : ""}>${g.n}. ${esc(g.t)}</option>`).join("")}</select></label>
+      <ol class="g-secs">${GUIDES.map(g => `<li><button type="button" class="g-sec ${g.id === cur.id ? "on" : ""}" ${g.id === cur.id ? 'aria-current="page"' : ""} data-guide="${g.id}" onclick="openGuide('${g.id}')">
+        <span class="g-n tone-${g.tone}">${g.n}</span><span>${esc(g.t)}</span></button></li>`).join("")}</ol>
+    </nav>
+    <article class="g-body" data-guide-section="${cur.id}">${body}
+      <div class="g-pager">${cur.n > 1 ? `<button type="button" class="ghost" onclick="openGuide('${GUIDES[cur.n - 2].id}')">${ICONS.back} ${esc(GUIDES[cur.n - 2].t)}</button>` : "<span></span>"}
+        ${cur.n < GUIDES.length ? `<button type="button" class="ghost" onclick="openGuide('${GUIDES[cur.n].id}')">${esc(GUIDES[cur.n].t)} ${ICONS.arrow}</button>` : ""}</div>
+    </article>
+    <aside class="g-toc" aria-label="On this page"><div class="g-toc-h">On this page</div>
+      ${toc.map(x => `<a href="#${x.id}" onclick="event.preventDefault(); document.getElementById('${x.id}').scrollIntoView({behavior: 'smooth'})">${x.t}</a>`).join("")}</aside>
+  </div>`;
+  if (cur.id === "troubleshooting" && el("g-cli")) {
+    try { GUIDE_CACHE.cli = GUIDE_CACHE.cli || await api("/api/cli"); el("g-cli").innerHTML = cliHtml(GUIDE_CACHE.cli); }
+    catch (e) { el("g-cli").innerHTML = `<div class="note bad">${esc(e.message || e)}</div>`; }
+  }
+  const target = S.guide.anchor && document.getElementById("g-" + S.guide.anchor);
+  if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
+  S.guide.anchor = "";
+}
+
 // ------------------------------------------------------------- bootstrap
 
 (async function () {
@@ -4724,6 +4917,7 @@ function paintDemoStrip() {
     if (v.step) S.step = v.step;
     if (v.rview) S.rview = v.rview;
     if (v.current) S.current = v.current;
+    if (v.guide) S.guide = { id: v.guide };
     renderSteps();
     go(v.tab);
     S.booted = true;
