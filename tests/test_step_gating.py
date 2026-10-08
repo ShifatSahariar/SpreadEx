@@ -74,12 +74,50 @@ def test_the_sut_key_is_the_same_for_a_single_command_and_its_targets_form():
     assert _node("", "sutKey({command:['a']}) === sutKey({command:['a'], input_mode:'stdin'})") is False
 
 
+def test_campaign_history_unlocks_navigation_but_marks_nothing_done():
+    setup = FULL + "S.project = {configured: true}; S.runs = [{run_id: 'r1'}];"
+    assert _node(setup, REACH) == [True, True, True, True, True]
+    assert _node(setup, "['sut','grammar','generators','strategy'].map(stepDone)") == [False] * 4
+
+
+@pytest.mark.parametrize("project", ["{configured: false}", "null"])
+def test_history_without_a_valid_config_unlocks_nothing(project):
+    """Old campaigns stay listed, but with no spreadex.yaml (or one that no longer parses) there
+    is no setup to return to."""
+    setup = FULL + f"S.project = {project}; S.runs = [{{run_id: 'r1'}}];"
+    assert _node(setup, REACH) == [True, False, False, False, False]
+
+
+def test_the_guided_tour_keeps_its_own_gates_even_with_history():
+    assert _node(FULL + "S.project = {configured: true}; S.runs = [{run_id: 'r1'}]; S.tour = {id: 'x'};", REACH) == [True, False, False, False, False]
+
+
+def test_history_does_not_count_as_a_tested_connection():
+    setup = FULL + "S.project = {configured: true}; S.runs = [{run_id: 'r1'}]; S.verifiedSut = sutKey(S.config.sut);"
+    assert _node(setup, "stepDone('sut')") is True
+    assert _node(FULL + "S.project = {configured: true}; S.runs = [{run_id: 'r1'}];", "stepDone('sut')") is False
+
+
+@pytest.mark.parametrize("change", [
+    "{command:['a'], timeout:'9s'}", "{command:['a'], memory_mb:512}", "{command:['a'], cwd:'sub'}",
+    "{command:['a'], env:{X:'1'}}", "{command:['a'], input_mode:'stdin'}", "{command:['b']}"])
+def test_every_execution_setting_is_part_of_what_was_tested(change):
+    assert _node("", f"sutKey({{command:['a']}}) === sutKey({change})") is False
+
+
+def test_a_test_and_the_saved_config_agree_on_the_key():
+    saved = "{timeout:'5s', memory_mb:512, targets:[{command:['a'], cwd:'w', env:{X:'1'}}]}"
+    flat = "{command:['a'], cwd:'w', env:{X:'1'}, input_mode:'file', timeout:'5s', memory_mb:512}"
+    assert _node("", f"sutKey({saved}) === sutKey({flat})") is True
+
+
 LAND = "initialView(P, R, V, stepReachable)"
 
 
 @pytest.mark.parametrize("project,runs,saved,expected", [
     ({"configured": False}, [], None, {"tab": "setup", "step": "sut"}),
-    ({"configured": True}, [], None, {"tab": "setup", "step": "run"}),
+    # a saved spreadex.yaml with no campaign history is prefilled, not reviewed: step 1
+    ({"configured": True}, [], None, {"tab": "setup", "step": "sut"}),
     ({"configured": True}, [{"run_id": "r2"}, {"run_id": "r1"}], None,
      {"tab": "results", "rview": "run", "current": "r2"}),
     # a saved view that still makes sense wins over the latest run

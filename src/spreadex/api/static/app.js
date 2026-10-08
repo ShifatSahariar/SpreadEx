@@ -90,18 +90,19 @@ const S = {
   rtab: "overview", rview: "list", live: null, detail: null,
   kind: null, sample: undefined, probe: null,
   generators: [], grammars: [], runs: [], current: null, polling: null,
-  // Steps the user has confirmed with Continue (or that a saved project already had), and the SUT
-  // command the last successful Test connection ran. Together they decide which steps are reachable.
-  confirmed: new Set(), verifiedSut: null,
+  // Three independent things. `confirmed`: steps the user confirmed with Continue in this session
+  // (the check marks). `verifiedSut`: the execution settings the last successful Test connection
+  // ran -- from a test now (`verifiedFrom: "test"`) or one remembered by this browser
+  // ("remembered"). Free navigation is the third, derived each time: see historyUnlocks().
+  confirmed: new Set(), verifiedSut: null, verifiedFrom: null,
 };
 
 // Where a page load lands, in this order (an active run is handled before this is asked):
-// the view this tab was on, if it still makes sense -> the latest campaign -> Review & run for a
-// configured project with no campaigns -> the first setup step for a new one.
+// the view this tab was on, if it still makes sense -> the latest campaign -> the first setup step
+// (a saved spreadex.yaml alone is not a reviewed setup: its values are prefilled, not confirmed).
 function initialView(project, runs, saved, reachable) {
   if (saved && savedViewValid(saved, runs, reachable)) return saved;
   if (runs.length) return { tab: "results", rview: "run", current: runs[0].run_id };
-  if (project.configured) return { tab: "setup", step: "run" };
   return { tab: "setup", step: "sut" };
 }
 function savedViewValid(v, runs, reachable) {
@@ -550,15 +551,38 @@ function stepDone(id) {
   if (id === "strategy") return !!c.oracle && S.confirmed.has(id);
   return false;
 }
+// Every step can be opened once the project has a valid spreadex.yaml AND campaign history. Old
+// campaigns without a config (spreadex.yaml deleted, or no longer parsing) are kept and still
+// listed under Campaigns, but there is no setup to return to: the wizard starts at step 1.
+function historyUnlocks() { return !!(S.project?.configured && (S.runs || []).length); }
 function stepReachable(id) {
   const i = STEPS.findIndex(x => x.id === id);
+  // Campaign history unlocks navigation, nothing more: no check marks, no tested command. The
+  // guided tour keeps its own step-by-step gates.
+  if (i >= 0 && historyUnlocks() && !S.tour) return true;
   return i >= 0 && STEPS.slice(0, i).every(x => stepDone(x.id));
 }
 function firstOpenStep() { return (STEPS.find(x => !stepDone(x.id)) || STEPS[STEPS.length - 1]).id; }
-// What Test connection checked. Changing any of it means the command has to be tested again.
+// Everything Test connection ran with: the command, where and with what environment, how the input
+// is passed, the timeout and the memory limit. Changing any of it means testing again. Accepts the
+// saved shape (top-level or per-target settings) and the flat shape of a test.
 function sutKey(sut) {
   const s = sut || {}, t = (s.targets || [])[0] || s;
-  return JSON.stringify([t.command || [], t.cwd || "", t.env || {}, s.input_mode || "file"]);
+  return JSON.stringify([t.command || [], t.cwd || s.cwd || "", t.env || s.env || {},
+                         t.input_mode || s.input_mode || "file", String(s.timeout || "5s").trim(),
+                         Number(t.memory_mb || s.memory_mb) || null]);
+}
+// A successful Test connection is remembered by this browser, per project, as a convenience: a
+// returning user whose execution settings are unchanged need not re-test. Never inferred from a
+// campaign having run, and shown as "verified earlier", not as a fresh test.
+function sutMemo() { return "spreadex-sut-ok:" + (S.project?.root || ""); }
+function rememberSut(key) { try { localStorage.setItem(sutMemo(), key); } catch (e) { /* convenience only */ } }
+function recalledSut() { try { return localStorage.getItem(sutMemo()); } catch (e) { return null; } }
+// Step 1's current on-screen settings as a key, or null while they do not parse.
+function draftSutKey() {
+  const r = readSut();
+  return r.problem ? null : sutKey({ command: r.argv, cwd: r.cwd, env: r.env, input_mode: r.input_mode,
+                                      timeout: r.timeout, memory_mb: r.memory_mb });
 }
 
 function renderSteps() {
@@ -1451,13 +1475,10 @@ function stashSut() {
 
 function pickSutKind(id) {
   const d = stashSut();
-  const was = SUT_KINDS.find(k => k.id === d.kind);
-  const k = SUT_KINDS.find(x => x.id === id);
   d.kind = id;
   S.kind = id;
-  // Swap the placeholder command only if the box is empty or still holds the
-  // previous card's untouched template.
-  if (k && k.cmd && (!d.command.trim() || (was && was.cmd === d.command))) d.command = k.cmd;
+  // The card's example is only the box's grey placeholder: an example is not a command to run,
+  // so the box keeps exactly what the user (or spreadex.yaml) put there.
   d.exampleTab = SUT_EXAMPLE_FOR[id] || d.exampleTab;
   S.probe = null;
   stepSut();
@@ -1531,17 +1552,39 @@ async function verifyCommand() {
   if (r.memory_mb) body.memory_mb = r.memory_mb;
   try { S.probe = await api("/api/probe", body); }
   catch (e) { S.probe = { ok: false, error: String(e.message || e) }; }
-  S.probe.key = sutKey({ command: r.argv, cwd: r.cwd, env: r.env, input_mode: r.input_mode });
+  S.probe.key = sutKey({ command: r.argv, cwd: r.cwd, env: r.env, input_mode: r.input_mode,
+                        timeout: r.timeout, memory_mb: r.memory_mb });
+  if (S.probe.ok && !S.probe.timed_out) {
+    S.verifiedSut = S.probe.key; S.verifiedFrom = "test"; rememberSut(S.probe.key);
+  }
   tourEvent(S.probe.ok && !S.probe.timed_out ? "probe.ok" : "probe.fail");
   S.probeShowDetails = false;
   stepSut();
 }
 
+// Editing any execution setting after a test turns its result into "changed since the last test".
+function sutEdited() { if (el("probe") && (S.probe || S.verifiedFrom)) el("probe").innerHTML = sutResult(); }
+
 function toggleProbeDetails() { stashSut(); S.probeShowDetails = !S.probeShowDetails; stepSut(); }
 
 function sutResult() {
   const r = S.probe;
-  if (!r) return "";
+  const now = draftSutKey();
+  // What was last tested: this session's test, or a remembered one.
+  const tested = r && !r.pending ? r.key : S.verifiedFrom === "remembered" ? S.verifiedSut : null;
+  if (tested && now && tested !== now) {
+    return `<div class="res warn" role="status" data-sut-state="stale"><span class="res-ico" aria-hidden="true">${ICONS.alert}</span>
+      <div class="res-main"><div class="res-t">Settings changed since the last test</div>
+      <div class="res-s">The command or its execution options are different from what was tested. Test the connection again.</div></div></div>`;
+  }
+  if (!r) {
+    if (S.verifiedFrom === "remembered" && now && now === S.verifiedSut) {
+      return `<div class="res note" role="status" data-sut-state="remembered"><span class="res-ico" aria-hidden="true">${ICONS.success}</span>
+        <div class="res-main"><div class="res-t">Verified earlier in this browser</div>
+        <div class="res-s">These exact settings passed Test connection before. They have not been tested again now; test again to re-check.</div></div></div>`;
+    }
+    return "";
+  }
   const check = `<span class="res-ico" aria-hidden="true">${ICONS.success}</span>`;
   if (r.pending) return `<div class="res note" role="status">Running it once&hellip;</div>`;
   if (!r.ok) {
@@ -1597,7 +1640,7 @@ function stepSut() {
       <div class="sut-lab"><label for="sut-cmd">Execution command</label>
         ${hint("hint-cmd", "SpreadEx runs this command once for every generated input. Quote any argument that contains a space.")}
         <span class="sut-pill"><code>{input}</code> will be replaced with each generated test file</span></div>
-      <input id="sut-cmd" data-tour="sut-command" class="sut-cmd" type="text" spellcheck="false" autocomplete="off"
+      <input id="sut-cmd" oninput="sutEdited()" data-tour="sut-command" class="sut-cmd" type="text" spellcheck="false" autocomplete="off"
         value="${esc(d.command)}" placeholder="${esc((SUT_KINDS.find(k => k.id === d.kind) || {}).cmd || "your-command {input}")}">
       ${d.extra.map((x, i) => `<div class="sut-extra">
         <input class="x-name" type="text" value="${esc(x.name)}" aria-label="Name of implementation ${i + 2}">
@@ -1617,14 +1660,14 @@ function stepSut() {
         <span class="muted">Working directory, environment variables, input via stdin, timeouts, resource limits&hellip;</span></summary>
       <div class="sut-adv-body">
         <label for="sut-cwd">Working directory</label>
-        <input id="sut-cwd" type="text" value="${esc(d.cwd)}" placeholder="Leave empty for a clean scratch directory (relative paths are from this project)">
+        <input id="sut-cwd" oninput="sutEdited()" type="text" value="${esc(d.cwd)}" placeholder="Leave empty for a clean scratch directory (relative paths are from this project)">
         <label for="sut-env">Environment variables <span class="muted">one NAME=value per line</span></label>
-        <textarea id="sut-env" rows="3" spellcheck="false" placeholder="JAVA_OPTS=-Xmx512m">${esc(d.env)}</textarea>
-        <label class="sut-check"><input id="sut-stdin" type="checkbox" ${d.input_mode === "stdin" ? "checked" : ""}>
+        <textarea id="sut-env" oninput="sutEdited()" rows="3" spellcheck="false" placeholder="JAVA_OPTS=-Xmx512m">${esc(d.env)}</textarea>
+        <label class="sut-check"><input id="sut-stdin" onchange="sutEdited()" type="checkbox" ${d.input_mode === "stdin" ? "checked" : ""}>
           Pass input via stdin <span class="muted">instead of as a file path</span></label>
         <div class="row">
-          <div><label for="sut-timeout">Timeout per input</label><input id="sut-timeout" type="text" value="${esc(d.timeout)}"></div>
-          <div><label for="sut-mem">Memory limit (MB)</label><input id="sut-mem" type="text" inputmode="numeric" value="${esc(d.memory_mb)}" placeholder="2048">
+          <div><label for="sut-timeout">Timeout per input</label><input id="sut-timeout" oninput="sutEdited()" type="text" value="${esc(d.timeout)}"></div>
+          <div><label for="sut-mem">Memory limit (MB)</label><input id="sut-mem" oninput="sutEdited()" type="text" inputmode="numeric" value="${esc(d.memory_mb)}" placeholder="2048">
             <span class="muted sut-note">Not enforced everywhere &mdash; macOS often ignores it.</span></div>
         </div>
       </div>
@@ -1662,7 +1705,8 @@ function commitSut() {
   const r = readSut();
   el("err").innerHTML = "";
   if (r.problem) { showSutProblem(r); return; }
-  const key = sutKey({ command: r.argv, cwd: r.cwd, env: r.env, input_mode: r.input_mode });
+  const key = sutKey({ command: r.argv, cwd: r.cwd, env: r.env, input_mode: r.input_mode,
+                      timeout: r.timeout, memory_mb: r.memory_mb });
   if (key !== S.verifiedSut && !(S.probe?.ok && S.probe.key === key)) {
     showSutProblem({ problem: S.probe?.key === key && !S.probe.ok
       ? "The last Test connection failed. Fix the command, then test it again."
@@ -2995,7 +3039,11 @@ function refreshRunPanels() {
 function readiness() {
   const c = cfg(), r = runState();
   const items = [
-    { id: "sut", t: "SUT", ok: stepDone("sut"), fix: "sut", why: "Add the command that runs your program and test the connection." },
+    { id: "sut", t: "SUT" + (stepDone("sut") && S.verifiedFrom === "remembered" ? " (verified earlier)" : ""),
+      ok: stepDone("sut"), fix: "sut",
+      why: !targets().some(t => (t.command || []).length) ? "Add the command that runs your program and test the connection."
+         : S.verifiedSut ? "The execution settings changed since they were last tested. Test the connection again."
+         : "The connection has not been tested in this browser. Test it on step 1." },
     { id: "grammar", t: "Grammar", ok: !!(c.grammar?.source || c.corpus?.path), fix: "grammar", why: "Choose a grammar, or a folder of inputs." },
     { id: "generators", t: "Generators", ok: !!((c.generators || []).length || c.corpus?.path), fix: "generators", why: "Select at least one generator." },
     { id: "strategy", t: "Strategy", ok: !!c.oracle, fix: "strategy", why: "Choose what to detect." },
@@ -4228,7 +4276,7 @@ function tourSave() { try { S.tour ? sessionStorage.setItem(TOUR_KEY, JSON.strin
 
 function tourStart() {
   // The real gating then asks for the user's own Test connection and Continue clicks.
-  S.verifiedSut = null; S.confirmed.clear(); S.probe = null;
+  S.verifiedSut = null; S.verifiedFrom = null; S.confirmed.clear(); S.probe = null;
   S.tour = { id: TOUR[0].id, flash: "", paused: false, enteredAt: Date.now() };
   tourSave(); paintDemoStrip();
   S.step = TOUR[0].route.step; go("setup"); renderSteps(); tourRoute(false);
@@ -4238,6 +4286,7 @@ function tourStart() {
 function tourRestoreGates() {
   const at = TOUR_IDS.indexOf(S.tour.id), past = id => at > TOUR_IDS.indexOf(id);
   S.verifiedSut = past("sut.test") ? sutKey(cfg().sut) : null;
+  S.verifiedFrom = S.verifiedSut ? "test" : null;
   S.confirmed.clear();
   [["inputs.continue", "grammar"], ["gen.continue", "generators"], ["strat.continue", "strategy"]]
     .forEach(([beat, step]) => { if (past(beat)) S.confirmed.add(step); });
@@ -4481,12 +4530,12 @@ function paintDemoStrip() {
     S.strat = null;
     S.run = null;
     await loadRuns();
-    // What is already saved on disk was reviewed when it was written: its steps count as done,
-    // and its command as tested, until the user changes them.
-    if (S.project.configured) {
-      S.verifiedSut = sutKey(S.config.sut);
-      ["grammar", "generators", "strategy"].forEach(id => S.confirmed.add(id));
-    }
+    // A saved spreadex.yaml is prefilled, not confirmed: no step counts as done and the command
+    // as untested. Campaign history with a valid config unlocks navigation only (historyUnlocks). A remembered successful test counts
+    // only while it matches the saved execution settings exactly (stepDone compares them), and
+    // is shown as "verified earlier"; when they differ, step 1 and Review & run say they changed.
+    const remembered = S.project.configured ? recalledSut() : null;
+    if (remembered) { S.verifiedSut = remembered; S.verifiedFrom = "remembered"; }
     paintDemoStrip();
     if (S.project.demo) {
       try { S.demo = await api("/api/demo"); } catch (e) { /* samples are optional */ }

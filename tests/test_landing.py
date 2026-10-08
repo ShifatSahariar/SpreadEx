@@ -11,12 +11,14 @@ CSS = (ROOT / "src/spreadex/api/static/app.css").read_text()
 
 def test_initial_view_lands_in_the_agreed_order():
     """Active run (handled first in the bootstrap) -> a saved view that is still valid -> the
-    latest campaign -> Review & run for a configured project -> Setup for a new one."""
+    latest campaign -> step 1 otherwise. A saved spreadex.yaml alone does not skip ahead to
+    Review & run: with no campaign history its values are prefilled, not confirmed."""
     iv = APP[APP.index("function initialView"):APP.index("function savedViewValid")]
-    order = ['savedViewValid(saved', 'runs.length', 'project.configured', 'step: "sut"']
+    order = ['savedViewValid(saved', 'runs.length', 'step: "sut"']
     positions = [iv.index(x) for x in order]
     assert positions == sorted(positions)
-    assert 'current: runs[0].run_id' in iv and 'step: "run"' in iv
+    assert 'current: runs[0].run_id' in iv
+    assert 'project.configured' not in iv and 'step: "run"' not in iv
     boot = APP[APP.index("(async function () {"):]
     assert boot.index('"/api/active"') < boot.index("initialView(")
     assert "initialView(S.project, S.runs, loadView(), stepReachable)" in boot

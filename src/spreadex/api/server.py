@@ -280,8 +280,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if route == "/api/project":
+            adopt_edits(self.server)
+            error = getattr(self.server, "spreadex_config_error", None)
             self._json({
-                "configured": self.config.configured,
+                # A spreadex.yaml that does not parse is not a configured project.
+                "configured": self.config.configured and not error,
+                "config_error": error,
                 "read_only": self.server.spreadex_read_only,
                 "root": str(self.config.project_root),
                 "targets": [{"name": t.name, "command": t.command} for t in self.config.targets],
@@ -359,7 +363,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if route == "/api/config":
             from . import setup
-            self._json(setup.read_config(self.config))
+            adopt_edits(self.server)
+            self._json({**setup.read_config(self.config),
+                        "error": getattr(self.server, "spreadex_config_error", None)})
             return
         if route == "/api/generators":
             from . import setup
@@ -524,7 +530,46 @@ def reload_project(server) -> None:
     except ConfigError:
         return          # keep serving the old view; the POST already reported why
     server.spreadex_config = config
+    server.spreadex_config_error = None
     if not previous.configured:
+        persist_token(config, server.spreadex_token)
+
+
+def adopt_edits(server) -> None:
+    """Make the served configuration follow spreadex.yaml on disk -- edited in an editor,
+    deleted, or written by the CLI.
+
+    Without this the Workbench kept showing, and would save back over the user's edit, the
+    configuration it started with. Compared by modification time and size, so it costs one stat
+    per request. A deleted file makes the project unconfigured again; a file that no longer
+    parses keeps the last good values on view but marks the project not configured
+    (`spreadex_config_error`), so nothing is treated as a reviewed setup. Launching always
+    re-reads the file anyway (setup.start_run).
+    """
+    from ..core.config import CONFIG_NAME, Config, ConfigError, load_config
+
+    current = server.spreadex_config
+    path = current.project_root / CONFIG_NAME
+    try:
+        st = path.stat()
+    except OSError:
+        if current.configured or getattr(server, "spreadex_config_error", None):
+            server.spreadex_config = Config.unconfigured(current.project_root)
+        server.spreadex_config_stamp = None
+        server.spreadex_config_error = None
+        return
+    stamp = (st.st_mtime_ns, st.st_size)
+    if getattr(server, "spreadex_config_stamp", None) == stamp:
+        return
+    server.spreadex_config_stamp = stamp
+    try:
+        config = load_config(path)
+    except ConfigError as exc:
+        server.spreadex_config_error = str(exc)
+        return
+    server.spreadex_config_error = None
+    server.spreadex_config = config
+    if not current.configured:
         persist_token(config, server.spreadex_token)
 
 

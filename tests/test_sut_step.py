@@ -98,7 +98,8 @@ def test_typing_is_stashed_before_every_rerender():
 def test_a_typed_command_is_never_replaced_by_a_template():
     body = JS[JS.index("function pickSutKind"):]
     body = body[:body.index("\n}\n")]
-    assert "!d.command.trim() || (was && was.cmd === d.command)" in body
+    # A card never writes the command: its example is only the box's placeholder.
+    assert "d.command =" not in body and "d.command=" not in body
 
 
 def test_verification_sends_the_advanced_options_and_not_a_whitespace_split():
