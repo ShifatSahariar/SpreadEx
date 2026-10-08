@@ -1377,6 +1377,8 @@ const SUT_KINDS = [
     cmd: "" },
 ];
 
+// The example shown first follows the card, so copying it never hands a Python user a Java command.
+const SUT_EXAMPLE_FOR = { jar: "jar", script: "python", cli: "other", other: "other" };
 const SUT_EXAMPLES = [
   { id: "jar",    t: "Java (Rhino)", code: "java -jar rhino-all.jar {input}" },
   { id: "python", t: "Python",       code: "python3 your_parser.py {input}" },
@@ -1409,8 +1411,9 @@ function sutDraft() {
   const t = targets();
   const s = sut();
   const first = t[0] || {};
+  const kind = S.kind || (first.command ? inferKind(first.command) : "cli");
   S.draft = {
-    kind: S.kind || (first.command ? inferKind(first.command) : "cli"),
+    kind,
     command: first.command ? joinCommand(first.command) : "",
     extra: t.slice(1).map(x => ({ name: x.name, command: joinCommand(x.command || []) })),
     cwd: first.cwd || s.cwd || "",
@@ -1420,7 +1423,7 @@ function sutDraft() {
     timeout: String(s.timeout || "5s"),
     advancedOpen: !!(first.cwd || s.cwd || first.env || s.env || s.memory_mb ||
                      (first.input_mode || s.input_mode) === "stdin"),
-    exampleTab: "jar",
+    exampleTab: SUT_EXAMPLE_FOR[kind] || "other",
   };
   return S.draft;
 }
@@ -1455,9 +1458,7 @@ function pickSutKind(id) {
   // Swap the placeholder command only if the box is empty or still holds the
   // previous card's untouched template.
   if (k && k.cmd && (!d.command.trim() || (was && was.cmd === d.command))) d.command = k.cmd;
-  if (id === "jar") d.exampleTab = "jar";
-  else if (id === "script") d.exampleTab = "python";
-  else if (id === "other") d.exampleTab = "other";
+  d.exampleTab = SUT_EXAMPLE_FOR[id] || d.exampleTab;
   S.probe = null;
   stepSut();
 }
@@ -1466,7 +1467,7 @@ function sutExampleTab(id) { stashSut().exampleTab = id; stepSut(); }
 
 function copyExample(button) {
   const d = sutDraft();
-  const ex = SUT_EXAMPLES.find(x => x.id === d.exampleTab) || SUT_EXAMPLES[0];
+  const ex = SUT_EXAMPLES.find(x => x.id === d.exampleTab) || SUT_EXAMPLES.find(x => x.id === "other");
   const done = () => { button.classList.add("copied"); button.setAttribute("aria-label", "Copied");
     setTimeout(() => { button.classList.remove("copied"); button.setAttribute("aria-label", "Copy command"); }, 1400); };
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(ex.code).then(done).catch(() => {});
@@ -1571,7 +1572,7 @@ function sutResult() {
 function stepSut() {
   const d = sutDraft();
   if (S.sample === undefined) S.sample = "1 + 1\n";
-  const ex = SUT_EXAMPLES.find(x => x.id === d.exampleTab) || SUT_EXAMPLES[0];
+  const ex = SUT_EXAMPLES.find(x => x.id === d.exampleTab) || SUT_EXAMPLES.find(x => x.id === "other");
   el("view").innerHTML = `
   <div class="sut">
    <div class="sut-main">

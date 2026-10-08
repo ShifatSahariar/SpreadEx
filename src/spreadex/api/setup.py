@@ -786,7 +786,7 @@ def probe_target(config, body: dict) -> dict[str, Any]:
     # The command ran, but the system did not start: say so, rather than showing it as a run
     # with an unusual exit code that step 4 would later call a crash on every input.
     from ..exec.setup_check import setup_failure
-    problem = setup_failure(obs)
+    problem = setup_failure(obs, target)
     if problem:
         return {"ok": False, "setup": True, "command": rendered,
                 "error": f"The command ran, but your system did not start: {problem}. "

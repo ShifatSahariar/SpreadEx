@@ -9,6 +9,7 @@ recognised before a campaign starts, by `spreadex doctor` and by the Workbench's
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from .observation import Observation
 
@@ -24,8 +25,39 @@ _PATTERNS = [
 ]
 
 
-def setup_failure(obs: Observation) -> str | None:
-    """A short reason when the run failed to start the system at all; None otherwise."""
+def missing_files(target) -> list[str]:
+    """Arguments that name a file the project does not have.
+
+    The system runs in a scratch folder, and only files that exist are rewritten to their
+    project path, so a missing one would be reported by the interpreter against that scratch
+    folder -- a path the user has never seen. Naming it against the project folder instead
+    points at the place to look.
+    """
+    base = getattr(target, "base_dir", None)
+    if base is None:
+        return []
+    roots = [Path(base)]
+    cwd = target.resolved_cwd() if target.cwd else None
+    if cwd:
+        roots.append(Path(cwd))
+    out = []
+    for part in target.command[1:]:
+        if (not part or part.startswith("-") or "{input}" in part or "=" in part
+                or Path(part).is_absolute()):
+            continue
+        if "/" not in part and not Path(part).suffix:          # a word, not a file name
+            continue
+        if not any((r / part).exists() for r in roots):
+            out.append(part)
+    return out
+
+
+def setup_failure(obs: Observation, target=None) -> str | None:
+    """A short reason when the run failed to start the system at all; None otherwise.
+
+    With the target, a file named in the command that is missing from the project is
+    reported against the project folder rather than the scratch folder the system ran in.
+    """
     if obs.exit_code in (126, 127):
         return ("the shell could not run the command (exit 126: not executable)" if obs.exit_code == 126
                 else "the shell could not find the command (exit 127)")
@@ -33,6 +65,12 @@ def setup_failure(obs: Observation) -> str | None:
     for pattern, reason in _PATTERNS:
         m = pattern.search(text)
         if m:
+            missing = missing_files(target) if target is not None else []
+            if missing:
+                names = ", ".join(missing)
+                return (f"{reason}: {names} is not in the project folder ({target.base_dir})"
+                        if len(missing) == 1 else
+                        f"{reason}: {names} are not in the project folder ({target.base_dir})")
             line = m.group(0).strip().splitlines()[-1][:200]
             return f"{reason}: {line}"
     return None

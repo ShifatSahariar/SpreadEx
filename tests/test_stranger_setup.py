@@ -107,6 +107,32 @@ def test_test_connection_reports_a_system_that_did_not_start(tmp_path):
     assert out["ok"] is False and out.get("setup") and "did not start" in out["error"]
 
 
+
+def test_a_missing_script_is_named_against_the_project_folder_not_the_scratch_folder(tmp_path):
+    """The system runs in a scratch folder; reporting a typo'd script there sends the user to
+    a folder they have never seen."""
+    from spreadex.api import setup
+    from spreadex.cli.doctor import run_checks
+    from spreadex.core.config import Config
+
+    out = setup.probe_target(Config.unconfigured(tmp_path),
+                             {"command": [sys.executable, "your_parser.py", "{input}"]})
+    assert out["ok"] is False
+    assert f"your_parser.py is not in the project folder ({tmp_path})" in out["error"]
+    assert "spreadex-run-" not in out["error"]
+
+    cfg = _project(tmp_path / "p", [sys.executable, "valdiate.py", "{input}"])
+    runs = [c for c in run_checks(cfg) if c.name.endswith(" runs")][0]
+    assert "valdiate.py is not in the project folder" in runs.detail and "spreadex-run-" not in runs.detail
+
+
+def test_the_command_example_follows_the_chosen_kind_and_never_starts_on_java():
+    js = (Path(__file__).parent.parent / "src" / "spreadex" / "api" / "static" / "app.js").read_text()
+    assert 'exampleTab: "jar"' not in js
+    assert 'const SUT_EXAMPLE_FOR = { jar: "jar", script: "python", cli: "other", other: "other" };' in js
+    assert "|| SUT_EXAMPLES[0]" not in js
+
+
 # ------------------------------------------------------- 2. rejections reported as crashes
 
 def test_a_first_run_names_crashes_that_are_really_rejections(tmp_path, capsys):

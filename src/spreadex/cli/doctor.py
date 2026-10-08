@@ -139,7 +139,7 @@ def _run_once(target, config) -> Check:
             obs = run_one(target, sample)
         except (RuntimeError, OSError) as exc:
             return Check(name, FAIL, str(exc).splitlines()[0], "check the command in spreadex.yaml")
-    problem = setup_failure(obs)
+    problem = setup_failure(obs, target)
     if problem:
         return Check(name, FAIL, problem,
                      "fix the command in spreadex.yaml; until then every input would be reported as a crash")
