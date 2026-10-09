@@ -65,17 +65,32 @@ def test_unknown_signal_is_rejected():
 
 # ------------------------------------------- honesty about the clustering
 
-def test_a_non_converging_clustering_is_reported_not_swallowed():
+def test_a_non_converging_clustering_is_reported_not_swallowed(monkeypatch):
     """Affinity Propagation can fail to converge, and sklearn says so in a
     warning that reaches the user as a stack trace from a file they have never
     heard of -- or, worse, gets suppressed and leaves confident-looking CC
-    values with nothing to qualify them."""
+    values with nothing to qualify them.
+
+    Whether a given corpus converges depends on the scikit-learn version (this
+    one stopped failing to converge with scikit-learn 1.9), so the clustering
+    is made to raise sklearn's own warning deterministically; the real
+    clustering still runs and everything after it is the shipped code."""
     import warnings
 
     import numpy as np
     from sklearn.exceptions import ConvergenceWarning
 
+    from spreadex.prioritization import reference
     from spreadex.signals.base import ClusterCoverageSignal, Item
+
+    real = reference.cluster_once
+
+    def does_not_converge(*args, **kwargs):
+        out = real(*args, **kwargs)
+        warnings.warn("Affinity propagation did not converge", ConvergenceWarning)
+        return out
+
+    monkeypatch.setattr(reference, "cluster_once", does_not_converge)
 
     # Many near-identical inputs: the case AP struggles with in practice, and
     # the one a user hits when a generator keeps emitting the same shape.
@@ -92,9 +107,8 @@ def test_a_non_converging_clustering_is_reported_not_swallowed():
 
     assert ordering.order, "a shaky clustering still yields a usable ordering"
     assert len(ordering.order) == len(items), "every input still gets a position"
-    # Unconditional: this corpus does not converge, and a test that shrugged
-    # when the caveat was missing would pass just as happily if the reporting
-    # were deleted.
+    # Unconditional: a test that shrugged when the caveat was missing would
+    # pass just as happily if the reporting were deleted.
     assert ordering.caveats, "non-convergence must produce a caveat"
     text = " ".join(ordering.caveats)
     assert "converge" in text

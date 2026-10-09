@@ -594,6 +594,21 @@ def _registry():
     return registry
 
 
+class _LocalServer(ThreadingHTTPServer):
+    """The standard server, minus the reverse-DNS lookup of its own address.
+
+    `HTTPServer.server_bind` calls `socket.getfqdn()`, which on a machine with slow or broken DNS
+    blocks startup for many seconds (seen on macOS); the Workbench never uses that name.
+    """
+
+    def server_bind(self):
+        import socketserver
+
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = host, port
+
+
 def make_server(config, host: str = "127.0.0.1", port: int | None = None, verbose: bool = False,
                 read_only: bool = False, new_token: bool = False, experimental: bool = False,
                 token: str | None = None):
@@ -611,7 +626,7 @@ def make_server(config, host: str = "127.0.0.1", port: int | None = None, verbos
     httpd, last = None, None
     for candidate in registry.candidate_ports(config.project_root, port):
         try:
-            httpd = ThreadingHTTPServer((host, candidate), _Handler)
+            httpd = _LocalServer((host, candidate), _Handler)
             break
         except OSError as exc:
             last = exc

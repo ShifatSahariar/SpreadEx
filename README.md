@@ -11,7 +11,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![ICST 2026](https://img.shields.io/badge/paper-ICST%202026-8A2BE2)](https://github.com/ShifatSahariar/Embedding-based-Diversity-Mapping)
 
-![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-local%20store-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 ![Java](https://img.shields.io/badge/Java-11+%20(Rhino%20example)-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
 ![Local-first](https://img.shields.io/badge/Local--first-nothing%20uploaded-2EA44F?style=for-the-badge)
