@@ -7,7 +7,6 @@
 **Run several grammar-based test generators against your program, compare them,<br>and spend a fixed budget on the most diverse inputs first.**
 
 [![CI](https://github.com/ShifatSahariar/SpreadEx/actions/workflows/ci.yml/badge.svg)](https://github.com/ShifatSahariar/SpreadEx/actions/workflows/ci.yml)
-[![Acceptance](https://github.com/ShifatSahariar/SpreadEx/actions/workflows/acceptance.yml/badge.svg)](https://github.com/ShifatSahariar/SpreadEx/actions/workflows/acceptance.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![ICST 2026](https://img.shields.io/badge/paper-ICST%202026-8A2BE2)](https://github.com/ShifatSahariar/Embedding-based-Diversity-Mapping)
 
@@ -24,9 +23,19 @@
 
 ---
 
-<p align="center">
-  <img src="src/spreadex/api/static/guides/img/results-generators.png" alt="The SpreadEx Workbench comparing generators by Cluster Coverage" width="860">
-</p>
+## 🖼️ How it works
+
+**1 · Connect your program**: tell SpreadEx how to run one input; it checks the command first.
+
+<p align="center"><img src="docs/assets/readme/step-1-connect.png" alt="Step 1: connecting the system under test" width="720"></p>
+
+**2 · Give it a grammar**: pick a bundled one, use your own, import ANTLR/BNF/EBNF, or start from existing inputs.
+
+<p align="center"><img src="docs/assets/readme/step-2-grammar.png" alt="Step 2: choosing the input grammar" width="720"></p>
+
+**3 · Compare generators in the campaign**: every generator is scored by Cluster Coverage, and the budget goes to the best one.
+
+<p align="center"><img src="docs/assets/readme/step-3-campaign.png" alt="Step 3: a campaign comparing generators by Cluster Coverage" width="860"></p>
 
 ## ✨ What it does
 
