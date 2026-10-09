@@ -1,0 +1,3 @@
+# Fandango grammar files share the .fan extension with the Fantom language; keep them out of
+# GitHub's language statistics.
+*.fan linguist-detectable=false
