@@ -2,7 +2,7 @@
 
 ## The split
 
-| | Research repository (`SpreadEx-2026`) | This repository (`spreadex`) |
+| | Research repository ([Embedding-based-Diversity-Mapping](https://github.com/ShifatSahariar/Embedding-based-Diversity-Mapping), formerly at this URL) | This repository (`spreadex`) |
 |---|---|---|
 | Purpose | the scientific record | the open-source product |
 | Contents | experiments, SUTs, mutation, coverage, embeddings, statistics, replication data | the tool |

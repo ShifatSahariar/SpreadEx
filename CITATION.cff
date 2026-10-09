@@ -4,7 +4,7 @@ message: >-
   If you use SpreadEx in academic work, please cite the ICST 2026 paper below.
 type: software
 license: MIT
-repository-code: "https://github.com/spreadex/spreadex"
+repository-code: "https://github.com/ShifatSahariar/SpreadEx"
 abstract: >-
   A local-first harness that runs multiple grammar-based generators against a
   system under test and uses a finite budget to decide which generators and

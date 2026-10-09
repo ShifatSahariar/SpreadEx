@@ -23,6 +23,7 @@ def _candidates():
         return
     here = Path(__file__).resolve()
     # ../../../ from tests/golden/ is the directory holding both repositories.
+    yield here.parents[3] / "Embedding-based-Diversity-Mapping" / "research"   # a clone of the research repo
     yield here.parents[3] / "SpreadEx-2026" / "research"
     yield Path.home() / "Documents" / "RESEARCH" / "SpreadEx-2026" / "research"
 

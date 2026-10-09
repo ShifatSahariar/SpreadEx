@@ -40,9 +40,10 @@ dev = ["pytest>=7.0", "pillow>=10.0"]   # pillow: the tests check the shipped ar
 golden = ["pytest>=7.0", "pandas>=2.0", "hdbscan>=0.8.33"]
 
 [project.urls]
-Homepage = "https://github.com/shifatsb/spreadex"
-Repository = "https://github.com/shifatsb/spreadex"
-Issues = "https://github.com/shifatsb/spreadex/issues"
+Homepage = "https://github.com/ShifatSahariar/SpreadEx"
+Repository = "https://github.com/ShifatSahariar/SpreadEx"
+Issues = "https://github.com/ShifatSahariar/SpreadEx/issues"
+"Research artifact" = "https://github.com/ShifatSahariar/Embedding-based-Diversity-Mapping"
 
 [project.scripts]
 spreadex = "spreadex.cli.main:main"

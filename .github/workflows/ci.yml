@@ -79,7 +79,7 @@ jobs:
       - name: Check out the research repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.RESEARCH_REPO || 'shifat/SpreadEx-2026' }}
+          repository: ${{ vars.RESEARCH_REPO || 'ShifatSahariar/Embedding-based-Diversity-Mapping' }}
           path: research-repo
           token: ${{ secrets.RESEARCH_REPO_TOKEN || github.token }}
       - uses: actions/setup-python@v5

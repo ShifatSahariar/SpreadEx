@@ -7,13 +7,19 @@ execution.**
 Specialized fuzzers generate. SpreadEx orchestrates, measures, compares, prioritizes and
 reproduces. It runs on your machine: your system under test, the inputs generated for it, the
 crashes and the corpus stay in your project's `.spreadex` directory, and running a campaign sends
-nothing anywhere. Two things do use the network, both only when you ask: installing a generator
-downloads it from PyPI, and the optional grammar assistant calls a model provider you configure.
+nothing anywhere. Three things do use the network, all only when you ask: installing a generator
+downloads it from PyPI, opening the Rhino example downloads its pinned Rhino release from Maven
+Central (verified by SHA-256), and the optional grammar assistant calls a model provider you
+configure.
 The assistant is off by default and names the host before it sends anything.
 
 The algorithms are those of the ICST 2026 paper *Embedding-based Diversity Mapping for Test
 Generator Selection and Input Prioritization in Grammar-based Testing*, and a CI gate asserts
-this implementation still computes them — see [docs/MIGRATION.md](docs/MIGRATION.md).
+this implementation still computes them — see [docs/MIGRATION.md](docs/MIGRATION.md). The paper's
+research code, data and replication package live in their own repository,
+[Embedding-based-Diversity-Mapping](https://github.com/ShifatSahariar/Embedding-based-Diversity-Mapping)
+(full artifact on Zenodo: [10.5281/zenodo.20071065](https://doi.org/10.5281/zenodo.20071065));
+this repository is the standalone SpreadEx tool.
 
 ## Quick start
 
