@@ -464,6 +464,16 @@ def guides(r: Report, page, project: Path, python: str) -> None:
                 broken.append((sec, img.get_attribute("src")))
     r.check("all seven sections render, every screenshot loads", not broken, broken)
 
+    page.locator("[data-guide='sut']").click()
+    page.locator(".g-shot").first.click()
+    page.locator(".g-lightbox").wait_for()
+    big = page.evaluate("() => document.querySelector('.g-lightbox img').getBoundingClientRect().width")
+    small = page.evaluate("() => document.querySelector('.g-fig img').getBoundingClientRect().width")
+    page.keyboard.press("Escape")
+    r.check("a screenshot opens enlarged and Esc closes it",
+            big > small and page.locator(".g-lightbox").count() == 0, {"enlarged": big, "inline": small})
+    r.check("'On this page' sits under the sections", page.locator(".g-nav .g-toc a").count() >= 4)
+
     page.locator("[data-guide='troubleshooting']").click()
     page.locator(".g-cmd").first.wait_for()
     r.check("the CLI reference is generated", page.locator(".g-cmd").count() >= 10

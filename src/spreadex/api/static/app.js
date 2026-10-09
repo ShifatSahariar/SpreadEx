@@ -4821,8 +4821,34 @@ function guideTab(btn, k) {
 function guideFigure(id) {
   const s = (GUIDE_CACHE.shots || {})[id];
   if (!s) return "";
-  return `<figure class="g-fig" id="fig-${esc(id)}"><div class="g-shot"><img src="/static/guides/img/${esc(id)}.png" alt="${esc(s.caption)}" loading="lazy"></div>
+  return `<figure class="g-fig" id="fig-${esc(id)}"><button type="button" class="g-shot" onclick="zoomShot('${esc(id)}')" aria-label="Enlarge: ${esc(s.caption)}">
+      <img src="/static/guides/img/${esc(id)}.png" alt="${esc(s.caption)}" loading="lazy"><span class="g-zoom-hint" aria-hidden="true">${ICONS.search || ""} Click to enlarge</span></button>
     <figcaption>${esc(s.caption)}${(s.marks || []).length ? `<ol class="g-marks">${s.marks.map(m => `<li>${esc(m.label)}</li>`).join("")}</ol>` : ""}</figcaption></figure>`;
+}
+
+// A screenshot, full size, with its caption and numbered legend. Esc, the close button or a click
+// outside the picture closes it; focus returns to the screenshot that opened it.
+function zoomShot(id) {
+  const s = (GUIDE_CACHE.shots || {})[id];
+  if (!s) return;
+  const opener = document.activeElement;
+  const box = document.createElement("div");
+  box.className = "g-lightbox";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-modal", "true");
+  box.setAttribute("aria-label", s.caption);
+  box.innerHTML = `<div class="g-lb-inner">
+      <div class="g-lb-head"><span>${esc(s.caption)}</span>
+        <button type="button" class="g-lb-close" aria-label="Close">&times;</button></div>
+      <div class="g-lb-img"><img src="/static/guides/img/${esc(id)}.png" alt="${esc(s.caption)}"></div>
+      ${(s.marks || []).length ? `<ol class="g-marks g-lb-marks">${s.marks.map(m => `<li>${esc(m.label)}</li>`).join("")}</ol>` : ""}
+    </div>`;
+  const close = () => { box.remove(); document.removeEventListener("keydown", onKey); opener?.focus?.(); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  box.addEventListener("click", e => { if (e.target === box || e.target.closest(".g-lb-close")) close(); });
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(box);
+  box.querySelector(".g-lb-close").focus();
 }
 
 function cliHtml(ref) {
@@ -4855,13 +4881,13 @@ async function renderGuides() {
       <label class="g-pick"><span class="sr-only">Guide section</span><select onchange="openGuide(this.value)">${GUIDES.map(g => `<option value="${g.id}" ${g.id === cur.id ? "selected" : ""}>${g.n}. ${esc(g.t)}</option>`).join("")}</select></label>
       <ol class="g-secs">${GUIDES.map(g => `<li><button type="button" class="g-sec ${g.id === cur.id ? "on" : ""}" ${g.id === cur.id ? 'aria-current="page"' : ""} data-guide="${g.id}" onclick="openGuide('${g.id}')">
         <span class="g-n tone-${g.tone}">${g.n}</span><span>${esc(g.t)}</span></button></li>`).join("")}</ol>
+      ${toc.length ? `<div class="g-toc" aria-label="On this page"><div class="g-toc-h">On this page</div>
+        ${toc.map(x => `<a href="#${x.id}" onclick="event.preventDefault(); document.getElementById('${x.id}').scrollIntoView({behavior: 'smooth'})">${x.t}</a>`).join("")}</div>` : ""}
     </nav>
     <article class="g-body" data-guide-section="${cur.id}">${body}
       <div class="g-pager">${cur.n > 1 ? `<button type="button" class="ghost" onclick="openGuide('${GUIDES[cur.n - 2].id}')">${ICONS.back} ${esc(GUIDES[cur.n - 2].t)}</button>` : "<span></span>"}
         ${cur.n < GUIDES.length ? `<button type="button" class="ghost" onclick="openGuide('${GUIDES[cur.n].id}')">${esc(GUIDES[cur.n].t)} ${ICONS.arrow}</button>` : ""}</div>
     </article>
-    <aside class="g-toc" aria-label="On this page"><div class="g-toc-h">On this page</div>
-      ${toc.map(x => `<a href="#${x.id}" onclick="event.preventDefault(); document.getElementById('${x.id}').scrollIntoView({behavior: 'smooth'})">${x.t}</a>`).join("")}</aside>
   </div>`;
   if (cur.id === "troubleshooting" && el("g-cli")) {
     try { GUIDE_CACHE.cli = GUIDE_CACHE.cli || await api("/api/cli"); el("g-cli").innerHTML = cliHtml(GUIDE_CACHE.cli); }

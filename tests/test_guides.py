@@ -303,3 +303,19 @@ def test_the_renderer_builds_tabs_problems_and_collapsed_advanced_sections():
     assert html.count('role="tab"') == 2 and "hidden" in html
     assert "Likely cause" in html and "g-prob-fix" in html
     assert "<details class=\"g-adv\">" in html and " open" not in html
+
+
+def test_on_this_page_sits_under_the_sections_and_screenshots_can_be_enlarged():
+    """Two columns, not three: the article gets the width, and "On this page" is in the left column
+    after a divider. Every screenshot opens full size."""
+    render = JS[JS.index("async function renderGuides"):]
+    render = render[:render.index("\n}\n")]
+    nav = render[render.index('<nav class="g-nav"'):render.index("</nav>")]
+    assert 'class="g-toc"' in nav and "<aside" not in render
+    css = (STATIC / "app.css").read_text()
+    assert "grid-template-columns: 240px minmax(0, 1fr);" in css
+    assert "border-top: 1px solid var(--color-border)" in css[css.index(".g-toc {"):][:300]
+    fig = JS[JS.index("function guideFigure"):JS.index("function zoomShot")]
+    assert "onclick=\"zoomShot(" in fig and 'class="g-shot"' in fig
+    zoom = JS[JS.index("function zoomShot"):JS.index("function cliHtml")]
+    assert 'aria-modal", "true"' in zoom and "Escape" in zoom and "opener?.focus" in zoom
