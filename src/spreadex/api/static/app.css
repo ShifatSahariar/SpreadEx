@@ -1556,6 +1556,9 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .rsel-h { display: flex; align-items: center; gap: .35rem; margin: .9rem 0 .4rem; font-size: .9rem; }
 .ropts.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
 @media (max-width: 760px) { .ropts.three { grid-template-columns: minmax(0, 1fr); } }
+.emb-st { display: flex; gap: 6px; align-items: flex-start; margin: .45rem 0 0; font-size: .78rem; line-height: 1.35; }
+.emb-st svg { flex: none; width: 14px; height: 14px; margin-top: 1px; }
+.emb-st.ok svg { color: #16A34A; } .emb-st.warn svg { color: #F59E0B; }
 
 /* Step 1 starting point: an example project, or the user's own program. */
 .start-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0 6px; }

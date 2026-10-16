@@ -278,21 +278,20 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
                                     f"{grammar.name} ({gen.grammar_dialect})"))
 
     # Embedding backend.
-    model = config.embedding.get("model", "tfidf")
-    if model == "tfidf":
-        try:
-            import sklearn  # noqa: F401
-            checks.append(Check("embedding 'tfidf'", OK, "no GPU or API key needed"))
-        except ImportError:
-            checks.append(Check("embedding 'tfidf'", FAIL, "scikit-learn missing",
-                                "pip install scikit-learn"))
+    from ..signals.status import embedding_status
+
+    st = embedding_status(config.embedding.get("model"))
+    chosen = next(b for b in st["backends"] if b["id"] == st["selected"])
+    fallback = config.embedding.get("fallback", "tfidf") != "none"
+    if chosen["ready"]:
+        checks.append(Check(f"embedding '{chosen['id']}'", OK, chosen["status"]))
+    elif fallback:
+        checks.append(Check(f"embedding '{chosen['id']}'", WARN,
+                            f"{chosen['status']}; campaigns will fall back to {st['fallback_to']}",
+                            chosen.get("fix") or ""))
     else:
-        try:
-            import torch  # noqa: F401
-            checks.append(Check(f"embedding '{model}'", OK))
-        except ImportError:
-            checks.append(Check(f"embedding '{model}'", FAIL, "torch missing",
-                                "pip install 'spreadex[neural]', or set embedding.model: tfidf"))
+        checks.append(Check(f"embedding '{chosen['id']}'", FAIL, chosen["status"],
+                            chosen.get("fix") or ""))
 
     # Java, only when a target actually needs it.
     if any(t.command[0] in ("java", "javac") for t in config.targets):

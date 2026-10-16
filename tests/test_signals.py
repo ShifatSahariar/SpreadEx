@@ -219,3 +219,55 @@ def test_the_default_time_cap_cannot_oom_a_small_laptop():
         f"{pooled} pooled inputs would need "
         f"{C.estimated_bytes(pooled) / 1024 ** 3:.0f} GB"
     )
+
+
+# ------------------------------------------- non-convergence: one retry, recorded
+
+from spreadex.signals.base import ClusterCoverageSignal  # noqa: E402
+
+def _items(n=12):
+    return [Item(blob_hash=str(i), text=f"{i} + {i * 7 % 5} * ({i % 3})", generator="g" + str(i % 2))
+            for i in range(n)]
+
+
+def _cluster_that_fails_at(fail_dampings):
+    import warnings as _w
+    from sklearn.exceptions import ConvergenceWarning
+    from spreadex.prioritization import reference as _ref
+    real = _ref.cluster_once
+
+    def fake(embeddings, random_state=None, damping=0.5):
+        if damping in fail_dampings:
+            _w.warn("did not converge", ConvergenceWarning)
+        return real(embeddings, random_state=random_state, damping=damping)
+    return fake
+
+
+def test_a_converging_default_is_the_published_clustering_and_is_not_retried(monkeypatch):
+    from spreadex.prioritization import reference as ref
+    seen = []
+    real = ref.cluster_once
+    monkeypatch.setattr(ref, "cluster_once", lambda e, random_state=None, damping=0.5:
+                        seen.append(damping) or real(e, random_state=random_state, damping=damping))
+    o = ClusterCoverageSignal(embedding_model="tfidf", random_state=1).rank(_items())
+    assert seen == [0.5]
+    assert o.clustering == {"algorithm": "affinity_propagation", "damping": 0.5, "converged": True}
+
+
+def test_non_convergence_retries_once_with_heavier_damping_and_says_so(monkeypatch):
+    from spreadex.prioritization import reference as ref
+    monkeypatch.setattr(ref, "cluster_once", _cluster_that_fails_at({0.5}))
+    o = ClusterCoverageSignal(embedding_model="tfidf", random_state=1).rank(_items())
+    assert o.clustering["damping"] == 0.9 and o.clustering["converged"]
+    assert o.clustering["default_damping_converged"] is False
+    assert any("clustered again with damping 0.9" in c for c in o.caveats)
+    assert sorted(o.order) == list(range(12))
+
+
+def test_when_the_retry_also_fails_the_default_result_is_kept_with_a_caveat(monkeypatch):
+    from spreadex.prioritization import reference as ref
+    monkeypatch.setattr(ref, "cluster_once", _cluster_that_fails_at({0.5, 0.9}))
+    o = ClusterCoverageSignal(embedding_model="tfidf", random_state=1).rank(_items())
+    assert o.clustering == {"algorithm": "affinity_propagation", "damping": 0.5,
+                            "converged": False, "retry_damping": 0.9}
+    assert any("even with heavier damping" in c for c in o.caveats)

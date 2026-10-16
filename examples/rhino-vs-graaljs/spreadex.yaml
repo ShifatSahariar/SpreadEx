@@ -56,6 +56,5 @@ budget:
   execution: 5m
 
 selection_signal: cc
-embedding:
-  model: tfidf
+# No `embedding:` key: the diversity map uses the default (UniXcoder, falling back to TF-IDF).
 seed: 42

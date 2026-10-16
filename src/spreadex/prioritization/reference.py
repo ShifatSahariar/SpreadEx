@@ -45,6 +45,7 @@ def l2_normalize_eps(X: np.ndarray, eps: float = 1e-8) -> np.ndarray:
 def cluster_once(
     embeddings: Embeddings,
     random_state: int | None = None,
+    damping: float = 0.5,
 ) -> tuple[dict[Any, list[InputId]], dict[Any, InputId]]:
     """Affinity Propagation over L2-normalized vectors.
 
@@ -53,13 +54,16 @@ def cluster_once(
     tie-breaking noise from global state, so the reference is not perfectly
     reproducible run to run. Pass an int for deterministic behaviour; the
     golden tests pin both sides to the same value so the comparison is fair.
+
+    `damping=0.5` is sklearn's default, i.e. exactly the research call. Anything else is an
+    engineering deviation the caller must record (see ClusterCoverageSignal.rank).
     """
     from sklearn.cluster import AffinityPropagation
 
     ids = list(embeddings.keys())
     X = l2_normalize_eps(np.vstack([embeddings[i] for i in ids]))
 
-    model = AffinityPropagation(random_state=random_state)
+    model = AffinityPropagation(random_state=random_state, damping=damping)
     labels = model.fit_predict(X)
     exemplar_indices = model.cluster_centers_indices_
 

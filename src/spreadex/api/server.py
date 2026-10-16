@@ -406,6 +406,10 @@ class _Handler(BaseHTTPRequestHandler):
             from . import setup
             self._json(setup.list_candidate_grammars(self.config))
             return
+        if route == "/api/embeddings":
+            from ..signals.status import embedding_status
+            self._json(embedding_status((self.config.embedding or {}).get("model")))
+            return
         if route == "/api/providers":
             from . import setup
             if not getattr(self.server, "spreadex_experimental", False):

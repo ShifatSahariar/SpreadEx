@@ -169,6 +169,9 @@ def run_detail(state_dir: Path, run_id: str) -> dict[str, Any] | None:
                 "valid": corpus.get("valid"),
                 "prioritized": corpus.get("prioritized"),
                 "k_eff": corpus.get("k_eff"),
+                # Absent on runs from before UniXcoder: every one of those used TF-IDF.
+                "embedding": corpus.get("embedding"),
+                "clustering": corpus.get("clustering"),
                 "signal_caveats": corpus.get("signal_caveats", []),
             },
             "generators": generators,

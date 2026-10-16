@@ -99,7 +99,7 @@ def test_step_4_documents_the_presets_checks_and_outcomes():
 
 RUN_OPTIONS = ["Equal time", "Equal count", "Time limit", "Number of tests", "Entire corpus",
                "SpreadEx prioritization", "Random order", "All generators", "Best generator", "Best 2 generators",
-               "Parallel executions", "Embedding"]
+               "Parallel executions", "Diversity map", "UniXcoder", "OpenAI", "TF-IDF"]
 
 
 @pytest.mark.parametrize("name", RUN_OPTIONS)

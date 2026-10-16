@@ -44,6 +44,7 @@ budget:
   execution: 60s
 
 selection_signal: cc
-embedding:
-  model: tfidf
+# No `embedding:` key, so the diversity map uses the default, UniXcoder (pip install
+# 'spreadex[neural]'; the model downloads once). Without it the campaign falls back to TF-IDF and
+# says so on the results.
 seed: 42

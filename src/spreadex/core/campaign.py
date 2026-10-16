@@ -61,6 +61,10 @@ class CampaignResult:
     generation_stats: list[dict] = field(default_factory=list)
     #: Set when the campaign kept only the top generators by CC (see core/selection.py).
     selection: dict | None = None
+    #: Which embedding backend built the diversity map, and whether it was a fallback.
+    embedding: dict | None = None
+    #: How the diversity map was clustered (damping, convergence).
+    clustering: dict | None = None
 
     @property
     def failures(self) -> int:
@@ -203,8 +207,18 @@ class Campaign:
 
             # 3. Signals + 4. Prioritize -------------------------------------
             self.log(f"Ranking with signal {signal_name!r}...")
-            signal = make_signal(signal_name, cfg.embedding.get("model", "tfidf"))
+            emb = cfg.embedding or {}
+            signal = make_signal(signal_name, emb.get("model"),
+                                 fallback=emb.get("fallback", "tfidf") != "none",
+                                 cache_path=cfg.state_dir / "embeddings.sqlite",
+                                 device=emb.get("device", "cpu"), log=self.log)
             ordering = signal.rank(items, seed=cfg.seed)
+            result.embedding = ordering.embedding
+            result.clustering = getattr(ordering, "clustering", None)
+            if ordering.embedding:
+                e = ordering.embedding
+                self.log(f"  embedding: {e['used']} ({e['dim']}-d; {e['computed']} computed, "
+                         f"{e['cached']} from cache)")
             result.generator_scores = ordering.generator_scores
             result.k_eff = ordering.k_eff
             ordered = [items[i] for i in ordering.order]
@@ -397,6 +411,8 @@ class Campaign:
                 "generator_counts": result.generator_counts,
                 "generator_cost_ms": result.generator_cost_ms,
                 "k_eff": result.k_eff,
+                "embedding": result.embedding,
+                "clustering": result.clustering,
                 "signal_caveats": result.signal_caveats,
                 "generation_stats": result.generation_stats,
                 "selection": result.selection,

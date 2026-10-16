@@ -38,10 +38,21 @@ Step 5 sets the **budgets**, decides **in which order** inputs run and **which g
 - **Best 2 generators**: keep the two with the highest Cluster Coverage.
 :::
 
+### Diversity map
+
+The **Diversity map** choice appears with SpreadEx prioritization. It decides how inputs become vectors before clustering; Cluster Coverage and the ordering both come from this one map.
+
+:::options
+- **UniXcoder** (recommended, default): a code model evaluated in the SpreadEx study, run on this machine. Needs `pip install 'spreadex[neural]'`; the first campaign downloads the model (506 MB, once) into the Hugging Face cache.
+- **OpenAI**: `text-embedding-3-small`, the model behind the study's prioritization results. Sends every generated input to OpenAI and is billed to the key in `OPENAI_API_KEY`, which SpreadEx reads from the environment and never stores.
+- **TF-IDF**: character n-grams. No download and no key; not evaluated for fault detection.
+:::
+
+If the chosen model cannot run (not installed, offline on first use, no key), the campaign uses the next one (OpenAI → UniXcoder → TF-IDF), says so in the log and on the results, and records it in the manifest. Set `embedding.fallback: none` in `spreadex.yaml` to stop instead. Vectors are cached per input, so a re-run embeds only new inputs.
+
 ### Advanced
 
 :::options
-- **Embedding**: how inputs are turned into vectors for clustering. **TF-IDF** needs no GPU and no key. **UniXcoder** needs the optional `spreadex[neural]` install.
 - **Parallel executions**: more is faster, but makes durations noisier and can time out an input that would have passed on its own.
 :::
 
@@ -91,6 +102,11 @@ cause: Only one campaign runs per project, whether started here, from another Wo
 fix: Open it from Campaigns, or cancel it there (or with `spreadex runs cancel`).
 :::
 
+:::problem "UniXcoder … would use TF-IDF instead"
+cause: torch and transformers are not installed, or the model could not be downloaded on first use.
+fix: Run `pip install 'spreadex[neural]'` in the environment that runs SpreadEx, connect once so the model is cached, then restart the Workbench. Or choose TF-IDF deliberately.
+:::
+
 :::problem The estimate is much longer than expected
 cause: With **Number of tests** or **Entire corpus**, the estimate assumes every input may use its full timeout.
 fix: Use a **Time limit**, or lower the timeout in step 4.
@@ -101,5 +117,5 @@ With equal count, a fixed seed, pinned generator versions and (for the Rhino exa
 :::
 
 :::advanced How clusters are formed
-Inputs are embedded (TF-IDF by default), clustered, and each generator is scored by the share of clusters its inputs fall into. The clustering's effective number of clusters (*k_eff*) and any caveats (for example a clustering that did not converge) are reported with the scores.
+Inputs are embedded (UniXcoder by default; see Diversity map), clustered with Affinity Propagation (sklearn's default damping, as in the SpreadEx study; if that does not converge, once more with damping 0.9, which the run reports and records), and each generator is scored by the share of clusters its inputs fall into. The clustering's effective number of clusters (*k_eff*) and any caveats (for example a clustering that did not converge) are reported with the scores.
 :::

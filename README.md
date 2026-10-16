@@ -112,13 +112,25 @@ Installs are deterministic (exact pins, isolated environments, never implicit). 
 
 ## 🔒 Local-first
 
-Your program, its inputs and every result stay in your project's `.spreadex/` folder. The network is used only when you ask: installing a generator (PyPI), opening the Rhino example (Maven Central), or the optional, experimental grammar assistant.
+Your program, its inputs and every result stay in your project's `.spreadex/` folder. The network is used only when you ask: installing a generator (PyPI), opening the Rhino example (Maven Central), downloading the UniXcoder model once (Hugging Face), choosing OpenAI embeddings (which send every generated input to OpenAI), or the optional, experimental grammar assistant.
 
 ```
 my-project/
 ├── spreadex.yaml
 └── .spreadex/   corpus.db · blobs/ · runs/<id>/manifest.json
 ```
+
+## 🧭 Diversity map
+
+Inputs are embedded, clustered once with Affinity Propagation, and that one map gives both Cluster Coverage and the SpreadEx order. Choose the embedding in **Review & run** or with `embedding.model`:
+
+| Model | Runs | Install | Note |
+|---|---|---|---|
+| `unixcoder` (default) | on this machine | `pip install 'spreadex[neural]'`, then a one-time 506 MB model download | one of the models evaluated in the ICST 2026 study |
+| `openai` | at OpenAI | `OPENAI_API_KEY` in the environment | `text-embedding-3-small`, used for the study's prioritization results; sends inputs to OpenAI |
+| `tfidf` | on this machine | nothing | character n-grams; not evaluated for fault detection |
+
+If the chosen model cannot run, the campaign falls back (OpenAI → UniXcoder → TF-IDF), says so on the results and records it in the manifest; `embedding.fallback: none` stops instead. Vectors are cached in `.spreadex/embeddings.sqlite`.
 
 ## 📄 Research
 

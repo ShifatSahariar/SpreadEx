@@ -821,7 +821,7 @@ function runFromConfig(c) {
   const r = { genMode: g.mode === "time" || g.count == null ? "time" : "count",
               perGen: per && per > 0 ? per : 30, count: Number.isInteger(g.count) && g.count > 0 ? g.count : 200,
               execMode: "time", execMinutes: execS && execS > 0 ? execS / 60 : 1, execCount: 500,
-              signal: c.selection_signal === "random" ? "random" : "cc", model: (c.embedding || {}).model || "tfidf", jobs: 4,
+              signal: c.selection_signal === "random" ? "random" : "cc", model: (c.embedding || {}).model || "unixcoder", jobs: 4,
               // Generators to keep by Cluster Coverage; 0 means all of them. Selection is opt-in: a project
               // without it keeps every generator, as it always has (the guided demo sets keep: 1).
               keep: c.selection && Number.isInteger(c.selection.keep) ? c.selection.keep : 0 };
@@ -1004,7 +1004,9 @@ function buildYaml() {
   if (c.budget?.max_inputs) lines.push(`  max_inputs: ${c.budget.max_inputs}`);
   if (c.selection?.keep) lines.push("", "selection:", `  by: ${c.selection.by || "cc"}`, `  keep: ${c.selection.keep}`);
   lines.push("", `selection_signal: ${c.selection_signal || "cc"}`,
-    "embedding:", `  model: ${c.embedding?.model || "tfidf"}`,
+    "embedding:", `  model: ${c.embedding?.model || "unixcoder"}`,
+    ...(c.embedding?.fallback ? [`  fallback: ${c.embedding.fallback}`] : []),
+    ...(c.embedding?.device ? [`  device: ${c.embedding.device}`] : []),
     "", `seed: ${c.seed ?? 42}`, "");
   // Settings the wizard does not edit are carried over unchanged, never dropped (JSON is YAML).
   const known = new Set(["sut", "oracle", "generators", "grammar", "corpus", "input_extension", "generator_options",
@@ -3164,7 +3166,7 @@ function syncRun() {
   // Only meaningful with something to choose from, and only with Cluster Coverage scores to choose by.
   if (nGenerators() > 1 && r.signal === "cc" && r.keep > 0 && r.keep < nGenerators()) S.config.selection = { by: "cc", keep: r.keep };
   else delete S.config.selection;
-  S.config.embedding = { model: r.model };
+  S.config.embedding = { ...(cfg().embedding || {}), model: r.model };
   return r;
 }
 
@@ -3246,7 +3248,7 @@ function summaryCard() {
     ${row("blue", "doc", "Inputs", inputs, "grammar")}
     ${row("purple", "sliders", `Generators (${gens.length})`, gens.length ? esc(gens.join(", ")) : "None (existing inputs only)", "generators")}
     ${row("orange", "shield", "Testing strategy", esc(checks.join(", ")), "strategy")}
-    ${row("green", "stats", "Test ordering", r.signal === "random" ? "Random (baseline)" : "SpreadEx prioritization", "run")}
+    ${row("green", "stats", "Test ordering", r.signal === "random" ? "Random (baseline)" : `SpreadEx prioritization &middot; ${esc(embeddingLabel(r.model))}`, "run")}
     ${row("slate", "clock", "Budget", budget, "run")}
     ${pending.length ? `<div class="sum-pend">${ICONS.download}<span>Installed on first run: ${pending.map(esc).join(", ")}. Downloaded from PyPI into ${pending.length > 1 ? "their own environments" : "its own environment"} before the clock starts.</span></div>` : ""}`;
 }
@@ -3255,6 +3257,31 @@ function runNumber(id, key, value, min, integer, unit, aria) {
   const bad = Number.isNaN(value) || value < min;
   return `<span class="unitbox rn ${bad ? "bad" : ""}"><input id="${id}" type="number" min="${min}" step="${integer ? 1 : "any"}" class="sut-cmd"
       value="${Number.isNaN(value) ? "" : esc(String(value))}" aria-label="${esc(aria)}" aria-invalid="${bad}" oninput="runInput('${key}', this.value, ${integer})"><span class="unit">${esc(unit)}</span></span>`;
+}
+
+const EMBEDDING_LABELS = { unixcoder: "UniXcoder", openai: "OpenAI text-embedding-3-small", tfidf: "TF-IDF" };
+function embeddingLabel(id) { return EMBEDDING_LABELS[id] || id || "TF-IDF"; }
+
+// The diversity map's embedding, chosen where it matters: beside the ordering it drives. Each option
+// says whether it can run here; one that cannot is still selectable, and the note says what the
+// campaign will use instead, because a fallback the user did not see coming is a silent change.
+function diversityMapOptions(r, grp) {
+  const st = S.embeddings, by = id => (st?.backends || []).find(b => b.id === id) || {};
+  const fallbackTo = id => (id === "openai" ? (by("unixcoder").ready ? "UniXcoder" : "TF-IDF") : "TF-IDF");
+  const state = id => { const b = by(id); if (!st) return "";
+    return `<p class="emb-st ${b.ready ? "ok" : "warn"}">${b.ready ? ICONS.success : ICONS.alert}<span>${esc(b.status || "")}${b.ready ? "" : ` &mdash; this campaign would use ${fallbackTo(id)} instead.`}</span></p>
+      ${!b.ready && b.fix ? `<p class="muted">Fix: <span class="mono">${esc(b.fix)}</span></p>` : ""}`; };
+  return `<div class="rsel-h"><strong>Diversity map</strong>
+      ${hint("hint-emb", "How inputs are turned into vectors before clustering. Cluster Coverage and the SpreadEx ordering are both read from this one map, so campaigns are only comparable when they used the same embedding.")}</div>
+    <div class="ropts three">
+      ${grp("emb", { on: r.model === "unixcoder", title: "UniXcoder", tag: "Recommended", onclick: "runSet('model','unixcoder')",
+        body: `<p class="muted">A code model evaluated in the SpreadEx study. Runs on this machine; the first campaign downloads it (${by("unixcoder").download_mb || 506} MB, once).</p>${state("unixcoder")}` })}
+      ${grp("emb", { on: r.model === "openai", title: "OpenAI", onclick: "runSet('model','openai')",
+        body: `<p class="muted">text-embedding-3-small, the model behind the study's prioritization results.</p>
+          <p class="emb-st warn">${ICONS.alert}<span>Every generated input is sent to OpenAI and billed to your key (<span class="mono">OPENAI_API_KEY</span>). Use it only for inputs you may share.</span></p>${state("openai")}` })}
+      ${grp("emb", { on: r.model === "tfidf", title: "TF-IDF", onclick: "runSet('model','tfidf')",
+        body: `<p class="muted">Character n-grams. No download, no key, fastest. Not evaluated for fault detection; also the fallback when the others cannot run.</p>` })}
+    </div>`;
 }
 
 function runOption({ on, title, tag, body, onclick, group }) {
@@ -3266,6 +3293,7 @@ function runOption({ on, title, tag, body, onclick, group }) {
 async function stepRun(current = () => true) {
   if (!S.generators) { try { S.generators = (await api("/api/generators")).generators; } catch (e) { /* the summary just omits the row */ } }
   if (S.project?.writable === undefined) { try { S.project = await api("/api/project"); } catch (e) { /* non-fatal */ } }
+  if (!S.embeddings) { try { S.embeddings = await api("/api/embeddings"); } catch (e) { /* the options show no status */ } }
   if (!current()) return;
   if (!cfg().generation) S.config.generation = { mode: "time", per_generator: "30s" };
   const r = runState();
@@ -3327,11 +3355,9 @@ async function stepRun(current = () => true) {
         ${nGenerators() > 2 ? grp("gs", { on: r.keep === 2, title: "Best 2 generators", onclick: "runSet('keep',2)",
           body: `<p class="muted">Keep the two with the highest Cluster Coverage.</p>` }) : ""}
       </div>` : ""}
-      <details class="sut-adv"><summary><span><strong>Advanced</strong></span><span class="muted">Embedding model and parallel executions</span></summary>
+      ${r.signal === "cc" ? diversityMapOptions(r, grp) : ""}
+      <details class="sut-adv"><summary><span><strong>Advanced</strong></span><span class="muted">Parallel executions</span></summary>
         <div class="sut-adv-body"><div class="row">
-          <div><label for="run-model">Embedding</label><select id="run-model" onchange="runSet('model', this.value)">
-            <option value="tfidf" ${r.model === "tfidf" ? "selected" : ""}>TF-IDF (no GPU, no key)</option>
-            <option value="unixcoder" ${r.model === "unixcoder" ? "selected" : ""}>UniXcoder (needs spreadex[neural])</option></select></div>
           <div><label for="jobs">Parallel executions</label><input id="jobs" type="number" min="1" max="32" value="${r.jobs}" oninput="runState().jobs = Math.max(1, Number(this.value) || 1)"></div>
         </div><p class="muted">More than one parallel execution is faster, but makes durations noisier and can time out an input that would have passed on its own.</p></div>
       </details>
@@ -3355,7 +3381,7 @@ async function stepRun(current = () => true) {
     </div>
     <div class="side-card runcard">
       <button type="button" class="primary runbtn" id="launch" data-tour="run-launch" onclick="launch()" ${readiness().ready ? "" : "disabled"}>${ICONS.playOutline} Run campaign</button>
-      <p class="muted runnote">${ICONS.shield}<span>Your inputs and results stay on this machine.${(S.generators || []).some(isPending) ? " Missing generators are downloaded from PyPI first." : ""}</span></p>
+      <p class="muted runnote">${ICONS.shield}<span>${r.signal === "cc" && r.model === "openai" ? "Generated inputs are sent to OpenAI to compute embeddings; results stay on this machine." : "Your inputs and results stay on this machine."}${(S.generators || []).some(isPending) ? " Missing generators are downloaded from PyPI first." : ""}</span></p>
     </div>
    </aside>
   </div>`;
@@ -3702,7 +3728,7 @@ function tabGenerators(d) {
 
   if (!gens.length) return `<div class="empty">This run recorded no generator breakdown.</div>`;
   return `<div class="resgrid one">
-    ${resCard("Generator comparison", `${basis ? `<div class="muted rbasis">Comparison basis: ${basis}</div>` : ""}${sel ? `<div class="rnote" data-tour="gen-selection">${ICONS.info}<div>This campaign kept ${sel.selected.length === 1 ? "the generator" : `the <strong>${sel.selected.length}</strong> generators`} with the highest Cluster Coverage (${sel.selected.map(esc).join(", ")}). Inputs from ${sel.dropped.map(esc).join(", ")} were ${sel.dropped.some(n => replayed[n]) ? (sel.dropped.every(n => replayed[n]) ? "replayed" : "generated or replayed") : "generated"} and measured, but not executed.</div></div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
+    ${resCard("Generator comparison", `${basis || d.corpus?.k_eff ? `<div class="muted rbasis">${basis ? `Comparison basis: ${basis}` : ""}${basis && d.corpus?.k_eff ? " &middot; " : ""}${d.corpus?.k_eff ? `Diversity map: ${esc(embeddingLabel(d.corpus.embedding?.used || "tfidf"))}, ${d.corpus.k_eff} clusters` : ""}</div>` : ""}${sel ? `<div class="rnote" data-tour="gen-selection">${ICONS.info}<div>This campaign kept ${sel.selected.length === 1 ? "the generator" : `the <strong>${sel.selected.length}</strong> generators`} with the highest Cluster Coverage (${sel.selected.map(esc).join(", ")}). Inputs from ${sel.dropped.map(esc).join(", ")} were ${sel.dropped.some(n => replayed[n]) ? (sel.dropped.every(n => replayed[n]) ? "replayed" : "generated or replayed") : "generated"} and measured, but not executed.</div></div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
     ${rec}
     <div class="resgrid three">
       ${resCard("Executed inputs per generator", executedChart)}

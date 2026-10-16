@@ -41,7 +41,8 @@ class Config:
     signal: str = "cc"
     #: Opt-in generator selection by Cluster Coverage: {"by": "cc", "keep": N}, or {}.
     selection: dict = field(default_factory=dict)
-    embedding: dict = field(default_factory=lambda: {"model": "tfidf"})
+    #: {"model": unixcoder | openai | tfidf, "fallback": tfidf | none, "device": cpu | cuda | mps}.
+    embedding: dict = field(default_factory=lambda: {"model": "unixcoder"})
     seed: int = 42
     #: e.g. ".js". Executed inputs are linked under a name ending in it, because many
     #: systems choose a front end from the extension. Empty keeps the bare hash name.
@@ -286,13 +287,50 @@ def load_config(path: Path | None = None) -> Config:
         grammar=raw.get("grammar") or {},
         signal=raw.get("selection_signal", raw.get("signal", "cc")),
         selection=_selection(raw.get("selection"), path),
-        embedding=raw.get("embedding") or {"model": "tfidf"},
+        embedding=_embedding(raw.get("embedding"), path),
         seed=int(raw.get("seed", 42)),
         input_extension=_input_extension(raw.get("input_extension"), path),
         semantics=_semantics(raw.get("semantics"), path),
         generator_options=_generator_options(raw.get("generator_options"), path),
         raw=raw,
     )
+
+
+def _embedding(value, path) -> dict:
+    """`embedding: {model: unixcoder}`: which vectors the diversity map is built on.
+
+    Absent means the default backend (UniXcoder). Only keys that were written are kept, so the
+    config hash -- and with it replay's drift check -- changes only when the user changes something.
+    """
+    from ..signals.base import EMBEDDING_MODELS, default_embedding
+
+    if value in (None, {}):
+        return {"model": default_embedding()}
+    if isinstance(value, str):
+        value = {"model": value}
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: `embedding` must be a mapping like `{{model: unixcoder}}`.")
+    unknown = set(value) - {"model", "fallback", "device"}
+    if unknown:
+        raise ConfigError(f"{path}: `embedding` has unknown key(s): {', '.join(sorted(unknown))}.")
+    model = str(value.get("model") or default_embedding()).lower()
+    if model in ("graph_codebert", "qwen3"):
+        raise ConfigError(f"{path}: `embedding.model: {model}` is not available in this version. "
+                          f"Use unixcoder (local), openai, or tfidf.")
+    if model not in EMBEDDING_MODELS:
+        raise ConfigError(f"{path}: `embedding.model` must be one of {', '.join(EMBEDDING_MODELS)}, not {model!r}.")
+    out = {"model": model}
+    if "fallback" in value:
+        fallback = str(value["fallback"]).lower()
+        if fallback not in ("tfidf", "none"):
+            raise ConfigError(f"{path}: `embedding.fallback` must be `tfidf` (default) or `none`.")
+        out["fallback"] = fallback
+    if "device" in value:
+        device = str(value["device"]).lower()
+        if device not in ("cpu", "cuda", "mps"):
+            raise ConfigError(f"{path}: `embedding.device` must be cpu (default), cuda or mps.")
+        out["device"] = device
+    return out
 
 
 def _selection(value, path) -> dict:
@@ -421,7 +459,9 @@ budget:
 
 selection_signal: cc    # cc (default) | random
 embedding:
-  model: tfidf          # tfidf (no extra deps) | unixcoder (needs spreadex[neural])
+  model: unixcoder      # unixcoder (default, local; needs spreadex[neural]) | openai (sends inputs
+                        # to OpenAI; needs OPENAI_API_KEY) | tfidf (no extra dependencies)
+  # fallback: tfidf     # if the model cannot run here, use TF-IDF and say so (`none` stops instead)
 
 seed: 42
 """
