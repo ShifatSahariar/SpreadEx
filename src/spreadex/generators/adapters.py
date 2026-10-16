@@ -185,12 +185,25 @@ def generate_isla(mgr, grammar: Path, n: int, out_dir: Path, seed: int, timeout:
     # -n alone is not enough: -f (free instantiations, default 10) caps how
     # many concrete inputs each solution is expanded into, so `-n 150` on an
     # unconstrained grammar still yields 10. Both have to be raised.
-    cmd = [exe, "solve", "-n", str(n), "-f", str(max(n, 10)), "-d", str(out_dir), str(grammar)]
+    args = ["solve", "-n", str(n), "-f", str(max(n, 10)), "-d", str(out_dir), str(grammar)]
     constraint = _sibling_constraint(grammar)
     if constraint:
-        cmd.append(str(constraint))
-    _run(cmd, timeout, "ISLa")
+        args.append(str(constraint))
+    # `isla solve` has no seed option, and its free instantiations draw from Python's `random`,
+    # so two runs of the same configuration produced different inputs (2 of 150 shared on the
+    # Rhino example). Seeding `random` before handing over to ISLa's own CLI entry point makes
+    # the same seed give the same inputs, as for the other generators.
+    _run([mgr.python_for("isla"), "-c", _ISLA_SEEDED, str(seed), *args], timeout, "ISLa")
     return _collect(out_dir)
+
+
+_ISLA_SEEDED = (
+    "import random, sys\n"
+    "random.seed(int(sys.argv[1]))\n"
+    "sys.argv = ['isla'] + sys.argv[2:]\n"
+    "from isla.cli import main\n"
+    "main()\n"
+)
 
 
 def _sibling_constraint(grammar: Path) -> Path | None:

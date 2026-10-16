@@ -153,3 +153,40 @@ def test_emitted_fuzzingbook_grammars_disable_ebnf_conversion(tmp_path):
     g = parse_bnf('<start> ::= <id> "++;"\n<id> ::= "x"')
     text = render(g, "fuzzingbook", "t")
     assert "SPREADEX_PURE_BNF = True" in text
+
+
+def test_isla_receives_the_campaign_seed(monkeypatch, tmp_path):
+    """`isla solve` has no seed flag; the adapter seeds Python's random before ISLa runs."""
+    from spreadex.generators import adapters
+
+    class Mgr:
+        def executable_for(self, *_):
+            return "/env/bin/isla"
+
+        def python_for(self, _):
+            return "/env/bin/python"
+
+    seen = []
+    monkeypatch.setattr(adapters, "_run", lambda cmd, timeout, what: seen.append(cmd))
+    adapters.generate_isla(Mgr(), tmp_path / "g.bnf", 5, tmp_path / "out", 1234, 10)
+    cmd = seen[0]
+    assert cmd[:3] == ["/env/bin/python", "-c", adapters._ISLA_SEEDED]
+    assert cmd[3] == "1234" and cmd[4] == "solve"
+
+
+def _isla_installed():
+    from spreadex.generators import GeneratorManager
+    return GeneratorManager().executable_for("isla", "isla") is not None
+
+
+@pytest.mark.skipif(not _isla_installed(), reason="ISLa is not installed")
+def test_isla_gives_the_same_inputs_for_the_same_seed(tmp_path):
+    from spreadex.generators import GeneratorManager, adapters
+
+    grammar = tmp_path / "g.bnf"
+    grammar.write_text('<start> ::= <e>\n<e> ::= <n> | <e> "+" <n> | "(" <e> ")"\n'
+                       '<n> ::= "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"\n')
+    runs = [adapters.generate_isla(GeneratorManager(), grammar, 12, tmp_path / f"o{i}", seed, 120)
+            for i, seed in enumerate((42, 42, 7))]
+    assert runs[0] == runs[1]
+    assert runs[0] != runs[2]
