@@ -172,6 +172,10 @@ def run_detail(state_dir: Path, run_id: str) -> dict[str, Any] | None:
                 # Absent on runs from before UniXcoder: every one of those used TF-IDF.
                 "embedding": corpus.get("embedding"),
                 "clustering": corpus.get("clustering"),
+                # Older runs did not record it; they are reported as unknown, never relabelled.
+                "prioritization": ({**(corpus.get("prioritization") or {}), "replay": corpus["replay"]}
+                                   if corpus.get("replay")
+                                   else corpus.get("prioritization") or {"variant": "unknown"}),
                 "signal_caveats": corpus.get("signal_caveats", []),
             },
             "generators": generators,

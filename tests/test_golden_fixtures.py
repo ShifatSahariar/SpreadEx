@@ -105,6 +105,9 @@ def test_the_prioritized_ordering_is_the_published_one(clustered, corpus, frozen
     ranking = ref.exemplar_distance_ranking(clusters, embeddings, exemplars)
     ours = ref.full_ordering(order, ranking, len(embeddings))
     assert ours == frozen["prioritized_order"]
+    # ...and through the entry point campaigns call, as the replication variant.
+    from spreadex.prioritization import prioritize
+    assert prioritize("replication", clusters, embeddings, exemplars)[0] == frozen["prioritized_order"]
 
 
 def test_the_fixture_says_where_it_came_from(frozen):

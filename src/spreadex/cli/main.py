@@ -749,6 +749,21 @@ def cmd_replay(args) -> int:
         config.budget.execution_s = eff.get("execution_s", config.budget.execution_s)
         config.budget.max_inputs = eff.get("max_inputs", config.budget.max_inputs)
 
+    from ..core.replay import ReplayError, recorded_prioritization, replay
+    variant = recorded_prioritization(manifest).get("variant", "unknown")
+    print(f"  ordering     {variant}" + ("  (recorded before prioritization variants existed)"
+                                         if variant == "unknown" else ""))
+    if args.execute and not args.regenerate:
+        print("\nReplaying the recorded inputs in their recorded order...")
+        try:
+            out = replay(config.project_root, config.state_dir, run_id)
+        except ReplayError as exc:
+            _die(str(exc))
+        print(f"  new run {out['run_id']}: {out['same_verdict']} of {out['executed']} inputs "
+              f"reproduced their recorded verdict"
+              + (f", {out['different_count']} did not" if out["different_count"] else ""))
+        return 0 if not out["different_count"] else 3
+
     current = config.hash()
     if current != manifest.get("config_hash"):
         print(f"\n  ! spreadex.yaml has changed since this run "
@@ -756,12 +771,14 @@ def cmd_replay(args) -> int:
         print("    A replay will NOT reproduce it. Check out the matching config first.")
         if not args.force:
             return 1
-    if not args.execute:
-        print("\nConfiguration matches. Re-run it with:")
+    if not args.regenerate:
+        print("\nReplay its recorded inputs, in order, with:")
         print(f"  spreadex replay {run_id} --execute")
+        print("or generate a new campaign from the same configuration with:")
+        print(f"  spreadex replay {run_id} --regenerate")
         return 0
 
-    print("\nReplaying...")
+    print("\nRegenerating (new inputs, current prioritization variant)...")
     result = Campaign(config).run(signal_override=manifest.get("signal"))
     _print_result(result, config)
     return 0
@@ -933,10 +950,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--suffix", default=".txt", help="file extension for the saved inputs (default .txt)")
     s.set_defaults(func=cmd_record)
 
-    s = sub.add_parser("replay", help="inspect or re-run a past campaign")
+    s = sub.add_parser("replay", help="inspect a past campaign, replay its recorded inputs, or regenerate it")
     s.add_argument("run_id", nargs="?")
-    s.add_argument("--execute", action="store_true", help="actually re-run it")
-    s.add_argument("--force", action="store_true", help="replay even if the config changed")
+    s.add_argument("--execute", action="store_true",
+                   help="replay: execute the run's recorded inputs again, in their recorded order, as a new run "
+                        "(no generation, no prioritization)")
+    s.add_argument("--regenerate", action="store_true",
+                   help="run the campaign again from scratch with the current spreadex.yaml: new inputs, "
+                        "new diversity map, the current prioritization variant")
+    s.add_argument("--force", action="store_true", help="regenerate even if the config changed")
     s.set_defaults(func=cmd_replay)
 
     s = sub.add_parser("export", help="export a campaign as a zip")

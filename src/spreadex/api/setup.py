@@ -361,31 +361,49 @@ def delete_run(server, run_id: str) -> dict[str, Any]:
 
 
 def rerun(server, run_id: str, body: dict) -> dict[str, Any]:
-    """Run again with the configuration that run recorded, not whatever is saved now."""
-    import json
-    import tempfile
+    """Regenerate: a NEW campaign from the configuration that run recorded (not whatever is saved
+    now). New inputs, a new diversity map, and the prioritization the config names -- or the
+    current default when the run recorded none, which the job log says. For the same inputs in the
+    same order, use replay_sequence."""
+    from ..core.replay import ReplayError, config_from_manifest, load_manifest, recorded_prioritization
 
     state_dir = server.spreadex_config.state_dir
-    manifest = state_dir / "runs" / run_id / "manifest.json"
     try:
-        raw = json.loads(manifest.read_text()).get("config")
-    except (OSError, ValueError):
-        raw = None
-    if not raw:
-        return {"ok": False, "error": f"{run_id} has no recorded configuration to re-run"}
-    # Relative paths in the config resolve against its file's folder, so the copy is read
-    # from the project root -- and removed as soon as it has been parsed.
-    root = server.spreadex_config.project_root
-    fd, tmp = tempfile.mkstemp(prefix=".spreadex-rerun-", suffix=".yaml", dir=root)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            yaml.safe_dump(raw, fh)
-        config = load_config(Path(tmp))
-    except ConfigError as exc:
+        manifest = load_manifest(state_dir, run_id)
+        config = config_from_manifest(server.spreadex_config.project_root, manifest)
+    except ReplayError as exc:
         return {"ok": False, "error": str(exc)}
-    finally:
-        os.unlink(tmp)
-    return _launch(server, config, {**body, "install_missing": True}, label=f"re-run of {run_id}")
+    label = f"new campaign from {run_id}'s configuration"
+    if recorded_prioritization(manifest).get("variant") == "unknown":
+        label += (f" (it recorded no prioritization variant; this one uses "
+                  f"{config.prioritization.get('variant')})")
+    return _launch(server, config, {**body, "install_missing": True}, label=label)
+
+
+def replay_sequence(server, run_id: str) -> dict[str, Any]:
+    """Replay: the run's recorded inputs, in their recorded order, as a new run. No generation."""
+    from ..core.replay import ReplayError, replay
+
+    config = server.spreadex_config
+    refused = _busy(server, config)
+    if refused:
+        return refused
+    import threading
+    stop = threading.Event()
+
+    def work(job):
+        try:
+            return replay(config.project_root, config.state_dir, run_id, log=job.log,
+                          stop_event=stop, origin="ui")
+        except ReplayError as exc:
+            raise RuntimeError(str(exc)) from None
+
+    try:
+        server.spreadex_jobs.start("run", f"replay of {run_id}", work)
+    except RuntimeError as exc:
+        return {"ok": False, "conflict": True, "error": str(exc)}
+    server.spreadex_stop = stop
+    return {"ok": True, "replay_of": run_id}
 
 
 # -------------------------------------------------------- assistance (opt-in)

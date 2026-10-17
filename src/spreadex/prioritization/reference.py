@@ -157,6 +157,9 @@ def exemplar_distance_ranking(
     (For the record: webapp/tool_mode/pipeline.py in the research repository
     hardcodes farthest-first, which silently diverges from the paper.)
     """
+    # Equal distances are ordered by numpy's default argsort, exactly as the research code does; that
+    # sort is not guaranteed stable, so on exact ties the replication variant claims the research
+    # code's behaviour, not a documented tie rule.
     reverse = direction == "farthest"
     ranked: dict[Any, list[InputId]] = {}
     for cid, members in clusters.items():

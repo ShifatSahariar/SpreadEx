@@ -224,7 +224,13 @@ class Campaign:
             ordering = signal.rank(items, seed=cfg.seed)
             result.embedding = ordering.embedding
             result.clustering = getattr(ordering, "clustering", None)
-            result.prioritization = getattr(ordering, "prioritization", None)
+            prov = getattr(ordering, "prioritization", None)
+            # The manifest keeps the rules; the clusters, exemplars and sequence go to
+            # prioritization.json beside it (they scale with the corpus).
+            result.prioritization = ({k: v for k, v in prov.items()
+                                      if k not in ("clusters", "exemplars", "cluster_order", "sequence")}
+                                     | {"provenance_file": "prioritization.json"}) if prov else (
+                {"variant": "random baseline"} if signal_name == "random" else None)
             if ordering.embedding:
                 e = ordering.embedding
                 self.log(f"  embedding: {e['used']} ({e['dim']}-d; {e['computed']} computed, "
@@ -251,6 +257,7 @@ class Campaign:
             if cfg.budget.max_inputs:
                 ordered = ordered[: cfg.budget.max_inputs]
             result.prioritized = len(ordered)
+            _write_prioritization(run_dir, items, ordering, ordered, result)
             if ordering.generator_scores:
                 pretty = ", ".join(f"{g} {v:.2f}" for g, v in sorted(ordering.generator_scores.items()))
                 self.log(f"  cluster coverage: {pretty}  (k_eff={ordering.k_eff})")
@@ -445,6 +452,30 @@ class Campaign:
                              status="cancelled" if self.cancelled() else "finished")
 
         return result
+
+
+def _write_prioritization(run_dir: Path, items, ordering, ordered, result) -> None:
+    """Everything needed to reconstruct the execution order without recomputing it.
+
+    Inputs are named by content hash, so the file stays valid whatever the pool order was. Labels
+    are the clustering's own, as strings (JSON keys).
+    """
+    prov = getattr(ordering, "prioritization", None) or {}
+    h = lambda i: items[i].blob_hash
+    record = {
+        **{k: v for k, v in prov.items() if k not in ("clusters", "exemplars", "cluster_order", "sequence")},
+        "variant": (prov.get("variant") or ("random baseline" if not prov else None)),
+        "embedding": result.embedding,
+        "clustering": result.clustering,
+        "clusters": {str(c): [h(i) for i in m] for c, m in (prov.get("clusters") or {}).items()},
+        "exemplars": {str(c): h(i) for c, i in (prov.get("exemplars") or {}).items()},
+        "cluster_order": [str(c) for c in prov.get("cluster_order") or []],
+        # The full prioritized pool, before generator selection and the input cap...
+        "sequence": [h(i) for i in ordering.order],
+        # ...and what was handed to execution, after them, in order.
+        "execution_order": [it.blob_hash for it in ordered],
+    }
+    (run_dir / "prioritization.json").write_text(json.dumps(record, indent=1) + "\n")
 
 
 class CampaignStartupError(RuntimeError):

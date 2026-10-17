@@ -86,9 +86,11 @@ def test_within_cluster_ordering_is_identical(corpus, research):
     assert ours == theirs, "ExemplarDistance ordering diverged"
 
 
-def test_published_direction_is_closest_first(corpus, research):
-    """SpreadEx_RR uses the 'closest' default; the webapp's farthest-first is
-    the deviation, and it must NOT be what we compute."""
+def test_replication_direction_is_closest_first(corpus, research):
+    """SpreadEx_RR in the replication code uses the 'closest' default, so the
+    replication variant must compute closest-first. (Algorithm 1 as printed says
+    farthest-first; that is the `published` variant, tested in
+    tests/test_published_algorithm.py.)"""
     embeddings, clusters, exemplar_map = cluster_both(corpus, research)
     closest = ref.exemplar_distance_ranking(clusters, embeddings, exemplar_map, "closest")
     farthest = ref.exemplar_distance_ranking(clusters, embeddings, exemplar_map, "farthest")
@@ -106,7 +108,7 @@ def test_published_direction_is_closest_first(corpus, research):
     list(range(1, 46)),
 ])
 def test_final_spreadex_ordering_is_identical(corpus, research, budgets):
-    """The published ordering, driven through the real budget loop."""
+    """The replication code's ordering, driven through the real budget loop."""
     embeddings, clusters, exemplar_map = cluster_both(corpus, research)
     order = ref.centroid_spread_order(clusters, embeddings)
     ranking = ref.exemplar_distance_ranking(clusters, embeddings, exemplar_map)
@@ -172,3 +174,25 @@ def test_full_ordering_covers_the_whole_corpus(corpus, research):
 
     driven, _ = ref.drive_budgets(order, ranking, list(range(1, n + 1)))
     assert full == driven
+
+
+def test_the_replication_variant_is_what_the_research_selector_emits(corpus, research):
+    """The entry point campaigns call (`prioritize("replication", ...)`), against the research
+    selector driven one input at a time: same sequence, same length, no duplicates."""
+    from spreadex.prioritization import prioritize
+
+    embeddings, clusters, exemplar_map = cluster_both(corpus, research)
+    ours, prov = prioritize("replication", clusters, embeddings, exemplar_map)
+
+    order = research["cluster_by_centroid_spread"](clusters, embeddings)
+    ranking = research["inputs_by_exemplar_distance"](clusters, embeddings, exemplar_map)
+    selector = research["create_round_robin_cluster_selector"](order, ranking)
+    previously, theirs, last = set(), [], 0
+    for budget in range(1, len(embeddings) + 1):
+        new = selector(clusters=clusters, previously_selected=previously,
+                       needed_inputs=budget - last, embeddings=embeddings)
+        theirs.extend(i for i in new if i not in previously)
+        previously.update(new)
+        last = len(previously)
+    assert ours == theirs and len(set(ours)) == len(ours) == len(embeddings)
+    assert prov["variant"] == "replication" and prov["exemplars"] == dict(exemplar_map)

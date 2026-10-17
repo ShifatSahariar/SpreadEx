@@ -340,16 +340,8 @@ class ClusterCoverageSignal:
         id_to_generator = {i: items[i].generator for i in range(n)}
         scores = ref.cluster_coverage(id_to_label, id_to_generator, generator_order, k_eff)
 
-        if self.variant == "published":
-            from ..prioritization import published
-            order, prioritization = published.prioritize(clusters, embeddings)
-        else:
-            cluster_order = ref.centroid_spread_order(clusters, embeddings)
-            ranking = ref.exemplar_distance_ranking(clusters, embeddings, exemplar_map)
-            order = ref.full_ordering(cluster_order, ranking, n)
-            prioritization = {"variant": "replication", "exemplar": "affinity_propagation",
-                              "within_cluster": "closest_first", "cluster_distance": "cosine",
-                              "note": "the ordering of the ICST 2026 replication code"}
+        from ..prioritization import prioritize
+        order, prioritization = prioritize(self.variant, clusters, embeddings, exemplar_map)
 
         # Anything the reference process never reaches still deserves to run, last.
         seen = set(order)

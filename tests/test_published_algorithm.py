@@ -56,7 +56,9 @@ def test_hand_derived_full_sequence_is_round_robin():
     round 1: y2, x3, z2;  round 2: y1, x1, z1;  round 3: x2 (C1 and C2 are exhausted)."""
     order, meta = published.prioritize(CLUSTERS, EMB)
     assert order == ["y2", "x3", "z2", "y1", "x1", "z1", "x2"]
-    assert meta["within_cluster"] == "farthest_first" and meta["exemplar"] == "closest_to_centroid"
+    assert meta["within_cluster"].startswith("farthest first") and meta["exemplar"].startswith("member closest")
+    assert meta["sequence"] == order and meta["cluster_order"] == [1, 0, 2]
+    assert meta["exemplars"] == {0: "x2", 1: "y1", 2: "z1"}
 
 
 def test_the_replication_ordering_differs_where_the_paper_and_its_code_differ():
@@ -167,3 +169,70 @@ def test_the_variant_is_configured_and_validated(tmp_path):
     assert cfg("").hash() != cfg("prioritization: {variant: replication}\n").hash()
     with pytest.raises(ConfigError, match="published"):
         cfg("prioritization: {variant: farthest}\n")
+
+
+# ------------------------------------------------- the remaining required fixtures
+
+def test_an_exact_tie_among_the_smallest_goes_to_the_first_in_the_pool():
+    """Two singleton clusters at 0 and 90 degrees, a larger one at 45 degrees. Both singletons have
+    mean distance (1 + 0.2929) / 2 to the others: an exact tie. Published: first in pool order.
+    b1 comes first in the pool here, so cluster 'b' leads, whatever the clusters are called."""
+    emb = {"b1": np.array([0.0, 4.0]), "a1": np.array([4.0, 0.0]),
+           "m1": np.array([3.0, 3.0]), "m2": np.array([5.0, 5.0])}
+    for clusters in ({"a": ["a1"], "b": ["b1"], "m": ["m1", "m2"]},
+                     {"m": ["m1", "m2"], "b": ["b1"], "a": ["a1"]}):
+        assert published.cluster_order(clusters, emb)[0] == "b"
+
+
+def test_the_two_variants_use_different_exemplars_where_they_differ():
+    """Published: the member closest to the centroid (x2, hand-derived above). Replication: whatever
+    Affinity Propagation chose -- here, deliberately, x1 -- and closest first from it:
+    from x1, x1=0, x2=2, x3=7 -> x1, x2, x3."""
+    from spreadex.prioritization import prioritize
+
+    ap = {0: "x1", 1: "y1", 2: "z1"}
+    _, pub = prioritize("published", CLUSTERS, EMB, ap)
+    seq, rep = prioritize("replication", CLUSTERS, EMB, ap)
+    assert pub["exemplars"][0] == "x2" and rep["exemplars"][0] == "x1"
+    assert seq.index("x1") < seq.index("x2") < seq.index("x3")
+
+
+def test_equal_distances_from_the_exemplar_keep_pool_order():
+    """w1 is the centroid itself, so the exemplar; w2 and w3 are both at distance 1 from it.
+    Published: farthest first, ties in pool order -> w2, w3, then w1."""
+    emb = {"w1": np.array([5.0, 5.0]), "w2": np.array([6.0, 5.0]), "w3": np.array([4.0, 5.0])}
+    ex = published.exemplar_closest_to_centroid({0: ["w1", "w2", "w3"]}, emb)
+    assert ex == {0: "w1"}
+    assert published.farthest_first_ranking({0: ["w1", "w2", "w3"]}, emb, ex) == {0: ["w2", "w3", "w1"]}
+
+
+def test_budgets_give_cumulative_prefixes_without_duplicates():
+    """Driving the round-robin with growing budgets (the research loop) yields, at every budget b,
+    exactly the first b inputs of the full sequence -- never a repeat."""
+    order = published.cluster_order(CLUSTERS, EMB)
+    ranking = published.farthest_first_ranking(CLUSTERS, EMB, published.exemplar_closest_to_centroid(CLUSTERS, EMB))
+    full, snaps = ref.drive_budgets(order, ranking, list(range(1, len(EMB) + 1)))
+    assert full == published.prioritize(CLUSTERS, EMB)[0] and len(set(full)) == len(full)
+    for b, snap in snaps.items():
+        assert snap == full[:b]
+    # The research loop's documented quirk: one jump in budget is served by at most one round, so
+    # a jump from 3 to 100 adds only one input per cluster. Campaigns therefore drive the loop one
+    # input at a time (full_ordering), which covers the whole pool, as above.
+    jump, _ = ref.drive_budgets(order, ranking, [3, 100])
+    assert jump == full[:6]
+    assert ref.full_ordering(order, ranking, 100) == full
+
+
+def test_top_k_selection_filters_after_ordering_and_keeps_seeds():
+    """Selection removes inputs only produced by dropped generators, keeps the published order of
+    the rest, keeps the user's seeds, and keeps an input another kept generator also produced."""
+    from types import SimpleNamespace as It
+
+    from spreadex.core.selection import apply
+
+    seq, _ = published.prioritize(CLUSTERS, EMB)                 # y2 x3 z2 y1 x1 z1 x2
+    gen = {"x1": "fa", "x2": "fa", "x3": "fb", "y1": "fb", "y2": "corpus", "z1": "fb", "z2": "fa"}
+    items = [It(blob_hash=i, generator=gen[i]) for i in seq]
+    origins = {i: {gen[i]} for i in seq} | {"z1": {"fb", "fa"}}  # z1 also produced by kept fa
+    kept = [it.blob_hash for it in apply(items, origins, dropped=["fb"])]
+    assert kept == ["y2", "z2", "x1", "z1", "x2"]                # x3, y1 dropped; order kept

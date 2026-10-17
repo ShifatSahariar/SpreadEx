@@ -6,8 +6,9 @@ places, both of which the replication code is known to do differently (`referenc
 replication behaviour, `variant: replication`):
 
 * **Exemplar.** "the input whose embedding is closest to the cluster centroid" (Sec. IV-B, Alg. 1
-  line 15). Here: the member with the smallest Euclidean distance to the cluster's mean vector. The
-  replication code uses Affinity Propagation's own exemplar instead.
+  line 15). The paper names no metric for "closest"; we use Euclidean distance to the cluster's mean
+  vector (our interpretation, consistent with the Euclidean ranking of Phase 2). The replication
+  code uses Affinity Propagation's own exemplar instead.
 * **Within-cluster order.** "ranked in descending order based on their Euclidean distance from the
   exemplar ... inputs that differ more from the exemplar get higher priority" (Alg. 1 lines 17-19).
   Here: farthest first. The replication code ranks closest first.
@@ -87,13 +88,23 @@ def cluster_order(clusters: Mapping[Any, list[InputId]],
     return ref.centroid_spread_order(ordered, embeddings)
 
 
+#: What this variant does, recorded with every campaign that uses it.
+RULES = {
+    "variant": "published",
+    "specification": "ICST 2026, Sec. IV-B and Algorithm 1",
+    "centroid": "arithmetic mean of the member embeddings",
+    "cluster_distance": "cosine, between centroids",
+    "first_cluster": "smallest; among equally small, greatest mean distance to all other clusters",
+    "cluster_order": "max-min: next is the cluster farthest from its nearest already chosen one",
+    "exemplar": "member closest to the centroid (Euclidean: our interpretation, the paper names no metric)",
+    "within_cluster": "farthest first (descending Euclidean distance from the exemplar)",
+    "traversal": "round-robin, one input per cluster per round",
+    "ties": "every remaining tie goes to the first in pool order",
+}
+
+
 def prioritize(clusters: Mapping[Any, list[InputId]],
                embeddings: Mapping[InputId, np.ndarray]) -> tuple[list[InputId], dict]:
     """The full published ordering of every input, plus what produced it (for the manifest)."""
-    order = cluster_order(clusters, embeddings)
-    exemplars = exemplar_closest_to_centroid(clusters, embeddings)
-    ranking = farthest_first_ranking(clusters, embeddings, exemplars)
-    sequence = ref.full_ordering(order, ranking, len(embeddings))
-    return sequence, {"variant": "published", "exemplar": "closest_to_centroid",
-                      "within_cluster": "farthest_first", "cluster_distance": "cosine",
-                      "tie_rule": "most isolated among the smallest (mean distance to all other clusters)"}
+    from . import prioritize as shared
+    return shared("published", clusters, embeddings)

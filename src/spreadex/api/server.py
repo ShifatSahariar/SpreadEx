@@ -228,7 +228,7 @@ class _Handler(BaseHTTPRequestHandler):
             back = f"http://{self.headers.get('Host') or '127.0.0.1'}/"
             self._json_result(setup.demo_open(self.server, body, back))
             return
-        for action in ("cancel", "delete", "rerun"):
+        for action in ("cancel", "delete", "rerun", "replay-sequence"):
             if route.startswith("/api/runs/") and route.endswith("/" + action):
                 run_id = route[len("/api/runs/"):-len(action) - 1]
                 if not run_id or "/" in run_id:
@@ -237,6 +237,8 @@ class _Handler(BaseHTTPRequestHandler):
                     result = setup.cancel_run(self.server, run_id)
                 elif action == "delete":
                     result = setup.delete_run(self.server, run_id)
+                elif action == "replay-sequence":
+                    result = setup.replay_sequence(self.server, run_id)
                 else:
                     result = setup.rerun(self.server, run_id, body)
                 self._json_result(result)

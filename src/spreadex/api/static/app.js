@@ -3702,7 +3702,8 @@ function resultsHeader(d) {
       <div class="runpick"><button type="button" class="ghost rmore" aria-haspopup="menu" aria-expanded="${!!S.actMenu}" aria-label="More actions" onclick="toggleActMenu()">${ICONS.dots}</button>
         ${S.actMenu ? `<div class="runmenu right" role="menu">
           <button type="button" role="menuitem" onclick="copyReplayCommand()">Copy replay command</button>
-          ${canAct() ? `<button type="button" role="menuitem" onclick="rerunCampaign(S.current)">Run again with this configuration</button>
+          ${canAct() ? `<button type="button" role="menuitem" onclick="replayCampaign(S.current)">Replay recorded inputs (same order)</button>
+          <button type="button" role="menuitem" onclick="rerunCampaign(S.current)">Run again (regenerate inputs)</button>
           <button type="button" role="menuitem" onclick="S.actMenu = false; go('setup'); gotoStep('run')">Edit setup, then run…</button>
           <button type="button" role="menuitem" class="danger" onclick="deleteCampaign(S.current)">Delete campaign…</button>` : ""}</div>` : ""}</div>
       <button type="button" class="ghost rexport" onclick="exportRun()">${ICONS.download} Export</button>
@@ -3713,7 +3714,7 @@ function toggleRunMenu() { S.runMenu = !S.runMenu; S.actMenu = false; paintRun()
 function toggleActMenu() { S.actMenu = !S.actMenu; S.runMenu = false; paintRun(); }
 function copyReplayCommand() {
   S.actMenu = false; paintRun();
-  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(`spreadex replay ${S.current}`).catch(() => {});
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(`spreadex replay ${S.current} --execute`).catch(() => {});
 }
 // The export needs the token header, so it is fetched and saved rather than linked.
 async function downloadExport(id) {
@@ -3868,7 +3869,7 @@ function tabGenerators(d) {
 
   if (!gens.length) return `<div class="empty">This run recorded no generator breakdown.</div>`;
   return `<div class="resgrid one">
-    ${resCard("Generator comparison", `${basis || d.corpus?.k_eff ? `<div class="muted rbasis">${basis ? `Comparison basis: ${basis}` : ""}${basis && d.corpus?.k_eff ? " &middot; " : ""}${d.corpus?.k_eff ? `Diversity map: ${esc(embeddingLabel(d.corpus.embedding?.used || "tfidf"))}, ${d.corpus.k_eff} clusters` : ""}</div>` : ""}${sel ? `<div class="rnote" data-tour="gen-selection">${ICONS.info}<div>This campaign kept ${sel.selected.length === 1 ? "the generator" : `the <strong>${sel.selected.length}</strong> generators`} with the highest Cluster Coverage (${sel.selected.map(esc).join(", ")}). Inputs from ${sel.dropped.map(esc).join(", ")} were ${sel.dropped.some(n => replayed[n]) ? (sel.dropped.every(n => replayed[n]) ? "replayed" : "generated or replayed") : "generated"} and measured, but not executed.</div></div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
+    ${resCard("Generator comparison", `${basis || d.corpus?.k_eff ? `<div class="muted rbasis">${basis ? `Comparison basis: ${basis}` : ""}${basis && d.corpus?.k_eff ? " &middot; " : ""}${d.corpus?.k_eff ? `Diversity map: ${esc(embeddingLabel(d.corpus.embedding?.used || "tfidf"))}, ${d.corpus.k_eff} clusters &middot; Ordering: ${esc(orderingLabel(d.corpus.prioritization))}` : ""}</div>` : ""}${sel ? `<div class="rnote" data-tour="gen-selection">${ICONS.info}<div>This campaign kept ${sel.selected.length === 1 ? "the generator" : `the <strong>${sel.selected.length}</strong> generators`} with the highest Cluster Coverage (${sel.selected.map(esc).join(", ")}). Inputs from ${sel.dropped.map(esc).join(", ")} were ${sel.dropped.some(n => replayed[n]) ? (sel.dropped.every(n => replayed[n]) ? "replayed" : "generated or replayed") : "generated"} and measured, but not executed.</div></div>` : ""}${table}${notes.map(n => `<div class="rnote warnnote">${ICONS.alert}<div>${esc(n)}</div></div>`).join("")}`, { right: sortSel, tour: "gen-compare", tip: "Everything here is computed from this run's recorded inputs and verdicts." })}
     ${rec}
     <div class="resgrid three">
       ${resCard("Executed inputs per generator", executedChart)}
@@ -4202,6 +4203,26 @@ async function rerunCampaign(id, ev) {
   startLive();
 }
 
+async function replayCampaign(id, ev) {
+  ev?.stopPropagation();
+  S.actMenu = false;
+  try {
+    const r = await api(`/api/runs/${encodeURIComponent(id)}/replay-sequence`, {});
+    if (r.ok === false) throw new Error(r.error);
+  } catch (e) {
+    S.listError = S.actionError = String(e.message || e);
+    return S.rview === "run" ? paintRun() : renderResults();
+  }
+  startLive();
+}
+
+const ORDERING_LABEL = { published: "SpreadEx, Algorithm 1 as published", replication: "SpreadEx, replication-code ordering",
+  "random baseline": "random (baseline)", unknown: "unknown (recorded before ordering variants)" };
+function orderingLabel(p) {
+  if (p && p.replay) return `replay of ${p.replay.replay_of} (recorded order)`;
+  return ORDERING_LABEL[(p && p.variant) || "unknown"] || esc((p && p.variant) || "unknown");
+}
+
 async function deleteCampaign(id, ev) {
   ev?.stopPropagation();
   S.actMenu = false;
@@ -4222,7 +4243,8 @@ function campaignsList() {
   const live = runs.find(r => r.status === "running");
   const act = (r) => !canAct() ? "" : r.status === "running"
     ? `<button type="button" class="ghost small" onclick="cancelCampaign('${esc(r.run_id)}', event)">${ICONS.stop} Cancel</button>`
-    : `<button type="button" class="ghost small" onclick="rerunCampaign('${esc(r.run_id)}', event)" ${live ? "disabled" : ""} title="Run again with the configuration this campaign used">${ICONS.rerun} Re-run</button>
+    : `<button type="button" class="ghost small" onclick="replayCampaign('${esc(r.run_id)}', event)" ${live ? "disabled" : ""} title="Execute this campaign's recorded inputs again, in their recorded order, as a new campaign. Nothing is generated or reordered.">${ICONS.rerun} Replay</button>
+       <button type="button" class="ghost small" onclick="rerunCampaign('${esc(r.run_id)}', event)" ${live ? "disabled" : ""} title="Start a new campaign from this campaign's configuration: new inputs, a new diversity map, the configured ordering.">Regenerate</button>
        <button type="button" class="ghost small" onclick="exportCampaign('${esc(r.run_id)}', event)">${ICONS.download} Export</button>
        <button type="button" class="ghost small" onclick="deleteCampaign('${esc(r.run_id)}', event)" title="Delete (frees about ${esc(fmtBytes(r.size_bytes))})" aria-label="Delete ${esc(campaignName(r.run_id))}">${ICONS.trash}</button>`;
   const rows = runs.map(r => `<tr class="click" tabindex="0" onclick="openCampaign('${esc(r.run_id)}')" onkeydown="if (event.key === 'Enter' && event.target === this) openCampaign('${esc(r.run_id)}')">
