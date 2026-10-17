@@ -75,7 +75,7 @@ variable.
 | **nashorn** | ✓ works | 81 executed · 8 ok · 73 rejected · 0 crashes | `NASHORN_SUT` |
 | **graaljs** | ✓ works | 61 executed · 8 ok · 53 rejected · 0 crashes | `GRAALJS_JARS` |
 | **karatejs** | ✓ works | 158 executed · 16 ok · 142 rejected · 0 crashes | `KARATE_JARS`, plus one `javac` for the harness |
-| **basic** | ✓ works | 160 executed · **1 real bug** · 0 false crashes | `BASIC_CLASSES` (non-commercial licence — you compile it) |
+| **basic** | ✓ works (re-verified 2026-10-16, run records kept with the ICSE'27 paper artifact) | 600 executed · 10 crashes, 1 signature: **1 real bug** · 0 false crashes | `BASIC_CLASSES` (non-commercial licence — you compile it) |
 | **rhino-vs-graaljs** | ✓ works | 55 executed · 50 mutual rejections · 0 divergences | both JS engines above |
 | **CALC** | — dropped | — | superseded by the demo SUT we own, which has a documented defect and a licence |
 
@@ -103,13 +103,13 @@ java.lang.ArrayIndexOutOfBoundsException: Index 256 out of bounds for length 256
 
 `reset()` copies a source line into a fixed 256-character buffer with no
 bounds check. Any line longer than 255 characters overflows it — verified by
-hand at 252 (fine) and 262 (throws). The campaign reached it at input 3 of 160.
+hand at 255 (fine) and 256 (throws). The 2026-10-16 campaign reached it at input 5 of 600, ten times in all.
 
-**And the first run of that example reported 126 crashes, of which 125 were
-not crashes at all.** They were programs jumping to an undefined line number,
-which JavaBASIC diagnoses perfectly well as `Runtime Error: GOTO non-existent
-line 80` — a wording missing from `rejection_patterns`. Adding it took the
-report from 127 crashes across 2 signatures to 3 crashes across 1.
+**Without the example's rejection patterns the same inputs report 474 crashes
+in 2 signatures**: 464 are programs JavaBASIC rejects correctly (for example
+`Runtime Error: GOTO non-existent line 80`), 10 are the overflow. With them,
+only the 10 remain. (An earlier note here said 126 → 3 crashes; that run's
+configuration was not kept, so it is replaced by the measurement above.)
 
 That is the whole argument for the oracle being configurable and for
 `crash_patterns` being checked first, in one subject: BASIC *catches* the

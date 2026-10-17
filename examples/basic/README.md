@@ -45,24 +45,23 @@ void reset(String x) {
 }
 ```
 
-Any program line longer than 255 characters overflows it. Verified by hand:
-252 characters is fine, 262 throws. The campaign reached it at input 3 of 160.
+Any program line of 256 characters or more overflows it. Verified by hand:
+255 characters is fine, 256 throws (2026-10-16).
 
 ## The oracle is what made that visible
 
-The first run of this example reported **126 crashes**. Exactly one of them
-was the bug above; the other 125 were programs that jumped to a line number
-they never defined, which JavaBASIC diagnoses perfectly well as
-`Runtime Error: GOTO non-existent line 80`. That wording was missing from
-`oracle.rejection_patterns`.
+Measured on 2026-10-16 (SpreadEx 791839a, 4 generators x 150 inputs, all 600
+executed; the four campaigns generated identical inputs):
 
-```
-before: 127 crashes, 2 signatures   <- one real bug, buried
-after:    3 crashes, 1 signature    <- the real bug, alone
-```
+| Oracle | Crashes reported | Signatures |
+|---|---|---|
+| as shipped in this folder | 10 | 1 (all the overflow) |
+| without `rejection_patterns` | 474 | 2 (464 correctly rejected programs + the 10) |
+| without `crash_patterns` | 0 | 0 (the overflow is reported as ok) |
 
-One missing pattern was the difference between a usable report and a pile of
-noise. It also cuts the other way: BASIC *catches* the overflow itself, prints
-`Caught an Exception :` and still exits 0 — so neither the exit code nor the
-rejection rules would have noticed it. `crash_patterns` are checked first for
-exactly this reason.
+Without the rejection rules the real defect is buried under programs JavaBASIC
+diagnoses perfectly well (for example `Runtime Error: GOTO non-existent line`).
+And it cuts the other way: BASIC *catches* the overflow itself, prints
+`Caught an Exception :` and still exits 0, so neither the exit code nor the
+rejection rules would notice it. `crash_patterns` are checked first for exactly
+this reason.
