@@ -71,12 +71,12 @@ variable.
 
 | Subject | Status | Run | Needs |
 |---|---|---|---|
-| **rhino** | ✓ works | 251 executed · 25 ok · 226 rejected · 0 crashes | `RHINO_JAR` |
-| **nashorn** | ✓ works | 81 executed · 8 ok · 73 rejected · 0 crashes | `NASHORN_SUT` |
-| **graaljs** | ✓ works | 61 executed · 8 ok · 53 rejected · 0 crashes | `GRAALJS_JARS` |
-| **karatejs** | ✓ works | 158 executed · 16 ok · 142 rejected · 0 crashes | `KARATE_JARS`, plus one `javac` for the harness |
+| **rhino** | ✓ re-verified 2026-10-16 (Rhino 1.9.1, two runs, identical inputs and order; records kept with the ICSE'27 artifact) | 236 executed in 180 s · 22 ok · 214 rejected · 0 crashes | `RHINO_JAR` |
+| **nashorn** | template: ran once on 2026-10-05 (81 executed, 73 rejected, 0 crashes); run records not kept | — | `NASHORN_SUT` |
+| **graaljs** | template: ran once on 2026-10-05 (61 executed, 53 rejected, 0 crashes); run records not kept | — | `GRAALJS_JARS` |
+| **karatejs** | template: ran once on 2026-10-05 (158 executed, 142 rejected, 0 crashes); run records not kept | — | `KARATE_JARS`, plus one `javac` for the harness |
 | **basic** | ✓ works (re-verified 2026-10-16, run records kept with the ICSE'27 paper artifact) | 600 executed · 10 crashes, 1 signature: **1 real bug** · 0 false crashes | `BASIC_CLASSES` (non-commercial licence — you compile it) |
-| **rhino-vs-graaljs** | ✓ works | 55 executed · 50 mutual rejections · 0 divergences | both JS engines above |
+| **rhino-vs-graaljs** | ✓ re-verified 2026-10-16 (records kept with the ICSE'27 artifact) | 175 executed in 300 s · 16 agreed ok · 159 rejected by both · 0 divergences | both JS engines above |
 | **CALC** | — dropped | — | superseded by the demo SUT we own, which has a documented defect and a licence |
 
 Each lives in `examples/<name>/` with a README giving the exact command.
