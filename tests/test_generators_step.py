@@ -161,17 +161,18 @@ def test_an_incompatible_generator_cannot_be_ticked_unless_it_is_already_chosen(
     assert '${fit.ok || chosen ? "" : "disabled"}' in card
 
 
-def test_fuzz4all_is_a_real_llm_generator_that_only_replays_a_recording(tmp_path):
-    """Live Fuzz4All needs an LLM provider this version does not have: it is listed, in the LLM
-    family, but usable only where a recording is configured -- and says why otherwise."""
+def test_fuzz4all_is_a_live_llm_generator_that_can_also_replay_a_recording(tmp_path):
+    """Fuzz4All runs the pinned upstream artifact live, with the shared LLM settings; a recording
+    can still be replayed instead."""
     from spreadex.core.config import Config, load_config
 
     r = setup.generator_status(Config.unconfigured(Path(".")))
     f = next(g for g in r["generators"] if g["id"] == "fuzz4all")
-    assert f["family"] == "llm-based" and f["replay_only"] and not f["installed"]
-    assert not f["recorded"] and "live Fuzz4All generation is not available" in f["unavailable"]
+    assert f["family"] == "llm-based" and f["live"] and f["needs_llm"]
+    assert not f["replay_only"] and not f["recorded"] and f["unavailable"] is None
+    assert r["llm"]["suggested_model"] == "gpt-4.1-mini" and "openai" in r["llm"]["presets"]
     assert "fuzz4all" not in {u["id"] for u in r["upcoming"]}
-    assert "LLM generator" not in JS and 'fuzz4all: "gen-llm.png"' in JS
+    assert 'fuzz4all: "gen-llm.png"' in JS
 
     (tmp_path / "spreadex.yaml").write_text(
         "sut: {command: [x, '{input}']}\noracle: {type: crash}\ngenerators: [fuzz4all]\n"

@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .manager import GeneratorError, GeneratorManager
@@ -36,6 +36,8 @@ class GeneratedBatch:
     elapsed_ms: float
     #: Set when the generator ran out of budget but had already produced work.
     partial: bool = False
+    #: Generator-specific accounting (e.g. Fuzz4All's SUT executions and LLM usage), for the manifest.
+    details: dict = field(default_factory=dict)
 
     @property
     def cost_per_input_ms(self) -> float:
@@ -53,11 +55,13 @@ def _collect(out_dir: Path, suffixes=(".txt", ".js", ".input", "")) -> list[byte
     return found
 
 
-def _run(cmd: list[str], timeout: float, what: str) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], timeout: float, what: str,
+         env: dict | None = None) -> subprocess.CompletedProcess:
     # Every generator runs in Python. A fixed hash seed is what makes a seeded generator actually
     # reproducible: without it, set and dict iteration order changes from process to process
     # (Fandango 1.3 gave different inputs for the same --random-seed until this was pinned).
-    env = {**os.environ, "PYTHONHASHSEED": "0"}
+    # A caller that passes `env` (an LLM generator) passes a complete, allow-listed environment.
+    env = {**(env if env is not None else os.environ), "PYTHONHASHSEED": "0"}
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False, env=env)
     except subprocess.TimeoutExpired:
@@ -75,7 +79,8 @@ def _run(cmd: list[str], timeout: float, what: str) -> subprocess.CompletedProce
     except OSError as exc:
         raise GeneratorError(f"{what} could not be started: {exc}") from exc
     if proc.returncode != 0:
-        err = (proc.stderr or b"").decode(errors="replace").strip()[-2000:]
+        from ..llm.redact import redact
+        err = redact((proc.stderr or b"").decode(errors="replace").strip()[-2000:])
         raise GeneratorError(f"{what} failed (exit {proc.returncode}).\n{err}")
     return proc
 
@@ -212,6 +217,229 @@ def _sibling_constraint(grammar: Path) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+
+# ------------------------------------------------------------------- fuzz4all
+
+# Runs inside the Fuzz4All environment. Reads one JSON job (no credentials: the endpoint and key
+# arrive in the process environment), then follows the ClusGram study's sequence for the pinned
+# artifact: an autoprompting setup phase on its own Target (the paper's probe count), then
+# upstream's own `fuzz()` loop with on-the-fly validation on a second Target that reuses the
+# selected prompt. Nothing of the algorithm is reimplemented here.
+_FUZZ4ALL_DRIVER = r"""
+import json, math, os, sys, time
+job = json.load(open(sys.argv[1]))
+sys.path.insert(0, job["artifact"])
+import random
+random.seed(job["seed"])
+from Fuzz4All import fuzz as f4a_fuzz
+from Fuzz4All.make_target import make_target_with_config
+from Fuzz4All.target.spreadex.spreadex_target import SpreadExTarget
+import Fuzz4All.util.api_request as api_request
+
+staging = job["staging"]
+os.makedirs(staging, exist_ok=True)
+style = job["comment_style"]
+def comment(text):
+    if style == "c": return "/* " + text + " */"
+    prefix = {"hash": "#", "dashdash": "--", "rem": "REM"}[style]
+    return "\n".join(prefix + " " + line for line in text.splitlines())
+trigger = comment("Please create a very short program which uses " + job["language_name"]
+                  + " features in a complex way")
+
+def config(batch_size):
+    return {
+        "fuzzing": {"output_folder": staging, "num": job["num"], "total_time": job["hours"],
+                    "log_level": 3, "otf": True, "resume": False, "evaluate": False,
+                    "use_hand_written_prompt": False, "no_input_prompt": False,
+                    "prompt_strategy": 2, "target_name": "spreadex"},
+        "target": {"language": "spreadex", "path_documentation": job["documentation"],
+                   "path_example_code": job["example"], "trigger_to_generate_input": trigger,
+                   "input_hint": "", "path_hand_written_prompt": None, "target_string": ""},
+        "llm": {"temperature": job["temperature"], "batch_size": batch_size, "device": "api",
+                "model_name": "openai/" + job["model"], "distillation_model": "openai/" + job["model"],
+                "max_length": job["max_length"]},
+        "spreadex": {"spreadex_path": job["spreadex_path"], "targets": job["targets"],
+                     "scratch_dir": job["scratch_dir"],
+                     "oracle": job["oracle"], "comment_style": style,
+                     "language_name": job["language_name"], "input_extension": job["extension"]},
+    }
+
+calls = {"setup": 0, "generation": 0}
+def counted(target, phase):
+    original = target.generate_model
+    def wrapper():
+        calls[phase] += 1
+        return original()
+    target.generate_model = wrapper
+    return target
+
+t0 = time.time()
+setup = make_target_with_config(config(job["probe_batch"]))
+setup.initialize()                     # runs auto_prompt: distillation + scored candidates
+setup_usage = dict(getattr(setup.model, "usage", {}) or {})
+distill_usage = dict(getattr(api_request, "USAGE", {}) or {})
+setup_s = time.time() - t0
+
+gen = counted(make_target_with_config(config(job["batch_size"])), "generation")
+f4a_fuzz.fuzz(target=gen, number_of_iterations=job["num"], total_time=job["hours"],
+              output_folder=staging, resume=False, otf=True)
+gen_usage = dict(getattr(gen.model, "usage", {}) or {})
+
+prompts = os.path.join(staging, "prompts")
+def read(name):
+    p = os.path.join(prompts, name)
+    return open(p, encoding="utf-8").read() if os.path.isfile(p) else None
+print(json.dumps({"setup_seconds": round(setup_s, 2),
+                  "usage": {"distillation": distill_usage, "prompt_scoring": setup_usage,
+                            "generation": gen_usage},
+                  "generation_batches": calls["generation"],
+                  "best_prompt": read("best_prompt.txt"),
+                  "candidate_scores": read("scores.txt")}))
+"""
+
+#: Fuzz4All settings, as in the ClusGram study (configs/generation_settings/fuzz4all.py).
+FUZZ4ALL_DEFAULTS = {"temperature": 1.0, "batch_size": 25, "probe_batch": 30, "max_length": 1024}
+#: How each comment style is chosen when the user does not say, from the input extension.
+COMMENT_STYLE_BY_EXTENSION = {".js": "c", ".c": "c", ".cpp": "c", ".java": "c", ".go": "c",
+                              ".ts": "c", ".py": "hash", ".rb": "hash", ".sh": "hash",
+                              ".lua": "dashdash", ".sql": "dashdash", ".bas": "rem"}
+
+
+def _batch_size_for(n: int, preferred: int) -> int:
+    """Largest batch <= preferred that divides n: upstream generates whole batches, and the
+    corpus must be every candidate it wrote, in order."""
+    for b in range(min(preferred, max(1, n)), 0, -1):
+        if n % b == 0:
+            return b
+    return 1
+
+
+def _staged(staging: Path) -> list[Path]:
+    return sorted(staging.glob("*.fuzz"), key=lambda p: int(p.stem) if p.stem.isdigit() else 1 << 30)
+
+
+def _check_reachable(base_url: str, timeout: float = 5.0) -> None:
+    """A TCP connection to the endpoint, before anything is spent. Upstream retries connection
+    errors forever, so an unreachable endpoint would otherwise burn the whole generation budget
+    and be reported as a budget problem. No request is sent and no tokens are used."""
+    import socket
+    from urllib.parse import urlparse
+
+    u = urlparse(base_url)
+    port = u.port or (443 if u.scheme == "https" else 80)
+    try:
+        socket.create_connection((u.hostname, port), timeout=timeout).close()
+    except OSError as exc:
+        raise GeneratorError(
+            f"Fuzz4All failed: the LLM endpoint {u.hostname}:{port} cannot be reached ({exc}).\n"
+            f"  Fix: check the base URL and your network, or start the local model server.") from None
+
+
+def generate_fuzz4all(mgr, grammar, n: int, out_dir: Path, seed: int, timeout: float,
+                      context: dict | None = None):
+    """Run the pinned Fuzz4All artifact for `n` candidates, with SpreadEx's target and oracle."""
+    from ..llm.settings import LLMSettingsError, resolve, subprocess_env
+
+    if not context:
+        raise GeneratorError("Fuzz4All needs the campaign's context (documentation, SUT, LLM settings).")
+    status = mgr.status("fuzz4all")
+    if not status.installed:
+        raise GeneratorError(f"Fuzz4All is not ready ({status.detail}).\\n"
+                             f"  Fix: spreadex generators install fuzz4all")
+    try:
+        llm = resolve(context.get("llm"))
+    except LLMSettingsError as exc:
+        raise GeneratorError(str(exc)) from None
+
+    _check_reachable(llm.base_url)
+    options = {**FUZZ4ALL_DEFAULTS, **(context.get("options") or {})}
+    # Outside out_dir, which is scanned for inputs, and removed afterwards.
+    work = Path(tempfile.mkdtemp(prefix="spreadex-fuzz4all-"))
+    staging = work / "staging"
+    docs = context.get("documentation") or []
+    if not docs:
+        raise GeneratorError(
+            "Fuzz4All writes programs from documentation, and this project has none.\\n"
+            "  Fix: add a short description of the input language under `semantics.guidance` "
+            "(Workbench step 2).")
+    documentation = work / "documentation.md"
+    documentation.write_text("\\n\\n".join(Path(d).read_text(encoding="utf-8", errors="replace") for d in docs))
+    example = None
+    if context.get("example"):
+        example = work / "example.txt"
+        example.write_bytes(Path(context["example"]).read_bytes())
+    extension = context.get("extension") or ""
+    style = context.get("comment_style") or COMMENT_STYLE_BY_EXTENSION.get(extension, "c")
+
+    import spreadex
+    job = {
+        "artifact": str(mgr.source_dir("fuzz4all")), "seed": seed, "staging": str(staging),
+        "num": n, "hours": max(timeout, 1.0) / 3600.0, "model": llm.model,
+        "temperature": float(options["temperature"]), "max_length": int(options["max_length"]),
+        "batch_size": _batch_size_for(n, int(options["batch_size"])),
+        "probe_batch": int(options["probe_batch"]),
+        "documentation": str(documentation), "example": str(example) if example else None,
+        "comment_style": style, "language_name": context.get("language_name") or "program",
+        "extension": extension, "targets": context["targets"], "oracle": context.get("oracle") or {},
+        "spreadex_path": str(Path(spreadex.__file__).resolve().parents[1]),
+        "scratch_dir": str(work / "scratch"),
+    }
+    job_file = work / "job.json"
+    job_file.write_text(json.dumps(job))
+    driver = work / "driver.py"
+    driver.write_text(_FUZZ4ALL_DRIVER)
+    env = subprocess_env(llm)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def harvest() -> dict:
+        written = 0
+        for i, path in enumerate(_staged(staging)):
+            data = path.read_bytes()
+            (out_dir / f"f4a_{i:05d}.txt").write_bytes(data)
+            written += 1
+        records = work / "staging" / "validation_records.jsonl"
+        executions: dict = {"probe": {}, "corpus": {}}
+        if records.is_file():
+            for line in records.read_text().splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                bucket = executions.setdefault(row.get("phase", "corpus"), {})
+                bucket[row.get("verdict", "?")] = bucket.get(row.get("verdict", "?"), 0) + 1
+        return {"candidates_written": written,
+                "sut_executions": {"prompt_scoring": executions.get("probe", {}),
+                                   "validation": executions.get("corpus", {}),
+                                   "total": sum(sum(b.values()) for b in executions.values())}}
+
+    details = {"artifact": {"commit": mgr.get("fuzz4all").install["commit"],
+                            "patch_sha256": mgr.get("fuzz4all").install.get("patch_sha256")},
+               "llm": llm.public(), "settings": {k: job[k] for k in
+                   ("temperature", "max_length", "batch_size", "probe_batch", "comment_style",
+                    "language_name")},
+               "inputs": {"documentation_files": [Path(d).name for d in docs],
+                          "example": bool(example)}}
+    from ..llm.redact import redact_obj
+    try:
+        try:
+            proc = _run([mgr.python_for("fuzz4all"), str(driver), str(job_file)], timeout,
+                        "Fuzz4All", env=env)
+            try:
+                details.update(json.loads(proc.stdout.decode(errors="replace").strip().splitlines()[-1]))
+            except (ValueError, IndexError):
+                details["driver_output"] = "unreadable"
+        except GeneratorError:
+            details.update(harvest())
+            details["stopped_early"] = True
+            (out_dir / "_details.json").write_text(json.dumps(redact_obj(details)))
+            raise
+        details.update(harvest())
+        (out_dir / "_details.json").write_text(json.dumps(redact_obj(details)))
+        return [p.read_bytes() for p in sorted(out_dir.glob("f4a_*.txt"))
+                if 0 < p.stat().st_size <= MAX_INPUT_BYTES]
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
 # --------------------------------------------------------------- grammarinator
 
 _GRAMMAR_HEADER = re.compile(r"^\s*(?:lexer\s+|parser\s+)?grammar\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", re.M)
@@ -284,7 +512,10 @@ ADAPTERS = {
     "fandango": generate_fandango,
     "isla": generate_isla,
     "grammarinator": generate_grammarinator,
+    "fuzz4all": generate_fuzz4all,
 }
+#: Generators that take the campaign's context instead of a grammar.
+CONTEXT_ADAPTERS = {"fuzz4all"}
 
 
 def generate(
@@ -294,6 +525,7 @@ def generate(
     seed: int = 42,
     timeout: float = 300.0,
     manager: GeneratorManager | None = None,
+    context: dict | None = None,
 ) -> GeneratedBatch:
     """Run one generator and return what it produced, with its cost."""
     mgr = manager or GeneratorManager()
@@ -305,8 +537,9 @@ def generate(
             f"Available: {', '.join(sorted(ADAPTERS))}"
         ) from None
 
-    grammar = Path(grammar)
-    if not grammar.exists():
+    takes_context = generator_id in CONTEXT_ADAPTERS
+    grammar = Path(grammar) if grammar is not None else None
+    if not takes_context and (grammar is None or not grammar.exists()):
         raise GeneratorError(
             f"Grammar not found for {generator_id}: {grammar}\n"
             f"  Fix: correct the path under `grammar:` in spreadex.yaml."
@@ -317,7 +550,10 @@ def generate(
     with tempfile.TemporaryDirectory(prefix=f"spreadex-{generator_id}-") as tmp:
         out_dir = Path(tmp)
         try:
-            inputs = adapter(mgr, grammar, count, out_dir, seed, timeout)
+            if takes_context:
+                inputs = adapter(mgr, grammar, count, out_dir, seed, timeout, context=context)
+            else:
+                inputs = adapter(mgr, grammar, count, out_dir, seed, timeout)
         except GeneratorError:
             # A generator that ran out of budget has usually written something
             # already. Keeping it is strictly better than discarding the work
@@ -327,6 +563,8 @@ def generate(
             if not inputs:
                 raise
             partial = True
+        details_file = out_dir / "_details.json"
+        details = json.loads(details_file.read_text()) if details_file.is_file() else {}
     elapsed_ms = (time.perf_counter() - started) * 1000
     return GeneratedBatch(generator=generator_id, inputs=inputs,
-                          elapsed_ms=elapsed_ms, partial=partial)
+                          elapsed_ms=elapsed_ms, partial=partial, details=details)

@@ -722,6 +722,7 @@ function semanticLine(g, sem, experimental) {
   const hasStructured = !!(sem && sem.structured);
   const others = Object.keys(native).filter(id => id !== g.id);
   const label = id => (NATIVE_FORMAT[id] || [id[0].toUpperCase() + id.slice(1)])[0];
+  if (g.needs_llm) return hasGuidance ? { tone: "ok", text: `\u2713 Generates from your written guidance and one example input.` } : null;
   if (!hasGuidance && !hasStructured && !Object.keys(native).length) return null;
   if (native[g.id]) return { tone: "ok", text: `\u2713 ${g.name} constraints provided (${native[g.id]}), used as written.${hasGuidance ? " Your written guidance is not used by it." : ""}` };
   // A generator without constraint support is not an error, whatever was supplied for others.
@@ -975,7 +976,7 @@ function buildYaml() {
   if (c.input_extension) lines.push("", `input_extension: ${q(c.input_extension)}`);
   if (c.generator_options && Object.keys(c.generator_options).length) {
     lines.push("", "generator_options:");
-    Object.entries(c.generator_options).forEach(([gid, o]) => lines.push(`  ${gid}: {${Object.entries(o).map(([k, v]) => `${k}: ${v}`).join(", ")}}`));
+    Object.entries(c.generator_options).forEach(([gid, o]) => lines.push(`  ${gid}: {${Object.entries(o).map(([k, v]) => `${k}: ${typeof v === "string" ? JSON.stringify(v) : v}`).join(", ")}}`));
   }
   if (c.semantics) {
     lines.push("", "semantics:");
@@ -1003,6 +1004,12 @@ function buildYaml() {
     `  execution: ${c.budget?.execution || "1m"}`);
   if (c.budget?.max_inputs) lines.push(`  max_inputs: ${c.budget.max_inputs}`);
   if (c.selection?.keep) lines.push("", "selection:", `  by: ${c.selection.by || "cc"}`, `  keep: ${c.selection.keep}`);
+  const llmUsed = (c.generators || []).some(id => ((S.generators || []).find(g => g.id === id) || {}).needs_llm);
+  if (c.llm && llmUsed) {
+    lines.push("", "llm:", `  provider: ${c.llm.provider || "openai"}`, `  model: ${JSON.stringify(c.llm.model || "")}`);
+    if (c.llm.base_url) lines.push(`  base_url: ${JSON.stringify(c.llm.base_url)}`);
+    if (c.llm.api_key_env) lines.push(`  api_key_env: ${c.llm.api_key_env}`);
+  }
   lines.push("", `selection_signal: ${c.selection_signal || "cc"}`,
     "embedding:", `  model: ${c.embedding?.model || "unixcoder"}`,
     ...(c.embedding?.fallback ? [`  fallback: ${c.embedding.fallback}`] : []),
@@ -1010,7 +1017,7 @@ function buildYaml() {
     "", `seed: ${c.seed ?? 42}`, "");
   // Settings the wizard does not edit are carried over unchanged, never dropped (JSON is YAML).
   const known = new Set(["sut", "oracle", "generators", "grammar", "corpus", "input_extension", "generator_options",
-    "semantics", "generation", "budget", "selection", "selection_signal", "embedding", "seed"]);
+    "semantics", "generation", "budget", "selection", "selection_signal", "embedding", "seed", "llm"]);
   Object.entries(c).filter(([k, v]) => !known.has(k) && v !== undefined && v !== null)
     .forEach(([k, v]) => lines.push(`${k}: ${q(v)}`));
   lines.push("");
@@ -2720,6 +2727,11 @@ function genFit(g) {
   const d = genState(), a = d.analysis;
   // Replay-only (live generation needs what this version lacks): usable where a recording is set.
   if (g.replay_only) return g.recorded ? { ok: true, how: "recorded" } : { ok: false, why: g.unavailable };
+  if (g.needs_llm) {
+    if (g.recorded) return { ok: true, how: "recorded" };
+    return (cfg().semantics?.guidance || []).length ? { ok: true, how: "documentation" }
+      : { ok: false, why: `${g.name} writes programs from a description of your input language, not from the grammar. Add one in step 2 (written guidance).` };
+  }
   if ((cfg().grammar || {})[g.id]) return { ok: true, how: "prepared" };
   const pre = (S.project?.example_presets?.not_recommended || {})[g.id];
   if (pre) return { ok: false, why: pre };
@@ -2777,12 +2789,97 @@ function genCard({ g, fit }, recommended) {
       </span></button></div>`;
 }
 
+// ------------------------------------------------- shared LLM settings (step 3)
+//
+// One block for every LLM-based generator: the endpoint, the model and where the key comes from.
+// The key is never part of the configuration: it is read from the environment variable named here,
+// or pasted for this session only (held in the server's memory, never written, never shown again).
+function liveLLMNeeded() {
+  return (cfg().generators || []).some(id => {
+    const g = (S.generators || []).find(x => x.id === id);
+    return g && g.needs_llm && !((cfg().generation || {})[id] || {}).mode;
+  });
+}
+function liveLLMSelected() {
+  return selectedGenRows().filter(g => g.needs_llm && !g.recorded);
+}
+function llmCfg() {
+  if (!S.config.llm) S.config.llm = { provider: "openai", model: S.llm?.suggested_model || "gpt-4.1-mini" };
+  return S.config.llm;
+}
+function llmPanel() {
+  const users = liveLLMSelected();
+  if (!users.length) return "";
+  const c = llmCfg(), st = S.llm || {}, presets = st.presets || {};
+  const p = presets[c.provider] || {};
+  const envName = c.api_key_env || p.api_key_env;
+  const src = st.key_source || "none";
+  const needsUrl = ["custom", "ollama", "vllm"].includes(c.provider);
+  const key = p.local ? `<p class="muted llm-key">${ICONS.success}<span>A local server needs no key.</span></p>`
+    : src === "session" ? `<p class="llm-key ok">${ICONS.success}<span>Using the key you pasted for this session. It is not saved and is forgotten when SpreadEx stops.</span>
+        <button type="button" class="linkish" onclick="clearLLMKey()">Clear</button></p>`
+    : src === "env" ? `<p class="llm-key ok">${ICONS.success}<span>Using <span class="mono">${esc(envName || "")}</span> from the environment.</span></p>`
+    : `<div class="llm-key warn">${ICONS.alert}<span>No key found${envName ? ` in <span class="mono">${esc(envName)}</span>` : ""}. Export it before starting SpreadEx, or paste one for this session:</span></div>
+       <div class="row llm-paste"><input id="llm-key" type="password" autocomplete="off" spellcheck="false" placeholder="API key (not saved)" aria-label="API key for this session">
+         <button type="button" class="ghost small" onclick="setLLMKey()">Use for this session</button></div>`;
+  return `<section class="card llm-card" aria-labelledby="llm-h">
+    <h4 id="llm-h"><span class="stile purple" aria-hidden="true">${ICONS.sliders}</span> LLM settings
+      <span class="muted">&middot; shared by all LLM-based generators (${users.map(g => esc(g.name)).join(", ")})</span>
+      ${hint("hint-llm", "Any OpenAI-compatible chat-completions endpoint. Set once; every LLM-based generator uses it. Token usage is recorded with the campaign when the provider reports it.")}</h4>
+    <div class="row">
+      <div><label for="llm-provider">Provider</label><select id="llm-provider" onchange="setLLM('provider', this.value)">
+        ${Object.entries(presets).map(([id, v]) => `<option value="${esc(id)}" ${c.provider === id ? "selected" : ""}>${esc(v.label)}</option>`).join("")}</select></div>
+      <div><label for="llm-model">Model <span class="muted">(required)</span></label><input id="llm-model" type="text" spellcheck="false"
+        value="${esc(c.model || "")}" placeholder="${esc(st.suggested_model || "gpt-4.1-mini")}" oninput="setLLM('model', this.value, true)"></div>
+      ${needsUrl ? `<div><label for="llm-url">Base URL</label><input id="llm-url" type="text" spellcheck="false" value="${esc(c.base_url || "")}"
+        placeholder="${esc(p.base_url || "https://host/v1")}" oninput="setLLM('base_url', this.value, true)"></div>` : ""}
+    </div>
+    ${key}
+    <p class="muted llm-note">${ICONS.shield}<span>${p.local ? "Requests go to a model server on your machine."
+      : "OpenAI-compatible endpoint. The generation context (your documentation, the example input and generated programs) is sent to the provider, and usage may be billed. Credentials are never saved with campaigns."}</span></p>
+  </section>`;
+}
+function setLLM(key, value, typing) {
+  const c = llmCfg();
+  if (key === "provider") {
+    c.provider = value; delete c.base_url; delete c.api_key_env;
+    if (S.llm?.presets?.[value]?.local && (!c.model || c.model === (S.llm?.suggested_model || "gpt-4.1-mini"))) c.model = "";
+  } else if (value) c[key] = value.trim(); else delete c[key];
+  if (typing) return;
+  refreshLLMStatus();
+}
+async function refreshLLMStatus() {
+  const c = llmCfg();
+  try { S.llm = await api(`/api/llm/status?provider=${encodeURIComponent(c.provider)}${c.api_key_env ? `&api_key_env=${encodeURIComponent(c.api_key_env)}` : ""}`); }
+  catch (e) { /* the panel keeps its last state */ }
+  paintGenerators();
+}
+async function setLLMKey() {
+  const box = el("llm-key"); const key = box ? box.value : "";
+  if (box) box.value = "";
+  try { await api("/api/llm/key", { key }); } catch (e) { el("err").innerHTML = `<div class="note bad">${esc(e.message)}</div>`; }
+  refreshLLMStatus();
+}
+async function clearLLMKey() {
+  try { await api("/api/llm/key/clear", {}); } catch (e) { /* nothing to clear */ }
+  refreshLLMStatus();
+}
+
 function upcomingCard(u) {
   return `<div class="gcard soon" aria-disabled="true">
     <div class="gbody static">${genLogo(u.id)}<span class="gtext">
       <span class="gname">${esc(u.name)}</span>
       <span class="gtags"><span class="tag gfam">${esc(FAMILY_LABEL[u.family])}</span></span>
       ${refLine(u.reference)}</span></div></div>`;
+}
+
+// Not a generator: a planned way to configure one of your own. Shown, never selectable.
+function ownGeneratorCard() {
+  return `<div class="gcard soon" aria-disabled="true">
+    <div class="gbody static"><span class="gen-logo glyph" aria-hidden="true">${ICONS.plus || ICONS.code}</span><span class="gtext">
+      <span class="gname">Add your own generator</span>
+      <span class="gtags"><span class="tag pend">Coming soon</span></span>
+      <span class="muted gver">Configure a generator of your own: its install recipe, command and input format.</span></span></div></div>`;
 }
 
 function setGenFilter(id) { genState().filter = id; paintGenerators(); }
@@ -2823,6 +2920,7 @@ async function stepGenerators(current = () => true) {
   if (!current()) return;
   S.generators = gens.generators;
   S.upcoming = gens.upcoming || [];
+  S.llm = gens.llm || S.llm;
   const d = genState();
   d.analysis = analysis;
   if (analysis && !analysis.error && inpState().picked === src) inpState().analysis = analysis;
@@ -2852,6 +2950,7 @@ function paintGenerators() {
         <p class="why">Select one or more generators. SpreadEx will handle compatible grammar formats.</p></div>
     </header>
     ${inputSpecBar()}
+    ${llmPanel()}
 
     <div class="gfilter" role="tablist" aria-label="Generator family">
       ${[["all", "All"], ...Object.entries(FAMILY_LABEL)].map(([id, t]) => `<button type="button" role="tab" class="${d.filter === id ? "on" : ""}"
@@ -2872,10 +2971,10 @@ function paintGenerators() {
         `<div class="muted gempty">None in this family.</div>`}</div>
     </section>
 
-    ${soon.length ? `<section class="gsec soonsec" aria-labelledby="gh-soon">
-      <div class="gsec-h"><h4 id="gh-soon">Coming soon ${hint("hint-soon", "Planned generators. They are listed so you can see what is on the way; they cannot be selected yet.")}</h4>
+    ${soon.length || d.filter === "all" ? `<section class="gsec soonsec" aria-labelledby="gh-soon">
+      <div class="gsec-h"><h4 id="gh-soon">Coming soon ${hint("hint-soon", "Planned generators and features. They are listed so you can see what is on the way; they cannot be selected yet.")}</h4>
         <span class="gcount">${soon.length} planned</span></div>
-      <div class="ggrid">${soon.map(upcomingCard).join("")}</div>
+      <div class="ggrid">${soon.map(upcomingCard).join("")}${d.filter === "all" ? ownGeneratorCard() : ""}</div>
     </section>` : ""}
 
     <div id="joblog"></div>
@@ -2902,7 +3001,7 @@ function paintGenerators() {
       <div class="gsel-h"><h4>Selected generators <span class="muted">(${sel.length})</span></h4>
         ${sel.length ? `<button type="button" class="linkish" onclick="clearGenerators()">Clear all</button>` : ""}</div>
       ${sel.length ? sel.map(g => `<div class="gsel-row">${genLogo(g.id)}<strong>${esc(g.name)}</strong>
-        <span class="muted">${g.replay_only ? (g.recorded ? "replays a recording" : "live not available") : g.installed ? (cleanVersion(g.version) ? "v" + esc(cleanVersion(g.version)) : "") : "installs on run"}</span>
+        <span class="muted">${g.recorded ? "replays a recording" : g.replay_only ? "live not available" : g.needs_llm ? `live &middot; ${esc(cfg().llm?.model || "model not set")}` : g.installed ? (cleanVersion(g.version) ? "v" + esc(cleanVersion(g.version)) : "") : "installs on run"}</span>
         <button type="button" class="gx" onclick="removeGen('${esc(g.id)}')" aria-label="Remove ${esc(g.name)}">&times;</button></div>`).join("")
         : `<div class="muted">None yet. Tick a generator, or click one to see its options.</div>`}
     </div>
@@ -2927,6 +3026,9 @@ function openGenModal(id, opener) {
   d.modal = id; d.opener = opener || document.activeElement; d.openerGen = id;
   const opt = (cfg().generator_options || {})[id] || {};
   d.draftConstraints = opt.constraints !== false;
+  const rec = (cfg().generation || {})[id];
+  d.draftLLM = { mode: rec && rec.mode === "recorded" ? "recorded" : "live", corpus: rec?.corpus || "",
+                 language_name: opt.language_name || "", comment_style: opt.comment_style || "" };
   paintGenModal();
 }
 function closeGenModal() {
@@ -2937,6 +3039,7 @@ function closeGenModal() {
   if (back) back.focus();
 }
 function setGenConstraints(v) { genState().draftConstraints = v; paintGenModal(); }
+function setLLMDraft(k, v, typing) { const d = genState(); d.draftLLM = { ...(d.draftLLM || {}), [k]: v }; if (!typing) paintGenModal(); }
 
 function confirmGenModal() {
   const d = genState(), id = d.modal, g = (S.generators || []).find(x => x.id === id);
@@ -2945,6 +3048,16 @@ function confirmGenModal() {
   const opts = { ...(cfg().generator_options || {}) };
   if (g.constraints && nativeFile) {
     if (d.draftConstraints) delete opts[id]; else opts[id] = { constraints: false };
+  }
+  if (g.needs_llm) {
+    const m = d.draftLLM || {};
+    const o = { ...(opts[id] || {}) };
+    for (const k of ["language_name", "comment_style"]) { if (m[k]) o[k] = m[k]; else delete o[k]; }
+    if (Object.keys(o).length) opts[id] = o; else delete opts[id];
+    const gen = { ...(cfg().generation || {}) };
+    if (m.mode === "recorded" && m.corpus) gen[id] = { mode: "recorded", corpus: m.corpus };
+    else delete gen[id];
+    S.config.generation = gen;
   }
   S.config.generator_options = Object.keys(opts).length ? opts : undefined;
   const set = new Set(cfg().generators || []); set.add(id);
@@ -2962,7 +3075,21 @@ function paintGenModal() {
   const hasGuidance = !!(cfg().semantics?.guidance || []).length;
   const supportRow = ((d.analysis && d.analysis.support) || []).find(x => x.generator === g.id);
   let options;
-  if (g.constraints) {
+  if (g.needs_llm) {
+    const m = d.draftLLM || {};
+    const ext = cfg().input_extension || "";
+    const styleOpts = [["", `Automatic${ext ? ` (from ${ext})` : ""}`], ["c", "/* … */  (C, Java, JavaScript)"], ["hash", "# …  (Python, shell)"],
+                       ["dashdash", "-- …  (SQL, Lua)"], ["rem", "REM …  (BASIC)"]];
+    options = `<div class="gm-opts" role="radiogroup" aria-label="${esc(g.name)} source">
+      <label class="gm-opt ${m.mode !== "recorded" ? "on" : ""}"><input type="radio" name="gm-l" ${m.mode !== "recorded" ? "checked" : ""} onchange="setLLMDraft('mode','live')">
+        <span><strong>Generate live</strong><span class="muted">Runs the authors' Fuzz4All (pinned) with the LLM settings above. Its prompt scoring and validation execute your system during generation; those executions and the token usage are reported.</span></span></label>
+      <label class="gm-opt ${m.mode === "recorded" ? "on" : ""}"><input type="radio" name="gm-l" ${m.mode === "recorded" ? "checked" : ""} onchange="setLLMDraft('mode','recorded')">
+        <span><strong>Replay a recording</strong><span class="muted">Inputs saved from an earlier run with spreadex record, replayed exactly, with no LLM calls.</span></span></label></div>
+    ${m.mode === "recorded" ? `<label for="gm-rec">Recording folder</label><input id="gm-rec" type="text" spellcheck="false" value="${esc(m.corpus || "")}" placeholder="recordings/fuzz4all" oninput="setLLMDraft('corpus', this.value, true)">`
+      : `<div class="row"><div><label for="gm-lang">Language name</label><input id="gm-lang" type="text" value="${esc(m.language_name || "")}" placeholder="e.g. JavaScript, SQL, MiniCalc" oninput="setLLMDraft('language_name', this.value, true)"></div>
+         <div><label for="gm-style">Comment syntax for the prompt</label><select id="gm-style" onchange="setLLMDraft('comment_style', this.value)">${styleOpts.map(([v, t]) => `<option value="${v}" ${m.comment_style === v ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div></div>
+         <p class="muted">The model sees the language name, your written guidance and one example input, never your command or paths.</p>`}`;
+  } else if (g.constraints) {
     const withOk = !!nativeFile;
     options = `<div class="gm-opts" role="radiogroup" aria-label="${esc(g.name)} options">
       <label class="gm-opt ${d.draftConstraints ? "" : "on"}"><input type="radio" name="gm-c" ${d.draftConstraints ? "" : "checked"} onchange="setGenConstraints(false)">
@@ -2989,8 +3116,9 @@ function paintGenModal() {
       <button type="button" class="gx" onclick="closeGenModal()" aria-label="Close">&times;</button></header>
     <p class="muted gm-sum">${esc(g.summary)}</p>
     ${lazy}
-    <h4 class="inp-h5">Can it run your grammar?</h4>
-    ${fit.ok ? `<div class="gm-fit ok">${ICONS.success}<span>${fit.how === "rewrite" ? "Yes, after rewriting the grammar into its dialect." : "Yes, directly."}
+    <h4 class="inp-h5">${g.needs_llm ? "What does it read?" : "Can it run your grammar?"}</h4>
+    ${fit.ok ? `<div class="gm-fit ok">${ICONS.success}<span>${fit.how === "documentation" ? `Your written guidance (${(cfg().semantics?.guidance || []).length} file(s)) and one example input, not the grammar.`
+      : fit.how === "recorded" ? "A recording, replayed exactly." : fit.how === "rewrite" ? "Yes, after rewriting the grammar into its dialect." : "Yes, directly."}
         ${(fit.risks || []).map(r => `<span class="warn gm-risk">! ${esc(r)}</span>`).join("")}</span></div>`
       : `<div class="gm-fit bad">${ICONS.error}<span>${esc(fit.why)}</span></div>`}
     <h4 class="inp-h5">Generation options</h4>
@@ -3201,6 +3329,8 @@ function readiness() {
     { id: "strategy", t: "Strategy", ok: !!c.oracle, fix: "strategy", why: "Choose what to detect." },
     { id: "budget", t: "Budget", ok: !runProblems(r).length, fix: null, why: runProblems(r)[0] || "" },
     { id: "storage", t: "Storage", ok: S.project?.writable !== false, fix: null, why: "SpreadEx cannot write to this project folder." },
+    ...(liveLLMNeeded() ? [{ id: "llm", t: "LLM", ok: !!(c.llm && c.llm.model && (c.llm.provider !== "custom" || c.llm.base_url)), fix: "generators",
+      why: "An LLM-based generator is selected: set the model (and the base URL for a custom endpoint) in LLM settings, step 3." }] : []),
   ];
   return { items, ready: items.every(i => i.ok) };
 }
@@ -3288,6 +3418,16 @@ function runOption({ on, title, tag, body, onclick, group }) {
   return `<div class="ropt ${on ? "on" : ""}"><label class="ropt-h"><input type="radio" name="${group}" ${on ? "checked" : ""} onchange="${onclick}">
       <span class="rdot" aria-hidden="true"></span><strong>${title}</strong>${tag ? `<span class="tag pend">${tag}</span>` : ""}</label>
       ${on && body ? `<div class="ropt-b">${body}</div>` : ""}</div>`;
+}
+
+function runPrivacyNote(r) {
+  const notes = [];
+  const live = (cfg().generators || []).map(id => (S.generators || []).find(g => g.id === id)).filter(g => g && g.needs_llm)
+    .filter(g => !((cfg().generation || {})[g.id] || {}).mode);
+  const local = ["ollama", "vllm"].includes(cfg().llm?.provider);
+  if (live.length && !local) notes.push(`${live.map(g => g.name).join(", ")} sends its generation context to your LLM provider (${esc(cfg().llm?.model || "model not set")}).`);
+  if (r.signal === "cc" && r.model === "openai") notes.push("Generated inputs are sent to OpenAI to compute embeddings.");
+  return notes.length ? notes.join(" ") + " Results stay on this machine." : "Your inputs and results stay on this machine.";
 }
 
 async function stepRun(current = () => true) {
@@ -3381,7 +3521,7 @@ async function stepRun(current = () => true) {
     </div>
     <div class="side-card runcard">
       <button type="button" class="primary runbtn" id="launch" data-tour="run-launch" onclick="launch()" ${readiness().ready ? "" : "disabled"}>${ICONS.playOutline} Run campaign</button>
-      <p class="muted runnote">${ICONS.shield}<span>${r.signal === "cc" && r.model === "openai" ? "Generated inputs are sent to OpenAI to compute embeddings; results stay on this machine." : "Your inputs and results stay on this machine."}${(S.generators || []).some(isPending) ? " Missing generators are downloaded from PyPI first." : ""}</span></p>
+      <p class="muted runnote">${ICONS.shield}<span>${runPrivacyNote(r)}${(S.generators || []).some(isPending) ? " Missing generators are downloaded from PyPI first." : ""}</span></p>
     </div>
    </aside>
   </div>`;

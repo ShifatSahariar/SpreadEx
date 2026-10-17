@@ -1689,3 +1689,12 @@ table.summary tr + tr th, table.summary tr + tr td { border-top: 1px solid var(-
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 /* Four sections (Home, Setup, Campaigns, Guides) fit a 375px phone without scrolling the menu. */
 @media (max-width: 480px) { .tabs { gap: 2px; } .tabs button { padding: 6px 8px; gap: .3rem; } }
+
+/* Shared LLM settings (step 3) */
+.llm-card { margin: .8rem 0 1rem; padding: 14px 16px; }
+.llm-card h4 { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin: 0 0 .6rem; font-size: .95rem; }
+.llm-card .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .6rem; }
+.llm-key, .llm-note { display: flex; gap: 6px; align-items: flex-start; margin: .55rem 0 0; font-size: .8rem; }
+.llm-key svg, .llm-note svg { flex: none; width: 14px; height: 14px; margin-top: 1px; }
+.llm-key.ok svg { color: #16A34A; } .llm-key.warn svg { color: #F59E0B; }
+.llm-paste { margin-top: .4rem; display: flex; gap: .5rem; } .llm-paste input { flex: 1; }

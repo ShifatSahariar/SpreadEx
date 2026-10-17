@@ -2,18 +2,37 @@ id: fuzz4all
 name: Fuzz4All
 summary: An LLM writes test programs from documentation and an example, refining its prompt as it goes.
 homepage: https://github.com/fuzz4all/fuzz4all
-license: Apache-2.0
+# The upstream repository's LICENSE at the pinned commit is Creative Commons Attribution 4.0.
+# Nothing upstream is redistributed: the artifact is cloned on install and SpreadEx ships only its
+# own patch (see THIRD_PARTY_NOTICES.md).
+license: CC-BY-4.0
 notes: >-
-  This version replays a saved Fuzz4All corpus (generation.fuzz4all.mode: recorded), with its
-  provenance. Live generation needs an LLM provider and is not available yet.
+  Runs the authors' artifact, pinned at commit 0bf42fe, with SpreadEx's patch: a chat-completions
+  backend for any OpenAI-compatible endpoint, autoprompting restored as in the paper, and one
+  target that executes candidates with this project's own command and oracle. It reads the
+  project's documentation (semantic guidance) and an optional example input, never a grammar.
+  Prompt scoring and on-the-fly validation execute the system under test during generation; those
+  executions and the LLM usage are reported with the campaign. Uses the shared LLM settings. A
+  saved corpus can also be replayed (generation.fuzz4all.mode: recorded).
 install:
-  # Nothing is installed for replaying a recording. Live generation will drive the authors'
-  # artifact pinned at this commit.
-  type: none
-  upstream: fuzz4all@0bf42fe
-  reason: >-
-    live Fuzz4All generation is not available in this version; replay a saved corpus with
-    `generation: {fuzz4all: {mode: recorded, corpus: <folder>}}`
+  type: git
+  url: https://github.com/fuzz4all/fuzz4all.git
+  commit: 0bf42fe037c8761bdde61e1c37a0946e8103fba1
+  patch: fuzz4all/0001-spreadex.patch
+  patch_sha256: bbb3a924550fde694b1e311ea4632773b1a9eb77d3567036bb7137936c2a5661
+  # Exact pins. torch 2.2.2 is the newest release with wheels for every platform SpreadEx supports
+  # (including x86_64 macOS); numpy and transformers are pinned to versions compatible with it.
+  # torch and transformers are imported by upstream at module load; generation never uses them.
+  requirements:
+    - torch==2.2.2
+    - numpy==1.26.4
+    - transformers==4.40.2
+    - openai==1.109.1
+    - tiktoken==0.12.0
+    - rich==14.2.0
+    - click==8.3.0
+    - PyYAML==6.0.3
+  smoke_import: [Fuzz4All.fuzz, Fuzz4All.make_target, Fuzz4All.target.spreadex]
 reference:
   venue: ICSE
   year: 2024
@@ -23,3 +42,5 @@ family: llm-based
 capabilities:
   grammar: documentation
   recorded: true
+  live: true
+  llm: true

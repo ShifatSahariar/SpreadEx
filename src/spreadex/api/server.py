@@ -179,6 +179,21 @@ class _Handler(BaseHTTPRequestHandler):
     def _route_post(self, route: str, body: dict) -> None:
         from . import setup
 
+        if route == "/api/llm/key":
+            # Session-only: held in this process's memory, never written, never echoed back.
+            from ..llm.settings import LLMSettingsError, set_session_key, status
+            try:
+                set_session_key(str(body.get("key") or ""))
+            except LLMSettingsError as exc:
+                self._json({"ok": False, "error": str(exc)})
+                return
+            self._json({"ok": True, **status(self.config.llm)})
+            return
+        if route == "/api/llm/key/clear":
+            from ..llm.settings import clear_session_key, status
+            clear_session_key()
+            self._json({"ok": True, **status(self.config.llm)})
+            return
         if route == "/api/config":
             result = setup.save_config(self.config, body)
             if result.get("written"):
@@ -405,6 +420,18 @@ class _Handler(BaseHTTPRequestHandler):
         if route == "/api/files":
             from . import setup
             self._json(setup.list_candidate_grammars(self.config))
+            return
+        if route == "/api/llm/status":
+            from ..llm.settings import status
+            llm = dict(getattr(self.config, "llm", None) or {})
+            # The Workbench asks about choices it has not saved yet (a provider just picked).
+            for k in ("provider", "api_key_env"):
+                v = (query.get(k) or [None])[0]
+                if v:
+                    llm[k] = v
+            if "provider" in query and "api_key_env" not in query:
+                llm.pop("api_key_env", None)
+            self._json(status(llm))
             return
         if route == "/api/embeddings":
             from ..signals.status import embedding_status

@@ -174,10 +174,15 @@ def generator_status(config) -> dict[str, Any]:
             "replay_only": replay_only,
             "recorded": gen.id in recorded,
             "unavailable": (gen.install.get("reason") if replay_only and gen.id not in recorded else None),
+            # Uses the shared LLM settings (step 3 panel) when it generates live.
+            "needs_llm": bool(gen.capabilities.get("llm")),
+            "live": bool(gen.capabilities.get("live")),
         })
     # Named in the research tool or planned, but not generators SpreadEx can run. Shown inactive
     # so nobody wonders where they are; never selectable, never written to the config.
+    from ..llm.settings import status as llm_status
     return {"generators": out, "upcoming": UPCOMING_GENERATORS, "families": GENERATOR_FAMILIES,
+            "llm": llm_status(getattr(config, "llm", None)),
             "options": {"constraint_capable": [g["id"] for g in out if g["constraints"]]}}
 
 

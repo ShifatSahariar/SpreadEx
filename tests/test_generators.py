@@ -21,6 +21,13 @@ def test_catalog_loads_and_is_complete():
             # Replay-only in this version (Fuzz4All): nothing to install, and it says why.
             assert gen.install.get("reason") and gen.capabilities.get("recorded")
             continue
+        if gen.install.get("type") == "git":
+            # A pinned upstream artifact (Fuzz4All): commit, shipped patch and its checksum, exact pins.
+            spec = gen.install
+            assert len(spec["commit"]) == 40 and spec["url"].startswith("https://")
+            assert spec["patch"] and len(spec["patch_sha256"]) == 64
+            assert spec["requirements"] and all("==" in r for r in spec["requirements"])
+            continue
         assert gen.install.get("type") == "python"
         assert gen.install.get("package")
         assert gen.check.get("type") in {"command", "python_import"}

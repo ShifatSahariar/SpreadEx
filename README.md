@@ -106,7 +106,7 @@ The full reference, generated from the CLI itself, is in the Workbench under **G
 | ![Grammarinator](https://img.shields.io/badge/Grammarinator-26.1-7C3AED?style=flat-square) | Probabilistic | — | fresh |
 | ![FuzzingBook](https://img.shields.io/badge/FuzzingBook-1.2.2-7C3AED?style=flat-square) | Probabilistic | — | fresh |
 | ![ISLa](https://img.shields.io/badge/ISLa-1.14.4-7C3AED?style=flat-square) | Constraint-based | ✅ | fresh |
-| ![Fuzz4All](https://img.shields.io/badge/Fuzz4All-LLM-6B7280?style=flat-square) | LLM-based | — | replays a recording · live generation not available yet |
+| ![Fuzz4All](https://img.shields.io/badge/Fuzz4All-LLM-6B7280?style=flat-square) | LLM-based | written guidance | authors' artifact (pinned), live with any OpenAI-compatible LLM, or replays a recording |
 
 Installs are deterministic (exact pins, isolated environments, never implicit). Grammars can be BNF, EBNF, ANTLR `.g4`, Fandango or FuzzingBook; SpreadEx converts between them.
 
@@ -154,7 +154,7 @@ SPREADEX_REQUIRE_GOLDEN=1 pytest tests/golden -q
 <details>
 <summary>Status and platforms</summary>
 
-**v0.1.0-alpha.** Verified from a clean install on **macOS arm64**. **Linux** is partly verified (the Rhino journey on arm64, the demo journeys on x86_64); the unit suite has not yet passed there. **Windows is unverified.** Not yet: coverage collection, regression mode, adaptive allocation, live Fuzz4All.
+**v0.1.0-alpha.** Verified from a clean install on **macOS arm64**. **Linux** is partly verified (the Rhino journey on arm64, the demo journeys on x86_64); the unit suite has not yet passed there. **Windows is unverified.** Not yet: coverage collection, regression mode, adaptive allocation, adding your own generator.
 </details>
 
 <div align="center"><sub>MIT licensed · Built for grammar-based testing research and practice</sub></div>

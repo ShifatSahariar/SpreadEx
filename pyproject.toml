@@ -52,7 +52,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "spreadex.corpus" = ["*.sql"]
-"spreadex.generators" = ["catalog/*.yaml"]
+"spreadex.generators" = ["catalog/*.yaml", "patches/*/*.patch"]
 "spreadex.api" = ["static/*", "static/assets/*", "static/guides/*", "static/guides/img/*"]
 "spreadex.demo" = ["project/*", "project/seeds/*", "project/spec/*",
                    "rhino/*", "rhino/grammars/*", "rhino/grammars/*/*",

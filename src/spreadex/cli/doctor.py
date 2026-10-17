@@ -265,6 +265,17 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
                 checks.append(Check(f"generator '{gen.name}'", OK,
                                     f"{st.version or 'installed'} ({st.where})"))
 
+            if gen.capabilities.get("llm"):
+                # An LLM-based generator reads documentation (semantic guidance), not a grammar.
+                docs = list(config.semantics.guidance or [])
+                if docs:
+                    checks.append(Check(f"  documentation for '{gid}'", OK,
+                                        f"{len(docs)} file(s): {', '.join(Path(d).name for d in docs)}"))
+                else:
+                    checks.append(Check(f"  documentation for '{gid}'", FAIL, "none",
+                                        "describe the input language under `semantics.guidance` "
+                                        "(Workbench step 2)"))
+                continue
             grammar = grammar_for(config, gid)
             if grammar is None:
                 checks.append(Check(f"  grammar for '{gid}'", FAIL, "none configured",
@@ -276,6 +287,25 @@ def run_checks(config=None, project_root: Path | None = None) -> list[Check]:
             else:
                 checks.append(Check(f"  grammar for '{gid}'", OK,
                                     f"{grammar.name} ({gen.grammar_dialect})"))
+
+    # Shared LLM settings, when an LLM-based generator is selected and generates live.
+    try:
+        from ..core.sources import recorded_sources
+        replayed = recorded_sources(config)
+    except Exception:
+        replayed = {}
+    llm_gens = [g for g in (config.generators or [])
+                if g not in replayed and g in mgr.catalog and mgr.catalog[g].capabilities.get("llm")]
+    if llm_gens:
+        from ..llm.settings import LLMSettingsError, resolve
+        try:
+            r = resolve(config.llm)
+            checks.append(Check(f"LLM settings ({', '.join(llm_gens)})", OK,
+                                f"{r.model} via {r.host}; key from {r.key_source}"))
+        except LLMSettingsError as exc:
+            first, _, rest = str(exc).partition("\n")
+            checks.append(Check(f"LLM settings ({', '.join(llm_gens)})", FAIL, first,
+                                rest.strip().removeprefix("Fix: ")))
 
     # Embedding backend.
     from ..signals.status import embedding_status

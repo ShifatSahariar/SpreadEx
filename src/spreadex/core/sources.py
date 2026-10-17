@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ..exec.runner import _parse_duration
 from ..generators import GeneratorError, GeneratorManager
-from ..generators.adapters import generate as run_generator
+from ..generators.adapters import CONTEXT_ADAPTERS, generate as run_generator
 
 MAX_INPUT_BYTES = 1 << 20
 
@@ -56,6 +56,8 @@ class GenerationStats:
     source: str = "fresh"
     #: For a replay: where it came from, its manifest checksum and the recording's provenance.
     recording: dict | None = None
+    #: Generator-specific accounting, e.g. Fuzz4All's SUT executions during generation and LLM usage.
+    details: dict | None = None
 
     @property
     def throughput_per_s(self) -> float:
@@ -76,6 +78,7 @@ class GenerationStats:
             "hit_cap": self.hit_cap,
             "source": self.source,
             **({"recording": self.recording} if self.recording else {}),
+            **({"details": self.details} if self.details else {}),
         }
 
 
@@ -226,7 +229,8 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
         if fresh:
             mgr.ensure(fresh, log=log, auto_install=False)
 
-        derived = derive_grammars(config, fresh, log=log) if fresh else {}
+        grammar_based = [g for g in fresh if g not in CONTEXT_ADAPTERS]
+        derived = derive_grammars(config, grammar_based, log=log) if grammar_based else {}
         mode = (gen_cfg.get("mode") or "count").lower()
 
         # Uniform allocation. The honest default, and the baseline any adaptive
@@ -245,8 +249,9 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
             if gid in recorded:
                 out.extend(_replay(gid, recorded[gid], cap, mode, seconds, log, stats))
                 continue
-            grammar = grammar_for(config, gid, derived)
-            if grammar is None:
+            context = llm_context(config, gid) if gid in CONTEXT_ADAPTERS else None
+            grammar = None if context is not None else grammar_for(config, gid, derived)
+            if grammar is None and context is None:
                 log(f"  ! {gid}: no grammar configured -- skipping")
                 continue
             st = GenerationStats(
@@ -257,7 +262,7 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
             )
             try:
                 batch = run_generator(gid, grammar, cap, seed=config.seed,
-                                      timeout=seconds, manager=mgr)
+                                      timeout=seconds, manager=mgr, context=context)
             except GeneratorError as exc:
                 # One broken generator must not abort a campaign that has others.
                 log(f"  ! {gid}: {exc}")
@@ -268,6 +273,12 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
             st.elapsed_s = batch.elapsed_ms / 1000
             st.produced = len(batch.inputs)
             st.partial = batch.partial
+            st.details = batch.details or None
+            if context is not None and batch.details:
+                d = batch.details
+                log(f"  {gid}: {d.get('llm', {}).get('model')} via {d.get('llm', {}).get('endpoint_host')}; "
+                    f"{d.get('sut_executions', {}).get('total', 0)} SUT executions during generation "
+                    f"(prompt scoring and validation)")
             st.hit_cap = st.produced >= cap
             if stats is not None:
                 stats.append(st)
@@ -287,6 +298,30 @@ def collect(config, budget_s: float, log=print, manager: GeneratorManager | None
             )
 
     return out
+
+
+def llm_context(config, generator_id: str) -> dict:
+    """What an LLM-based generator receives instead of a grammar. Nothing here is a credential:
+    the key is resolved by the adapter, from the session or the environment."""
+    opts = (config.generator_options or {}).get(generator_id, {})
+    docs = [str((config.project_root / rel).resolve()) for rel in (config.semantics.guidance or [])]
+    example = opts.get("example")
+    if example:
+        example = str((config.project_root / example).resolve())
+    else:
+        seeds = (config.raw.get("corpus") or {}).get("path")
+        if seeds and (config.project_root / seeds).is_dir():
+            first = sorted(p for p in (config.project_root / seeds).rglob("*")
+                           if p.is_file() and not p.name.startswith("."))
+            example = str(first[0]) if first else None
+    targets = [{"name": t.name, "command": t.resolved_command(), "input_mode": t.input_mode,
+                "env": dict(t.env), "cwd": t.resolved_cwd(), "timeout": t.limits.timeout_s,
+                "memory_mb": t.limits.memory_mb} for t in config.targets]
+    options = {k: opts[k] for k in ("probe_batch",) if k in opts}
+    return {"documentation": docs, "example": example, "targets": targets,
+            "oracle": config.oracle, "llm": config.llm, "extension": config.input_extension,
+            "comment_style": opts.get("comment_style"), "language_name": opts.get("language_name"),
+            "options": options}
 
 
 def recorded_sources(config) -> dict[str, Path]:

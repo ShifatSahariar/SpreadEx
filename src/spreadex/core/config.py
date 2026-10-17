@@ -49,6 +49,8 @@ class Config:
     input_extension: str = ""
     #: Per-generator choices made in the step 3 popup, e.g. {"fandango": {"constraints": false}}.
     generator_options: dict = field(default_factory=dict)
+    #: Shared LLM settings for every LLM-based generator (spreadex/llm/settings.py). Never a key.
+    llm: dict = field(default_factory=dict)
     #: Generator-independent semantic guidance and constraint files (see spec/).
     semantics: "Semantics" = field(default_factory=lambda: Semantics())
     raw: dict = field(default_factory=dict)
@@ -106,6 +108,8 @@ class Config:
             payload["semantics"] = self.semantics_digest()
         if self.generator_options:
             payload["generator_options"] = self.generator_options
+        if self.llm:
+            payload["llm"] = self.llm
         blob = json.dumps(payload, sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -292,6 +296,7 @@ def load_config(path: Path | None = None) -> Config:
         input_extension=_input_extension(raw.get("input_extension"), path),
         semantics=_semantics(raw.get("semantics"), path),
         generator_options=_generator_options(raw.get("generator_options"), path),
+        llm=_llm(raw.get("llm"), path),
         raw=raw,
     )
 
@@ -353,7 +358,18 @@ def _selection(value, path) -> dict:
     return {"by": "cc", "keep": keep}
 
 
-_GENERATOR_OPTION_KEYS = {"constraints": bool}
+_GENERATOR_OPTION_KEYS = {"constraints": bool,
+                          # Fuzz4All (generators/adapters.py::generate_fuzz4all)
+                          "comment_style": str, "language_name": str, "example": str,
+                          "probe_batch": int}
+
+
+def _llm(value, path) -> dict:
+    from ..llm.settings import LLMSettingsError, normalize
+    try:
+        return normalize(value)
+    except LLMSettingsError as exc:
+        raise ConfigError(f"{path}: {exc}") from None
 
 
 def _generator_options(value, path) -> dict:
@@ -370,8 +386,12 @@ def _generator_options(value, path) -> dict:
                 raise ConfigError(
                     f"{path}: generator_options.{gid}.{key} is not an option. "
                     f"Known: {', '.join(sorted(_GENERATOR_OPTION_KEYS))}.")
-            if not isinstance(val, _GENERATOR_OPTION_KEYS[key]):
-                raise ConfigError(f"{path}: generator_options.{gid}.{key} must be true or false.")
+            want = _GENERATOR_OPTION_KEYS[key]
+            if not isinstance(val, want) or (want is int and isinstance(val, bool)):
+                kind = {bool: "true or false", str: "text", int: "a whole number"}[want]
+                raise ConfigError(f"{path}: generator_options.{gid}.{key} must be {kind}.")
+            if key == "comment_style" and val not in ("c", "hash", "dashdash", "rem"):
+                raise ConfigError(f"{path}: generator_options.{gid}.comment_style must be c, hash, dashdash or rem.")
         out[str(gid)] = dict(opts)
     return out
 

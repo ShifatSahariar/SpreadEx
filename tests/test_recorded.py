@@ -98,12 +98,14 @@ def test_there_is_no_fallback_between_recorded_and_live(tmp_path):
         recorded_sources(cfg)
 
 
-def test_live_fuzz4all_is_refused_with_its_reason_rather_than_replayed(tmp_path):
+def test_live_fuzz4all_is_never_silently_replayed(tmp_path):
+    """Asked to generate live, Fuzz4All generates or says why it cannot -- it never falls back to a
+    recording that happens to be configured elsewhere."""
     from spreadex.generators import GeneratorManager
 
     write(tmp_path / "rec", "fuzz4all", INPUTS, {})
     cfg = _project(tmp_path, "{fuzz4all: {mode: live}}")
-    with pytest.raises(GeneratorError, match="live Fuzz4All generation is not available"):
+    with pytest.raises(GeneratorError, match="not installed"):
         collect(cfg, 60, log=lambda *_: None, manager=GeneratorManager(cache_dir=tmp_path / "c"))
 
 

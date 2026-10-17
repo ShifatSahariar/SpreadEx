@@ -181,6 +181,11 @@ def test_every_catalog_generator_is_pinned_to_an_exact_version():
     from spreadex.generators.manager import GeneratorManager, load_catalog
 
     for gid, gen in load_catalog().items():
+        if gen.install.get("type") == "git":
+            # A pinned upstream artifact: the commit and every requirement are exact.
+            assert len(gen.install["commit"]) == 40, f"{gid} is not pinned to a commit"
+            assert all("==" in r for r in gen.install["requirements"]), f"{gid} has an unpinned requirement"
+            continue
         if gen.install.get("type") == "none":
             # Installs nothing (replays recordings); its live artifact is pinned by commit instead.
             assert "@" in gen.install.get("upstream", ""), f"{gid} names no pinned upstream"

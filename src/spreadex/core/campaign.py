@@ -188,6 +188,12 @@ class Campaign:
             with open(run_dir / "inputs.jsonl", "w") as fh:
                 for h, g in produced:
                     fh.write(json.dumps({"blob": h, "generator": g}) + "\n")
+            # An LLM's output is not reproducible by regenerating it; its corpus is, by replaying.
+            for st in result.generation_stats:
+                if (st.get("details") or {}).get("llm") and st.get("produced"):
+                    self.log(f"  {st['generator']}: LLM output varies between runs; to replay exactly "
+                             f"these inputs: spreadex record {run_id} {st['generator']} -o "
+                             f"recordings/{st['generator']}-{run_id}")
             # De-duplicate by content: the same program from two generators is
             # one unit of execution budget, not two.
             seen: set[str] = set()

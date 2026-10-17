@@ -155,6 +155,8 @@ class GeneratorManager:
         if gen.install.get("type") == "none":
             # Nothing to install (a generator this version only replays from a recording).
             return Status(gen, False, None, "", gen.install.get("reason") or "nothing to install")
+        if gen.install.get("type") == "git":
+            return self._git_status(gen)
         check = gen.check or {}
         kind = check.get("type", "command")
 
@@ -244,6 +246,8 @@ class GeneratorManager:
         gen = self.get(generator_id)
         if gen.install.get("type") == "none":
             raise GeneratorError(f"{gen.name}: {gen.install.get('reason') or 'nothing to install'}")
+        if gen.install.get("type") == "git":
+            return self._install_git(gen, log)
         if gen.install.get("type") != "python":
             raise GeneratorError(
                 f"Generator {gen.id!r} declares install type "
@@ -310,6 +314,120 @@ class GeneratorManager:
         }
         path = self.env_dir(gen.id).parent / "receipt.json"
         path.write_text(json.dumps(receipt, indent=2))
+
+    # ------------------------------------------------------- git artifacts
+
+    PATCH_DIR = Path(__file__).with_name("patches")
+
+    def source_dir(self, generator_id: str) -> Path:
+        """Where a `type: git` generator's pinned, patched checkout lives."""
+        return self.envs_dir / generator_id / "src"
+
+    def _patch_path(self, gen: Generator) -> Path | None:
+        rel = gen.install.get("patch")
+        return (self.PATCH_DIR / rel) if rel else None
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _git(self, *args: str, cwd: Path | None = None, timeout: float = 300) -> str:
+        proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                              timeout=timeout, check=False)
+        if proc.returncode != 0:
+            raise GeneratorError(f"git {args[0]} failed: {(proc.stderr or proc.stdout).strip()[-600:]}")
+        return proc.stdout.strip()
+
+    def _git_status(self, gen: Generator) -> Status:
+        """Installed means: the receipt exists, the checkout is on the pinned commit, and the
+        working-tree delta from that commit is exactly the patch the catalog names. No import:
+        listing generators must not load torch."""
+        src, receipt_path = self.source_dir(gen.id), self.envs_dir / gen.id / "receipt.json"
+        if not (src.is_dir() and receipt_path.is_file() and self.env_python(gen.id).exists()):
+            return Status(gen, False, None, "", "not installed")
+        try:
+            receipt = json.loads(receipt_path.read_text())
+            head = self._git("rev-parse", "HEAD", cwd=src, timeout=30)
+            delta = self._git("diff", "--binary", gen.install["commit"], cwd=src, timeout=60)
+        except (GeneratorError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            return Status(gen, False, None, "environment", f"checkout unreadable: {exc}")
+        if gen.install.get("patch_sha256") and receipt.get("patch_sha256") != gen.install["patch_sha256"]:
+            return Status(gen, False, head[:7], "environment",
+                          "installed with an older SpreadEx patch; reinstall it")
+        if head != gen.install["commit"]:
+            return Status(gen, False, head[:7], "environment",
+                          f"checkout is at {head[:7]}, {gen.install['commit'][:7]} required")
+        delta_sha = hashlib.sha256((delta + "\n").encode()).hexdigest()
+        if delta_sha != receipt.get("delta_sha256"):
+            return Status(gen, False, head[:7], "environment",
+                          "the checkout was modified after installation; reinstall it")
+        return Status(gen, True, f"{gen.install['commit'][:7]}+spreadex-patch", "environment",
+                      f"pinned {gen.install['commit'][:7]}, patch {receipt.get('patch_sha256', '')[:12]}")
+
+    def _install_git(self, gen: Generator, log) -> Status:
+        """Clone at the pinned commit, apply the shipped patch, install pinned requirements,
+        smoke-test the import, and only then activate. A failure leaves nothing behind."""
+        spec = gen.install
+        patch = self._patch_path(gen)
+        if patch is None or not patch.is_file():
+            raise GeneratorError(f"{gen.name}: patch {spec.get('patch')!r} is missing from this installation.")
+        patch_sha = self._sha256_file(patch)
+        if spec.get("patch_sha256") and patch_sha != spec["patch_sha256"]:
+            raise GeneratorError(f"{gen.name}: the shipped patch does not match the catalog's checksum.")
+
+        final = self.envs_dir / gen.id
+        tmp = self.envs_dir / f"{gen.id}.tmp"
+        shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True)
+        try:
+            src = tmp / "src"
+            log(f"  cloning {spec['url']} at {spec['commit'][:7]}")
+            self._git("clone", "--quiet", spec["url"], str(src), timeout=900)
+            self._git("checkout", "--quiet", "--detach", spec["commit"], cwd=src)
+            if self._git("rev-parse", "HEAD", cwd=src) != spec["commit"]:
+                raise GeneratorError(f"{gen.name}: could not check out {spec['commit']}")
+            log(f"  applying {patch.name} (sha256 {patch_sha[:12]})")
+            self._git("apply", "--whitespace=nowarn", str(patch), cwd=src)
+
+            venv = tmp / "venv"
+            uv = shutil.which("uv")
+            log(f"  creating isolated environment for {gen.name}")
+            if uv:
+                self._run([uv, "venv", "--quiet", str(venv)], gen)
+            else:
+                self._run([sys.executable, "-m", "venv", str(venv)], gen)
+            python = venv / ("Scripts" if os.name == "nt" else "bin") / "python"
+            reqs = list(spec.get("requirements") or [])
+            log(f"  installing {len(reqs)} pinned requirements (this can take a few minutes)")
+            if uv:
+                self._run([uv, "pip", "install", "--quiet", "--python", str(python), *reqs], gen)
+            else:
+                self._run([str(python), "-m", "pip", "install", "--quiet", *reqs], gen)
+            smoke = spec.get("smoke_import") or []
+            if smoke:
+                code = f"import sys; sys.path.insert(0, {str(src)!r}); " + "; ".join(f"import {m}" for m in smoke)
+                proc = subprocess.run([str(python), "-c", code], capture_output=True, text=True,
+                                      timeout=300, check=False,
+                                      env={**os.environ, "OPENAI_API_KEY": "spreadex-import-check"})
+                if proc.returncode != 0:
+                    raise GeneratorError(f"{gen.name} installed but does not import:\n{proc.stderr.strip()[-800:]}")
+            delta = self._git("diff", "--binary", spec["commit"], cwd=src)
+
+            shutil.rmtree(final, ignore_errors=True)
+            tmp.rename(final)
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        receipt = {"id": gen.id, "url": spec["url"], "commit": spec["commit"],
+                   "patch": spec.get("patch"), "patch_sha256": patch_sha,
+                   "delta_sha256": hashlib.sha256((delta + "\n").encode()).hexdigest(),
+                   "requirements": reqs, "environment_hash": self.environment_hash(gen.id)}
+        (final / "receipt.json").write_text(json.dumps(receipt, indent=2))
+        status = self.status(gen.id)
+        if not status.installed:
+            raise GeneratorError(f"{gen.name} installed but its check fails ({status.detail}).")
+        log(f"  {gen.name} ready ({status.detail})")
+        return status
 
     def environment_hash(self, generator_id: str) -> str | None:
         """Hash of the installed distribution list -- goes in the campaign manifest."""

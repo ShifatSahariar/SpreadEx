@@ -31,12 +31,13 @@ Filter by family: **Probabilistic**, **Constraint-based**, **Coverage-guided**, 
 | Fandango | Constraint-based | yes (Fandango format) | solves constraints with an evolutionary algorithm |
 | ISLa | Constraint-based | yes (ISLa format) | |
 | Grammarinator | Probabilistic | no | ANTLR grammars |
-| Fuzz4All | LLM-based | | **replays a recording** in this version |
+| Fuzz4All | LLM-based | no (reads your written guidance) | the authors' artifact, pinned; generates **live** with the shared LLM settings, or replays a recording |
 
 ### Fresh and recorded inputs
 
 :::options
 - **Fresh**: the generator runs in this campaign and writes new inputs. Fandango, Grammarinator, FuzzingBook and ISLa are always fresh, with a fixed seed and a pinned version, so the same configuration gives the same inputs.
+- **Live (LLM)**: Fuzz4All runs in this campaign too, but a language model's output varies between runs even with the same settings. Record a live run's inputs to reproduce them exactly.
 - **Recorded**: the inputs were generated earlier and saved with their checksums and provenance. Replaying gives **exactly those inputs** again; it does not generate new ones. Recorded inputs are still credited to the generator that wrote them, so Cluster Coverage compares it with the others.
 :::
 
@@ -52,10 +53,28 @@ generation:
 
 replays it. A recording whose files do not match their checksums is refused, never silently used. There is no fallback between recorded and live modes.
 
+### LLM settings, shared by all LLM-based generators
+
+Selecting Fuzz4All shows **LLM settings** above the generator list. Set them once; every LLM-based generator uses them.
+
+:::options
+- **Provider**: any OpenAI-compatible chat-completions endpoint. Presets for OpenAI, Anthropic (its OpenAI-compatible endpoint), Ollama and vLLM (local), or a custom base URL.
+- **Model**: required, pre-filled with `gpt-4.1-mini` and editable. A campaign never picks a model for you.
+- **API key**: read from the environment variable the provider uses (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), or pasted **for this session**: held in memory, never written to `spreadex.yaml`, the database, a manifest or an export, and forgotten when SpreadEx stops. A local server needs none.
+:::
+
+```
+llm:
+  provider: openai
+  model: gpt-4.1-mini
+```
+
+**What Fuzz4All reads and spends.** It writes programs from your **written guidance** (step 2) and one example input, never the grammar, your command or your paths. It runs the authors' artifact at commit `0bf42fe` with SpreadEx's patch: autoprompting first (4 candidate prompts, each scored by running 30 generated programs through your system), then generation, validating every program on your system and feeding a valid one back into the next prompt. Those executions and the token usage are reported with the campaign. Remote providers receive the generation context, and usage may be billed.
+
 ### Not yet available
 
 > [!NOTE]
-> **Live Fuzz4All** (fresh LLM generation with your own provider and API key) and a **shared LLM configuration** for generators are not available yet. Fuzz4All currently only replays a recording.
+> **Adding your own generator** (its install recipe, command and input format) is planned and shown as *Coming soon*.
 
 ## When to choose which
 
@@ -87,9 +106,14 @@ cause: A recorded input no longer matches its checksum.
 fix: Restore the recording (for an example, use **Start fresh**), or record again with `spreadex record`.
 :::
 
-:::problem "live Fuzz4All generation is not available in this version"
-cause: Fuzz4All was asked to generate fresh inputs.
-fix: Use `mode: recorded` with a recording, or remove Fuzz4All for now.
+:::problem "LLM-based generators need LLM settings" or "No API key"
+cause: Fuzz4All is selected to generate live, but no model is set or no key was found.
+fix: Fill in **LLM settings** in step 3 (provider and model), and export the key before starting SpreadEx or paste it for the session.
+:::
+
+:::problem "the LLM endpoint … cannot be reached"
+cause: The base URL is wrong, you are offline, or the local model server is not running.
+fix: Check the base URL, or start the server (for Ollama: `ollama serve`).
 :::
 
 :::advanced Isolated, pinned environments
