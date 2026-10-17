@@ -50,6 +50,8 @@ class Ordering:
     embedding: dict | None = None
     #: How the map was clustered: damping used and whether it converged.
     clustering: dict | None = None
+    #: Which SpreadEx ordering produced `order` (published Algorithm 1, or the replication code's).
+    prioritization: dict | None = None
 
 
 class SelectionSignal(Protocol):
@@ -74,6 +76,7 @@ def embed_tfidf(texts: Sequence[str]) -> np.ndarray:
 #: study's prioritization experiments used, and is opt-in because it sends inputs to OpenAI.
 #: TF-IDF needs nothing and is what a campaign falls back to when the others cannot run.
 EMBEDDING_MODELS = ("unixcoder", "openai", "tfidf")
+PRIORITIZATION_VARIANTS = ("published", "replication")
 DEFAULT_EMBEDDING = "unixcoder"
 #: What to try next when a backend cannot run here. A fallback is never silent: it becomes a
 #: caveat on the campaign and is recorded in its manifest.
@@ -197,7 +200,13 @@ class ClusterCoverageSignal:
 
     def __init__(self, embedding_model: str | None = None, random_state: int | None = 42, *,
                  fallback: bool = True, cache_path=None, device: str = "cpu",
-                 log=lambda _m: None) -> None:
+                 log=lambda _m: None, variant: str = "published") -> None:
+        if variant not in PRIORITIZATION_VARIANTS:
+            raise ValueError(f"Unknown prioritization variant {variant!r}: "
+                             f"{', '.join(PRIORITIZATION_VARIANTS)}")
+        #: "published": Algorithm 1 as printed in the ICST 2026 paper (prioritization/published.py).
+        #: "replication": the replication code's ordering, which produced the paper's results.
+        self.variant = variant
         self.embedding_model = (embedding_model or default_embedding()).lower()
         self.fallback = fallback
         self.cache_path = cache_path
@@ -331,9 +340,16 @@ class ClusterCoverageSignal:
         id_to_generator = {i: items[i].generator for i in range(n)}
         scores = ref.cluster_coverage(id_to_label, id_to_generator, generator_order, k_eff)
 
-        cluster_order = ref.centroid_spread_order(clusters, embeddings)
-        ranking = ref.exemplar_distance_ranking(clusters, embeddings, exemplar_map)
-        order = ref.full_ordering(cluster_order, ranking, n)
+        if self.variant == "published":
+            from ..prioritization import published
+            order, prioritization = published.prioritize(clusters, embeddings)
+        else:
+            cluster_order = ref.centroid_spread_order(clusters, embeddings)
+            ranking = ref.exemplar_distance_ranking(clusters, embeddings, exemplar_map)
+            order = ref.full_ordering(cluster_order, ranking, n)
+            prioritization = {"variant": "replication", "exemplar": "affinity_propagation",
+                              "within_cluster": "closest_first", "cluster_distance": "cosine",
+                              "note": "the ordering of the ICST 2026 replication code"}
 
         # Anything the reference process never reaches still deserves to run, last.
         seen = set(order)
@@ -341,7 +357,8 @@ class ClusterCoverageSignal:
 
         return Ordering(order=order, generator_scores=scores, k_eff=k_eff,
                         detail=f"{k_eff} clusters over {n} inputs ({_LABELS[info.used]})",
-                        caveats=caveats, embedding=info.as_dict(), clustering=clustering)
+                        caveats=caveats, embedding=info.as_dict(), clustering=clustering,
+                        prioritization=prioritization)
 
     @staticmethod
     def select_generator(per_run_coverage, candidate_generators):

@@ -65,6 +65,8 @@ class CampaignResult:
     embedding: dict | None = None
     #: How the diversity map was clustered (damping, convergence).
     clustering: dict | None = None
+    #: Which SpreadEx ordering was executed (published Algorithm 1, or the replication code's).
+    prioritization: dict | None = None
 
     @property
     def failures(self) -> int:
@@ -217,10 +219,12 @@ class Campaign:
             signal = make_signal(signal_name, emb.get("model"),
                                  fallback=emb.get("fallback", "tfidf") != "none",
                                  cache_path=cfg.state_dir / "embeddings.sqlite",
-                                 device=emb.get("device", "cpu"), log=self.log)
+                                 device=emb.get("device", "cpu"), log=self.log,
+                                 variant=(cfg.prioritization or {}).get("variant", "published"))
             ordering = signal.rank(items, seed=cfg.seed)
             result.embedding = ordering.embedding
             result.clustering = getattr(ordering, "clustering", None)
+            result.prioritization = getattr(ordering, "prioritization", None)
             if ordering.embedding:
                 e = ordering.embedding
                 self.log(f"  embedding: {e['used']} ({e['dim']}-d; {e['computed']} computed, "
@@ -419,6 +423,7 @@ class Campaign:
                 "k_eff": result.k_eff,
                 "embedding": result.embedding,
                 "clustering": result.clustering,
+                "prioritization": result.prioritization,
                 "signal_caveats": result.signal_caveats,
                 "generation_stats": result.generation_stats,
                 "selection": result.selection,

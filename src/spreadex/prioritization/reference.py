@@ -1,8 +1,11 @@
-"""Bit-faithful port of the published SpreadEx algorithms.
+"""Bit-faithful port of the ICST 2026 replication code (`prioritization.variant: replication`).
 
-This module is the *specification*. Every function here mirrors a specific
-function in the ICST 2026 replication package, and `tests/golden/` asserts that
-the two agree on fixed data. Where the research code has a quirk, the quirk is
+This module mirrors the code that produced the paper's results, not the paper's text: the
+Workbench's default ordering is `published.py`, Algorithm 1 as printed, which differs from this code
+in the exemplar (Affinity Propagation's, here) and the within-cluster order (closest first, here).
+Clustering, Cluster Coverage, K_eff, the cluster order and round-robin emission from this module are
+shared by both variants. Every function here mirrors a specific function in the ICST 2026
+replication package, and `tests/golden/` asserts that the two agree on fixed data. Where the research code has a quirk, the quirk is
 reproduced here and documented rather than quietly corrected -- a "fix" that
 changes the published ordering would invalidate the paper's results.
 

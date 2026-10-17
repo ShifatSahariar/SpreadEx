@@ -51,6 +51,8 @@ class Config:
     generator_options: dict = field(default_factory=dict)
     #: Shared LLM settings for every LLM-based generator (spreadex/llm/settings.py). Never a key.
     llm: dict = field(default_factory=dict)
+    #: {"variant": "published" | "replication"}: which SpreadEx ordering to execute in.
+    prioritization: dict = field(default_factory=lambda: {"variant": "published"})
     #: Generator-independent semantic guidance and constraint files (see spec/).
     semantics: "Semantics" = field(default_factory=lambda: Semantics())
     raw: dict = field(default_factory=dict)
@@ -96,6 +98,9 @@ class Config:
             "generators": sorted(self.generators),
             "signal": self.signal,
             "embedding": self.embedding,
+            # Always present: the default ordering changed to the published Algorithm 1, so a
+            # replay of a campaign made before that change reports it as a different campaign.
+            "prioritization": self.prioritization.get("variant", "published"),
             "seed": self.seed,
             **({"selection": self.selection} if self.selection else {}),
             "budget": {"generation_s": self.budget.generation_s,
@@ -297,6 +302,7 @@ def load_config(path: Path | None = None) -> Config:
         semantics=_semantics(raw.get("semantics"), path),
         generator_options=_generator_options(raw.get("generator_options"), path),
         llm=_llm(raw.get("llm"), path),
+        prioritization=_prioritization(raw.get("prioritization"), path),
         raw=raw,
     )
 
@@ -362,6 +368,20 @@ _GENERATOR_OPTION_KEYS = {"constraints": bool,
                           # Fuzz4All (generators/adapters.py::generate_fuzz4all)
                           "comment_style": str, "language_name": str, "example": str,
                           "probe_batch": int}
+
+
+def _prioritization(value, path) -> dict:
+    """`prioritization: {variant: published}` (default) or `{variant: replication}`."""
+    if value in (None, {}):
+        return {"variant": "published"}
+    if not isinstance(value, dict) or set(value) - {"variant"}:
+        raise ConfigError(f"{path}: `prioritization` must be `{{variant: published}}` or "
+                          f"`{{variant: replication}}`.")
+    variant = str(value.get("variant") or "published").lower()
+    if variant not in ("published", "replication"):
+        raise ConfigError(f"{path}: `prioritization.variant` must be `published` (Algorithm 1 of the "
+                          f"ICST 2026 paper) or `replication` (its replication code), not {variant!r}.")
+    return {"variant": variant}
 
 
 def _llm(value, path) -> dict:

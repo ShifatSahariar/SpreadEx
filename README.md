@@ -134,7 +134,7 @@ If the chosen model cannot run, the campaign falls back (OpenAI → UniXcoder �
 
 ## 📄 Research
 
-The algorithms are those of the ICST 2026 paper *Embedding-based Diversity Mapping for Test Generator Selection and Input Prioritization in Grammar-based Testing*. A CI gate checks this implementation against the published code.
+The algorithms are those of the ICST 2026 paper *Embedding-based Diversity Mapping for Test Generator Selection and Input Prioritization in Grammar-based Testing*. Prioritization follows Algorithm 1 as published (tests derive expected orders from the paper by hand). The paper's replication code orders inputs differently in two places (exemplar choice, closest-first within clusters), and its results come from that code: `prioritization: {variant: replication}` reproduces it, and a CI gate checks that variant against the research code. The published variant does not reproduce the paper's results.
 Research code and replication package: **[Embedding-based-Diversity-Mapping](https://github.com/ShifatSahariar/Embedding-based-Diversity-Mapping)** · Artifact: [doi.org/10.5281/zenodo.20071065](https://doi.org/10.5281/zenodo.20071065)
 
 > Cluster Coverage and prioritization are heuristics for spending a budget well; they do not predict faults.
