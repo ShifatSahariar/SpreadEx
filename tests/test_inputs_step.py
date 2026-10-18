@@ -316,3 +316,31 @@ def test_an_explicit_run_id_that_already_exists_is_still_an_error(tmp_path):
     Campaign(cfg, log=lambda *_: None).run(run_id="mine")
     with pytest.raises(Exception):
         Campaign(cfg, log=lambda *_: None).run(run_id="mine")
+
+
+# ------------------------------------------- seed inputs kept beside a grammar
+
+from tests.test_sut_step import _node  # noqa: E402
+
+
+@pytest.mark.parametrize("mode", ["bundled", "provide", "import"])
+def test_a_grammar_keeps_the_seed_inputs_the_project_already_has(mode):
+    out = _node(f'api.inputSources("{mode}", "./calc.bnf", "", "./seeds")')
+    assert out == {"source": "./calc.bnf", "corpus": "./seeds"}
+
+
+def test_no_grammar_runs_the_typed_folder_alone():
+    assert _node('api.inputSources("none", "./calc.bnf", "./inputs", "./seeds")') == {"source": "", "corpus": "./inputs"}
+    assert _node('api.inputSources("provide", "./calc.bnf", "", "")') == {"source": "./calc.bnf", "corpus": ""}
+
+
+def test_continue_uses_the_saved_seeds_and_still_requires_a_grammar_in_grammar_modes():
+    c = JS[JS.index("function commitGrammar"):]
+    c = c[:c.index("\n}\n")]
+    assert "inputSources(d.mode, d.picked, d.corpus, cfg().corpus?.path)" in c
+    assert "if (useGrammar ? !source : !corpus)" in c, "a kept seed folder must not stand in for a missing grammar"
+
+
+def test_the_summary_says_when_seed_inputs_run_beside_the_grammar():
+    assert "seed inputs <span class=\"mono\">${esc(c.corpus.path)}</span>" in JS
+    assert 'row("blue", "doc", "Inputs", inputs + seeds, "grammar")' in JS

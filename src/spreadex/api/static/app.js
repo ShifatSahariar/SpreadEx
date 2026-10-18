@@ -842,11 +842,16 @@ function runProblems(r) {
 
 // The config keys these choices mean. `nGens` is how many generators are selected; `timeoutS` is the
 // per-input timeout (the worst case for a count-limited run).
-function budgetFromRun(r, nGens, timeoutS) {
+// `saved` is what the project's file said when the step opened ({genMode, count, nGens, generation}):
+// a saved equal-count ceiling is the project's choice, so it is kept while the count and the
+// number of generators it was set for are unchanged, rather than re-derived as 120 s each.
+function budgetFromRun(r, nGens, timeoutS, saved) {
   const n = Math.max(1, nGens || 0);
   const generation = r.genMode === "time" ? { mode: "time", per_generator: `${r.perGen}s` } : { count: r.count };
   const genTotal = r.genMode === "time" ? Math.ceil(r.perGen * n) : GEN_CEILING_S * n;
   const budget = { generation: `${genTotal}s` };
+  if (r.genMode === "count" && saved && saved.genMode === "count" && saved.count === r.count &&
+      saved.nGens === (nGens || 0) && durationSeconds(saved.generation) > 0) budget.generation = saved.generation;
   if (r.execMode === "time") budget.execution = `${Math.round(r.execMinutes * 60)}s`;
   else if (r.execMode === "count") {
     budget.max_inputs = r.execCount;
@@ -916,6 +921,14 @@ function liveStage(lines, done) {
 // ---- end live stage ----
 
 const DURATION = /^\d+(\.\d+)?\s*[smh]?$/i;
+
+// What the Inputs step saves. "No grammar" runs the typed folder alone. With a grammar, a folder of
+// seed inputs the project already has is kept beside it: the step has no field for it, so dropping
+// it would silently change the campaign (the guided demo's five seeds, for one).
+function inputSources(mode, picked, typedCorpus, savedCorpus) {
+  return mode === "none" ? { source: "", corpus: typedCorpus || "" }
+                         : { source: picked || "", corpus: savedCorpus || "" };
+}
 // ---- end command line helpers ----------------------------------------------
 
 // ------------------------------------------------------ config helpers
@@ -2647,10 +2660,9 @@ async function acceptProposal() {
 function commitGrammar() {
   const d = stashInp();
   const useGrammar = d.mode !== "none";
-  const source = useGrammar ? d.picked : "";
-  const corpus = d.mode === "none" ? d.corpus : "";
+  const { source, corpus } = inputSources(d.mode, d.picked, d.corpus, cfg().corpus?.path);
   const err = m => { el("err").innerHTML = `<div class="note bad" role="alert">${esc(m)}</div>`; };
-  if (!source && !corpus) {
+  if (useGrammar ? !source : !corpus) {
     err(d.mode === "none" ? "Enter the folder that holds your inputs."
                           : "Choose or add a grammar first, or pick \u201cNo grammar\u201d to use inputs you already have.");
     return;
@@ -3276,7 +3288,12 @@ function commitGenerators() {
 // ------------------------------------------------- step 5: review & run
 
 function runState() {
-  if (!S.run) S.run = runFromConfig(cfg());
+  if (!S.run) {
+    S.run = runFromConfig(cfg());
+    // What the file said when the step opened, so an unchanged saved budget is written back as is.
+    S.runSaved = { genMode: S.run.genMode, count: S.run.count, nGens: nGenerators(),
+                   generation: (cfg().budget || {}).generation };
+  }
   return S.run;
 }
 function nGenerators() { return (cfg().generators || []).length; }
@@ -3285,7 +3302,7 @@ function timeoutSecs() { return durationSeconds(sut().timeout || "5s") || 5; }
 // Write the choices to the config. Called after every edit, so the YAML preview, the summary and
 // the saved file can never disagree with what is on screen.
 function syncRun() {
-  const r = runState(), b = budgetFromRun(r, nGenerators(), timeoutSecs());
+  const r = runState(), b = budgetFromRun(r, nGenerators(), timeoutSecs(), S.runSaved);
   // The budget replaces count/mode only; per-generator settings (e.g. a recorded Fuzz4All) are kept.
   const perGen = Object.fromEntries(Object.entries(cfg().generation || {}).filter(([, v]) => v && typeof v === "object"));
   S.config.generation = { ...perGen, ...b.generation };
@@ -3368,6 +3385,9 @@ function summaryCard() {
   const inputs = c.grammar?.source ? `${d.lang ? esc(langById(d.lang).t) + " · " : ""}<span class="mono">${esc(c.grammar.source.split("/").pop())}</span>`
     : perGenGrammars(c).length ? `A prepared grammar for each generator (${perGenGrammars(c).length})`
     : c.corpus?.path ? `Folder <span class="mono">${esc(c.corpus.path)}</span>` : "Not chosen";
+  // Seed inputs kept beside a grammar run too; say so, since no step shows them.
+  const seeds = (c.grammar?.source || perGenGrammars(c).length) && c.corpus?.path
+    ? ` · seed inputs <span class="mono">${esc(c.corpus.path)}</span>` : "";
   const gens = (c.generators || []).map(id => ((S.generators || []).find(g => g.id === id) || { name: id }).name);
   const o = c.oracle || {};
   const checks = ["Crash", "Timeout"].concat((o.rejection_patterns || []).length || (o.expected_exit_codes || []).length ? ["Rejection"] : [],
@@ -3375,7 +3395,7 @@ function summaryCard() {
   const budget = `${r.genMode === "time" ? `${r.perGen} s / generator` : `${r.count} inputs / generator`} &middot; ${r.execMode === "time" ? `${esc(String(r.execMinutes))} min` : r.execMode === "count" ? `${r.execCount} tests` : "whole corpus"}`;
   const pending = (S.generators || []).filter(isPending).map(g => g.name);
   return `${row("red", "terminal", "System under test", `<span class="mono">${esc(cmd)}</span>`, "sut")}
-    ${row("blue", "doc", "Inputs", inputs, "grammar")}
+    ${row("blue", "doc", "Inputs", inputs + seeds, "grammar")}
     ${row("purple", "sliders", `Generators (${gens.length})`, gens.length ? esc(gens.join(", ")) : "None (existing inputs only)", "generators")}
     ${row("orange", "shield", "Testing strategy", esc(checks.join(", ")), "strategy")}
     ${row("green", "stats", "Test ordering", r.signal === "random" ? "Random (baseline)" : `SpreadEx prioritization &middot; ${esc(embeddingLabel(r.model))}`, "run")}

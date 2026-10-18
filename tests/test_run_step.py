@@ -241,3 +241,53 @@ def test_generator_selection_is_opt_in_and_all_generators_is_the_default():
     assert 'title: "Best generator", tag:' not in ordering, "no Recommended badge without evidence for it"
     for t in ("Best generator", "Best 2 generators", "All generators", "Generator selection"):
         assert t in JS, t
+
+
+# ------------------------------------------- a saved equal-count ceiling is kept
+
+def _saved(run, n, generation):
+    return {"genMode": run["genMode"], "count": run["count"], "nGens": n, "generation": generation}
+
+
+def test_an_unchanged_equal_count_budget_keeps_its_saved_ceiling():
+    run = {**TIME, "genMode": "count", "count": 40}
+    out = _node(f"api.budgetFromRun({json.dumps(run)},3,5,{json.dumps(_saved(run, 3, '30s'))})")
+    assert out["generation"] == {"count": 40} and out["budget"]["generation"] == "30s"
+
+
+@pytest.mark.parametrize("change", ["count", "generators", "mode", "nothing saved"])
+def test_any_change_to_what_the_ceiling_was_set_for_derives_it_again(change):
+    run = {**TIME, "genMode": "count", "count": 40}
+    saved = _saved(run, 3, "30s")
+    n = 3
+    if change == "count":
+        run = {**run, "count": 41}
+    elif change == "generators":
+        n = 2
+    elif change == "mode":
+        saved = {**saved, "genMode": "time"}
+    else:
+        saved = {**saved, "generation": None}
+    out = _node(f"api.budgetFromRun({json.dumps(run)},{n},5,{json.dumps(saved)})")
+    assert out["budget"]["generation"] == f"{120 * n}s"
+
+
+def test_the_guided_demo_config_survives_the_wizard_unchanged():
+    """The bundled demo has a grammar AND seed inputs, an equal count and a 30 s ceiling: walking the
+    wizard must write all of them back as they were (it used to drop the seeds and write 360 s)."""
+    demo = yaml.safe_load((ROOT / "src/spreadex/demo/project/spreadex.yaml").read_text())
+    n = len(demo["generators"])
+    r = _node(f"api.runFromConfig({json.dumps(demo)})")
+    saved = {"genMode": r["genMode"], "count": r["count"], "nGens": n, "generation": demo["budget"]["generation"]}
+    b = _node(f"api.budgetFromRun({json.dumps(r)},{n},5,{json.dumps(saved)})")
+    assert b["generation"] == demo["generation"] and b["budget"] == demo["budget"]
+    src = _node(f'api.inputSources("provide", {json.dumps(demo["grammar"]["source"])}, "", '
+                f'{json.dumps(demo["corpus"]["path"])})')
+    assert src == {"source": demo["grammar"]["source"], "corpus": demo["corpus"]["path"]}
+
+
+def test_the_review_step_passes_what_the_file_said():
+    assert "budgetFromRun(r, nGenerators(), timeoutSecs(), S.runSaved)" in JS
+    rs = JS[JS.index("function runState()"):]
+    rs = rs[:rs.index("\n}\n")]
+    assert "S.runSaved = {" in rs and "(cfg().budget || {}).generation" in rs
