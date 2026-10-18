@@ -153,7 +153,9 @@ def run_detail(state_dir: Path, run_id: str) -> dict[str, Any] | None:
             })
 
         summary = store.run_summary(run_id)
-        curve = results.get("budget_curve") or []
+        # From the executions by rank, so a run whose manifest recorded the curve in parallel-job
+        # completion order (before that was fixed) still reads the same as its findings.
+        curve = [list(p) for p in store.budget_curve(run_id)] or results.get("budget_curve") or []
         return {
             "run_id": run_id,
             "started_at": row["started_at"],

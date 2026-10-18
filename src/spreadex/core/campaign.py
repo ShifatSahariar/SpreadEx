@@ -278,6 +278,23 @@ class Campaign:
 
             failures_so_far = 0
             sigs_so_far: set[str] = set()
+            # The budget curve is by priority rank, not completion order: with parallel jobs a later
+            # rank can finish first. Finished inputs wait here until every lower rank has finished.
+            curve_pending: dict[int, str | None] = {}
+            curve_next = 0
+
+            def extend_curve(flush: bool = False) -> None:
+                nonlocal curve_next
+                while curve_pending:
+                    if curve_next not in curve_pending:
+                        if not flush:
+                            return
+                        curve_next = min(curve_pending)  # a rank that never ran (stopped early)
+                    sig = curve_pending.pop(curve_next)
+                    if sig:
+                        sigs_so_far.add(sig)
+                    result.budget_curve.append((len(result.budget_curve) + 1, len(sigs_so_far)))
+                    curve_next += 1
 
             input_files = InputFiles(cfg.input_extension)
 
@@ -332,9 +349,8 @@ class Campaign:
                 result.executed += 1
                 if judgement.is_failure:
                     failures_so_far += 1
-                    if judgement.signature:
-                        sigs_so_far.add(judgement.signature)
-                result.budget_curve.append((result.executed, len(sigs_so_far)))
+                curve_pending[rank] = judgement.signature if judgement.is_failure else None
+                extend_curve()
                 # Often enough that the UI's live view (which reads the database) moves, rarely enough
                 # that committing is not the cost of an execution.
                 if result.executed % 10 == 0:
@@ -397,6 +413,7 @@ class Campaign:
                             persist(rank, item, observations, judgement)
                 if clock.exhausted():
                     self.log(f"  execution budget exhausted after {result.executed} inputs")
+            extend_curve(flush=True)
 
             store.commit()
             if startup_error:

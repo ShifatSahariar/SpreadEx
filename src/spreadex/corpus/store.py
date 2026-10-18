@@ -31,6 +31,17 @@ def hash_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def rank_curve(signatures: Iterable[str | None]) -> list[tuple[int, int]]:
+    """The budget curve of inputs given in rank order: each input's failure signature, or None."""
+    seen: set[str] = set()
+    curve: list[tuple[int, int]] = []
+    for n, sig in enumerate(signatures, 1):
+        if sig:
+            seen.add(sig)
+        curve.append((n, len(seen)))
+    return curve
+
+
 def ensure_state_dir(path: Path) -> Path:
     """Create `.spreadex/` and keep it out of version control.
 
@@ -386,6 +397,20 @@ class CorpusStore:
                GROUP BY signature, verdict ORDER BY n DESC""",
             (run_id,),
         ).fetchall()
+
+    def budget_curve(self, run_id: str) -> list[tuple[int, int]]:
+        """(inputs executed, distinct signatures) after each input, in PRIORITY-RANK order.
+
+        Derived from the stored executions, so it does not depend on the order parallel jobs
+        happened to finish in. One point per input (rank), however many targets ran it.
+        """
+        rows = self.conn.execute(
+            """SELECT rank, MAX(CASE WHEN verdict IN ('crash','timeout','divergence')
+                                     THEN signature END) sig
+               FROM executions WHERE run_id=? GROUP BY rank ORDER BY rank""",
+            (run_id,),
+        ).fetchall()
+        return rank_curve(r["sig"] for r in rows)
 
     def new_signatures(self, run_id: str) -> list[str]:
         """Signatures whose very first sighting was this run -- the CI signal."""
