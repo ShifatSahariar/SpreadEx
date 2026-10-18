@@ -755,7 +755,9 @@ function strategyOracle(base, st, multi) {
   o.type = st.diff && multi ? "differential" : "crash";
   const rej = cleanPatterns(st.rejPats), sig = cleanPatterns(st.sigPats), codes = parseExitCodes(st.codes);
   if (st.rej && rej.length) o.rejection_patterns = rej; else delete o.rejection_patterns;
-  if (st.rej && codes.length) o.expected_exit_codes = codes; else delete o.expected_exit_codes;
+  // Writing the list replaces the engine's default of [0], so 0 is kept: listing only a rejection
+  // code must not turn every input the system accepts into a crash.
+  if (st.rej && codes.length) o.expected_exit_codes = codes.includes(0) ? codes : [0, ...codes]; else delete o.expected_exit_codes;
   if (st.sig && sig.length) o.crash_patterns = sig; else delete o.crash_patterns;
   return o;
 }
@@ -778,30 +780,45 @@ function durationSeconds(text) {
 }
 const RECOMMENDED_TIMEOUT = "5s";
 
+// Exit codes an uncaught exception ends with (Python, Node.js, the JVM, Ruby all exit 1). Expected
+// exit codes are checked BEFORE rejection patterns and mean "ok", so recording one of these as
+// normal would turn every real crash of the system into a pass. They are never proposed.
+const GENERIC_CRASH_EXIT_CODES = [1];
+// A first line like these is the runtime reporting a crash, not the system refusing the input.
+const CRASH_LINE = /^(Traceback \(most recent call last\)|Exception in thread |Uncaught |panic: |thread '.*' panicked|Fatal error|Segmentation fault|Assertion failed)/i;
+
+// The stable start of a diagnostic: its leading one-word labels ("calc", "SyntaxError"), up to the
+// first part that is free text or names something from this input (a quote, a number, a path).
+// "calc: SyntaxError: unexpected character '@'" -> "calc: SyntaxError". A lone label keeps its colon,
+// so "js: ..." gives "js:" rather than a bare word that also starts unrelated lines.
+function stablePrefix(line) {
+  const parts = line.split(":"), kept = [];
+  for (const p of parts) {
+    const w = p.trim();
+    if (!/^[A-Za-z_][\w.\-\[\]]*$/.test(w) || w.length > 40) break;
+    kept.push(w);
+  }
+  if (kept.length) return kept.join(": ") + (kept.length === 1 && parts.length > 1 ? ":" : "");
+  // No label: the text up to the first quote or digit, the parts that change from input to input.
+  const cut = line.search(/["'\d]/);
+  const prefix = cut >= 0 ? line.slice(0, cut) : line;
+  return prefix.trim().length < 3 ? line.slice(0, 40) : prefix;
+}
+
 // Look at how the system answered a deliberately invalid input and propose what to record. Pure and
-// deterministic -- no model. The pattern is the start of the diagnostic up to the first quote or
-// digit (the parts that change from input to input), regex-escaped and anchored, and the user can
-// edit it before it is saved. Returns null when there is nothing that looks like a refusal.
+// deterministic -- no model. The pattern is the stable prefix of the first diagnostic line,
+// regex-escaped and anchored, and the user can edit it before it is saved. The exit code is proposed
+// only when it is specific to the system (Rhino's 3), never when a crash would exit with it too.
+// Returns null when there is nothing that looks like a refusal.
 function suggestRejection(probe) {
   if (!probe || !probe.ok || probe.timed_out || probe.signal) return null;
   if (probe.exit_code === 0 || probe.exit_code === null || probe.exit_code === undefined) return null;
   const first = t => String(t || "").split(/\r?\n/).map(l => l.trim()).find(Boolean) || "";
   const line = first(probe.stderr) || first(probe.stdout);
-  let pattern = "";
-  if (line) {
-    // A short word before the first colon is usually the system's own rejection prefix.
-    const colon = line.indexOf(":");
-    let prefix;
-    if (colon >= 3 && colon <= 30) prefix = line.slice(0, colon);
-    else {
-      const cut = line.search(/["'\d]/);
-      prefix = cut >= 0 ? line.slice(0, cut) : line;
-      if (cut < 0 && prefix.includes(":")) prefix = prefix.slice(0, prefix.indexOf(":"));
-      if (prefix.trim().length < 3) prefix = line.slice(0, 40);
-    }
-    pattern = "^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-  return { exitCode: probe.exit_code, line, pattern };
+  const genericCode = GENERIC_CRASH_EXIT_CODES.includes(probe.exit_code);
+  if (line && CRASH_LINE.test(line)) return { exitCode: probe.exit_code, line, pattern: "", addCode: false, crashLike: true, genericCode };
+  const pattern = line ? "^" + stablePrefix(line).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
+  return { exitCode: probe.exit_code, line, pattern, addCode: !genericCode, crashLike: false, genericCode };
 }
 // ---- end testing strategy ------------------------------------------------------
 
@@ -1166,10 +1183,12 @@ async function stratObserve() {
 }
 function stratAcceptSuggestion() {
   const st = readStrat(), sg = st.suggestion;
-  if (!sg) return;
-  const codes = parseExitCodes(st.codes);
-  if (!codes.includes(sg.exitCode)) codes.push(sg.exitCode);
-  st.codes = codes.join(", ");
+  if (!sg || sg.crashLike || (!sg.addCode && !sg.pattern)) return;
+  if (sg.addCode) {
+    const codes = parseExitCodes(st.codes);
+    if (!codes.includes(sg.exitCode)) codes.push(sg.exitCode);
+    st.codes = codes.join(", ");
+  }
   if (sg.pattern && !cleanPatterns(st.rejPats).includes(sg.pattern)) {
     st.rejPats = cleanPatterns(st.rejPats); st.rejPats.push(sg.pattern);
   }
@@ -1247,10 +1266,22 @@ function observerBlock() {
     : `<div class="obs-seen"><div><span class="muted">Exit code</span> <span class="mono">${p.timed_out ? "no answer" : esc(String(p.exit_code))}</span></div>
         ${(p.stderr || "").trim() ? `<div><span class="muted">stderr</span> <span class="mono">${esc((p.stderr || "").trim().split(/\r?\n/)[0])}</span></div>` : ""}
         ${(p.stdout || "").trim() ? `<div><span class="muted">stdout</span> <span class="mono">${esc((p.stdout || "").trim().split(/\r?\n/)[0])}</span></div>` : ""}</div>`;
-  const ask = sg && !st.suggestionDone ? `<div class="obs-ask"><strong>Does this represent a normal input rejection?</strong>
-      <div class="muted">${sg.pattern ? `It would add exit code <span class="mono">${esc(String(sg.exitCode))}</span> and the pattern <span class="mono">${esc(sg.pattern)}</span>.` : `It would add exit code <span class="mono">${esc(String(sg.exitCode))}</span>.`}</div>
-      <div class="actions"><button type="button" class="primary small" onclick="stratAcceptSuggestion()">Yes, add as expected rejection</button>
-        <button type="button" class="ghost small" onclick="stratDeclineSuggestion()">No</button></div></div>`
+  const code = sg ? `<span class="mono">${esc(String(sg.exitCode))}</span>` : "";
+  const pat = sg && sg.pattern ? `<span class="mono">${esc(sg.pattern)}</span>` : "";
+  // Why exit code 1 is left out: it is also what an uncaught exception exits with, and expected exit
+  // codes are judged before patterns, so recording it would pass every real crash as normal.
+  const notCode = sg && sg.genericCode ? `Exit code ${code} is not added: an uncaught exception also exits with ${code}, so treating it as normal would hide real crashes.` : "";
+  const canAdd = sg && !sg.crashLike && (sg.addCode || sg.pattern);
+  const what = !sg ? "" : sg.crashLike
+      ? `That looks like an uncaught error (a crash), not a refusal, so nothing is suggested. Try an input your system should refuse cleanly.`
+    : !canAdd ? `${notCode} There is no message to match, so nothing is suggested.`
+    : sg.addCode && pat ? `It would add exit code ${code} and the pattern ${pat}.`
+    : sg.addCode ? `It would add exit code ${code}.`
+    : `It would add the pattern ${pat}. ${notCode}`;
+  const ask = sg && !st.suggestionDone ? `<div class="obs-ask">${canAdd ? `<strong>Does this represent a normal input rejection?</strong>` : ""}
+      <div class="muted">${what}</div>
+      ${canAdd ? `<div class="actions"><button type="button" class="primary small" onclick="stratAcceptSuggestion()">Yes, add as expected rejection</button>
+        <button type="button" class="ghost small" onclick="stratDeclineSuggestion()">No</button></div>` : ""}</div>`
     : (p && p.ok && !sg && !st.probing ? `<p class="muted">That did not look like a refusal (it exited 0, hung, or was killed), so nothing is suggested.</p>` : "");
   return `<div class="observe"><label for="probe-text">See how your system refuses invalid input ${hint("hint-obs", "SpreadEx runs your command once on the text below and shows what came back, so you can say whether that is a normal refusal. Nothing is added unless you say yes.")}</label>
     <div class="tline"><input id="probe-text" type="text" class="sut-cmd" value="${esc(st.probeText)}" spellcheck="false">

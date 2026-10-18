@@ -169,14 +169,71 @@ def _suggest(probe):
 def test_a_rhino_style_refusal_suggests_exit_3_and_the_js_prefix():
     r = _suggest({"ok": True, "exit_code": 3, "timed_out": False, "signal": None, "stdout": "",
                   "stderr": 'js: "test.js", line 1: syntax error\n'})
-    assert r["exitCode"] == 3 and r["pattern"] == "^js: " and "syntax error" in r["line"]
+    assert r["exitCode"] == 3 and r["addCode"] is True and r["pattern"] == "^js:" and "syntax error" in r["line"]
 
 
 def test_a_named_exception_suggests_the_exception_name_escaped_and_anchored():
-    r = _suggest({"ok": True, "exit_code": 1, "stderr": "SyntaxError: Unexpected token ;\n", "stdout": ""})
-    assert r["pattern"] == "^SyntaxError"
-    r2 = _suggest({"ok": True, "exit_code": 2, "stderr": "Traceback (most recent call last):\n", "stdout": ""})
-    assert r2["pattern"] == r"^Traceback \(most recent call last\)"
+    r = _suggest({"ok": True, "exit_code": 2, "stderr": "SyntaxError: Unexpected token ;\n", "stdout": ""})
+    assert r["pattern"] == "^SyntaxError:"
+    r2 = _suggest({"ok": True, "exit_code": 2, "stderr": "parse error (near) x at 4\n", "stdout": ""})
+    assert r2["pattern"] == r"^parse error \(near\) x at "
+
+
+# The MiniCalc demo: calc.py refuses bad input with exit 1 and "calc: SyntaxError: ...", but its real
+# defect (1 % 0, an uncaught ZeroDivisionError) ALSO exits 1. Expected exit codes are judged before
+# rejection patterns and mean "ok", so proposing exit 1 would pass every real crash.
+CALC_REFUSAL = {"ok": True, "exit_code": 1, "timed_out": False, "signal": None, "stdout": "",
+                "stderr": "calc: SyntaxError: unexpected character '@' at offset 0\n"}
+CALC_CRASH_STDERR = ("Traceback (most recent call last):\n  File \"calc.py\", line 148, in <module>\n"
+                     "ZeroDivisionError: float modulo\n")
+
+
+def test_minicalc_refusal_suggests_only_the_specific_message_pattern_not_exit_1():
+    r = _suggest(CALC_REFUSAL)
+    assert r["pattern"] == "^calc: SyntaxError", "the label prefix, not the bare program name"
+    assert r["addCode"] is False and r["genericCode"] is True, "exit 1 is what a crash exits with too"
+
+
+def test_an_exit_code_specific_to_the_system_is_still_proposed():
+    r = _suggest({**CALC_REFUSAL, "exit_code": 65})
+    assert r["addCode"] is True and r["pattern"] == "^calc: SyntaxError"
+
+
+def test_a_traceback_is_recognised_as_a_crash_and_nothing_is_suggested():
+    r = _suggest({**CALC_REFUSAL, "stderr": CALC_CRASH_STDERR})
+    assert r["crashLike"] is True and r["addCode"] is False and r["pattern"] == ""
+
+
+def test_accepting_the_minicalc_suggestion_keeps_its_real_crash_a_crash(tmp_path):
+    """End to end through the real engine: suggestion -> page state -> oracle config -> verdicts."""
+    from spreadex.exec.observation import Observation
+    from spreadex.exec.oracle import Verdict, make_oracle
+
+    sg = _suggest(CALC_REFUSAL)
+    st = {**OFF, "rej": True, "rejPats": [sg["pattern"]], "codes": str(sg["exitCode"]) if sg["addCode"] else ""}
+    oracle = make_oracle(_oracle({}, st))
+
+    def judge(code, stderr, stdout=""):
+        return oracle.judge([Observation("h", "calc", None, code, None, False, 1.0, "", "",
+                                         stdout, stderr, stderr)]).verdict
+
+    assert judge(1, CALC_REFUSAL["stderr"]) is Verdict.EXPECTED_REJECTION
+    assert judge(1, CALC_CRASH_STDERR) is Verdict.CRASH, "the real defect must not be hidden"
+    assert judge(0, "", "3.0\n") is Verdict.OK
+
+
+def test_listing_only_a_rejection_code_does_not_make_success_a_crash():
+    assert _oracle({}, {**OFF, "rej": True, "codes": "3"})["expected_exit_codes"] == [0, 3]
+
+
+def test_the_observer_explains_why_exit_1_is_left_out_and_offers_nothing_for_a_crash():
+    block = JS[JS.index("function observerBlock"):]
+    block = block[:block.index("\n}\n")]
+    assert "an uncaught exception also exits with" in block and "would hide real crashes" in block
+    assert "looks like an uncaught error (a crash), not a refusal" in block
+    acc = JS[JS.index("function stratAcceptSuggestion"):]
+    acc = acc[:acc.index("\n}\n")]
+    assert "sg.crashLike" in acc and "if (sg.addCode)" in acc, "accepting adds the code only when proposed"
 
 
 def test_a_suggested_pattern_is_a_valid_regex_that_matches_its_own_line():
@@ -200,7 +257,9 @@ def test_nothing_is_suggested_when_it_did_not_look_like_a_refusal(probe):
 
 def test_a_refusal_with_no_output_still_suggests_the_exit_code_only():
     r = _suggest({"ok": True, "exit_code": 4, "stderr": "", "stdout": ""})
-    assert r["exitCode"] == 4 and r["pattern"] == ""
+    assert r["exitCode"] == 4 and r["addCode"] is True and r["pattern"] == ""
+    r1 = _suggest({"ok": True, "exit_code": 1, "stderr": "", "stdout": ""})
+    assert r1["addCode"] is False and r1["pattern"] == "", "exit 1 with no message: nothing safe to add"
 
 
 def test_the_timeout_is_editable_here_in_seconds_recommended_badged_and_resettable():
