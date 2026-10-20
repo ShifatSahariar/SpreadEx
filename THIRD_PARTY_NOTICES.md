@@ -4,13 +4,20 @@ SpreadEx is released under the MIT License (see `LICENSE`). It drives several in
 each installed on demand into its own environment and never bundled with SpreadEx. Their licences
 are their own:
 
-| Generator | Licence | How SpreadEx uses it |
+| Generator | Version | Licence | How SpreadEx uses it |
+|---|---|---|---|
+| FuzzingBook | 1.2.2 | MIT | installed from PyPI, pinned, unmodified |
+| Fandango | 1.3.0 | EUPL-1.2 | installed from PyPI, pinned, unmodified |
+| ISLa | 1.14.4 | GPL-3.0 | installed from PyPI, pinned, unmodified; run as a separate process, never imported |
+| Grammarinator | 26.1 | BSD-3-Clause | installed from PyPI, pinned, unmodified |
+| Fuzz4All | commit `0bf42fe` | CC BY 4.0 | cloned from GitHub at a pinned commit and patched (below) |
+
+Other components downloaded on demand, also unmodified and never bundled:
+
+| Component | Licence | How SpreadEx uses it |
 |---|---|---|
-| FuzzingBook | MIT | installed from PyPI, pinned |
-| Fandango | EUPL-1.2 | installed from PyPI, pinned |
-| ISLa | GPL-3.0 | installed from PyPI, pinned; run as a separate process, never imported |
-| Grammarinator | BSD-3-Clause | installed from PyPI, pinned |
-| Fuzz4All | CC BY 4.0 | cloned from GitHub at a pinned commit and patched (below) |
+| UniXcoder (`microsoft/unixcoder-base`) | Apache-2.0 | embedding model for the diversity map, downloaded once from Hugging Face (`[neural]` extra) |
+| Rhino 1.9.1 (`rhino-all-1.9.1.jar`) | MPL-2.0 | the Rhino example's system under test, downloaded from Maven Central and SHA-256 verified |
 
 ## Fuzz4All
 

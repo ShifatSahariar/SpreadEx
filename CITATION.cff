@@ -1,25 +1,53 @@
 cff-version: 1.2.0
-title: SpreadEx
+title: "SpreadEx: Diversity-Guided Testing of Language Processors"
 message: >-
   If you use SpreadEx in academic work, please cite the ICST 2026 paper below.
 type: software
+authors:
+  - family-names: Bhuiyan
+    given-names: Shifat Sahariar
+    email: shifat.sahariar.bhuiyan@usi.ch
+    affiliation: "Università della Svizzera italiana (USI)"
+  - family-names: Humbatova
+    given-names: Nargiz
+    email: nargiz.humbatova@usi.ch
+    affiliation: "Università della Svizzera italiana (USI)"
+  - family-names: Tonella
+    given-names: Paolo
+    email: paolo.tonella@usi.ch
+    affiliation: "Università della Svizzera italiana (USI)"
+version: 0.2.0
+date-released: 2026-10-21
 license: MIT
 repository-code: "https://github.com/ShifatSahariar/SpreadEx"
 abstract: >-
-  A local-first harness that runs multiple grammar-based generators against a
-  system under test and uses a finite budget to decide which generators and
-  which generated inputs deserve execution.
+  SpreadEx runs several grammar-based input generators against a compiler,
+  interpreter or parser, compares them by Cluster Coverage on a shared
+  embedding-based diversity map, and spends a limited execution budget on the
+  most diverse inputs first. A local browser Workbench and a CLI share one
+  campaign engine; every campaign is recorded and can be replayed.
 keywords:
-  - fuzzing
   - grammar-based testing
-  - test prioritization
+  - fuzzing
+  - test generator selection
+  - test input prioritization
+  - input diversity
   - compiler testing
 preferred-citation:
   type: conference-paper
+  authors:
+    - family-names: Bhuiyan
+      given-names: Shifat Sahariar
+    - family-names: Humbatova
+      given-names: Nargiz
+    - family-names: Tonella
+      given-names: Paolo
   title: >-
     Embedding-based Diversity Mapping for Test Generator Selection and Input
     Prioritization in Grammar-based Testing
   year: 2026
+  start: 441
+  end: 452
   collection-title: >-
     Proceedings of the IEEE International Conference on Software Testing,
     Verification and Validation (ICST)

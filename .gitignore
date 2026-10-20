@@ -12,3 +12,6 @@ venv/
 /dist/
 /build/
 *.egg-info/
+
+# macOS Finder metadata
+.DS_Store

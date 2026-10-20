@@ -2,4 +2,4 @@
 against a system under test and spends a finite budget deciding which generators
 and which generated inputs deserve execution."""
 
-__version__ = "0.1.0a0"
+__version__ = "0.2.0"

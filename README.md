@@ -33,9 +33,17 @@
 
 <p align="center"><img src="docs/assets/readme/step-2-grammar.png" alt="Step 2: choosing the input grammar" width="720"></p>
 
-**3 · Compare generators in the campaign**: every generator is scored by Cluster Coverage, and the budget goes to the best one.
+**3 · Choose generators**: SpreadEx adapts the grammar to each generator and recommends the ones that can run it.
 
-<p align="center"><img src="docs/assets/readme/step-3-campaign.png" alt="Step 3: a campaign comparing generators by Cluster Coverage" width="860"></p>
+<p align="center"><img src="docs/assets/readme/step-3-generators.png" alt="Step 3: choosing input generators" width="800"></p>
+
+**4 · Set the budgets and the ordering**: how many inputs each generator makes, how many tests may run, how they are ordered, and which generator's inputs to keep.
+
+<p align="center"><img src="docs/assets/readme/step-4-budget.png" alt="Step 4: generation and execution budgets, test ordering, generator selection and the diversity map" width="800"></p>
+
+**5 · Compare generators in the campaign**: every generator is scored by Cluster Coverage, and the budget goes to the best one.
+
+<p align="center"><img src="docs/assets/readme/step-5-campaign.png" alt="Step 5: a campaign comparing generators by Cluster Coverage" width="860"></p>
 
 ## ✨ What it does
 
@@ -51,8 +59,10 @@
 ## 🚀 Quick start
 
 ```bash
-pipx install git+https://github.com/ShifatSahariar/SpreadEx.git
+pipx install "spreadex[neural] @ git+https://github.com/ShifatSahariar/SpreadEx.git"
 ```
+
+`[neural]` adds PyTorch for the default UniXcoder diversity map. Without it the install is smaller and campaigns use TF-IDF instead, which every result says.
 
 ```bash
 spreadex demo          # a real campaign on a small calculator with one real bug
@@ -110,6 +120,22 @@ The full reference, generated from the CLI itself, is in the Workbench under **G
 
 Installs are deterministic (exact pins, isolated environments, never implicit). Grammars can be BNF, EBNF, ANTLR `.g4`, Fandango or FuzzingBook; SpreadEx converts between them.
 
+### Third-party tools and their licences
+
+SpreadEx is MIT-licensed. It **does not bundle** any generator: each one is downloaded from its official source when you install it, at a pinned version, into its own isolated environment, and keeps its own licence. SpreadEx drives the four grammar-based generators through their published interfaces and **does not modify** them. Fuzz4All is the one exception: it is patched, as explained below.
+
+| Tool | Version | Source | Licence | Modified by SpreadEx? |
+|---|---|---|---|---|
+| [FuzzingBook](https://www.fuzzingbook.org/) | 1.2.2 | PyPI | MIT | No |
+| [Fandango](https://github.com/fandango-fuzzer/fandango) | 1.3.0 | PyPI | EUPL-1.2 | No |
+| [Grammarinator](https://github.com/renatahodovan/grammarinator) | 26.1 | PyPI | BSD-3-Clause | No |
+| [ISLa](https://github.com/rindPHI/isla) | 1.14.4 | PyPI | GPL-3.0 | No (run as a separate process, never imported) |
+| [Fuzz4All](https://github.com/fuzz4all/fuzz4all) | commit `0bf42fe` | GitHub | CC BY 4.0 | **Yes**: a documented patch is applied at install time |
+| [UniXcoder](https://huggingface.co/microsoft/unixcoder-base) (embedding model) | `microsoft/unixcoder-base` | Hugging Face | Apache-2.0 | No |
+| [Rhino](https://github.com/mozilla/rhino) (example only) | 1.9.1 | Maven Central, SHA-256 verified | MPL-2.0 | No |
+
+**Fuzz4All:** SpreadEx ships a patch (`src/spreadex/generators/patches/fuzz4all/0001-spreadex.patch`), not Fuzz4All itself. The patch adds a chat-completions model backend, autoprompting restored from upstream, usage accounting, and a target that runs candidates through SpreadEx's oracle. CC BY 4.0 permits this with attribution. The patch's SHA-256 is recorded in every installation's receipt. Details and attribution: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## 🔒 Local-first
 
 Your program, its inputs and every result stay in your project's `.spreadex/` folder. The network is used only when you ask: installing a generator (PyPI), opening the Rhino example (Maven Central), downloading the UniXcoder model once (Hugging Face), choosing OpenAI embeddings (which send every generated input to OpenAI), or the optional, experimental grammar assistant.
@@ -126,11 +152,30 @@ Inputs are embedded, clustered once with Affinity Propagation, and that one map 
 
 | Model | Runs | Install | Note |
 |---|---|---|---|
-| `unixcoder` (default) | on this machine | `pip install 'spreadex[neural]'`, then a one-time 506 MB model download | one of the models evaluated in the ICST 2026 study |
+| `unixcoder` (default) | on this machine | the `[neural]` extra (as in Quick start), then a one-time 506 MB model download | one of the models evaluated in the ICST 2026 study |
 | `openai` | at OpenAI | `OPENAI_API_KEY` in the environment | `text-embedding-3-small`, used for the study's prioritization results; sends inputs to OpenAI |
 | `tfidf` | on this machine | nothing | character n-grams; not evaluated for fault detection |
 
 If the chosen model cannot run, the campaign falls back (OpenAI → UniXcoder → TF-IDF), says so on the results and records it in the manifest; `embedding.fallback: none` stops instead. Vectors are cached in `.spreadex/embeddings.sqlite`.
+
+## 🎬 Demonstration video
+
+**Video (4:44):** [youtu.be/5-oCDkOGB2Y](https://youtu.be/5-oCDkOGB2Y). It walks through a complete campaign in the Workbench, from setup to findings, replay and CI.
+
+To reproduce the campaign shown in the video (MiniCalc, an illustrative budget of 30 tests):
+
+```bash
+spreadex demo --no-run demo-30 && cd demo-30
+spreadex run --max-inputs 30 --budget 150s
+spreadex ui                    # the same results in the Workbench
+```
+
+Expected (deterministic):
+- 125 inputs, in 17 clusters;
+- Fandango has the highest Cluster Coverage (0.529), so its inputs and the seeds are kept (45);
+- the first 30 run, and 2 failure signatures appear, first at inputs 14 and 19, both from the documented modulo-by-zero defect.
+
+`spreadex demo --ui` instead runs every kept input.
 
 ## 📄 Research
 
@@ -154,7 +199,7 @@ SPREADEX_REQUIRE_GOLDEN=1 pytest tests/golden -q
 <details>
 <summary>Status and platforms</summary>
 
-**v0.1.0-alpha.** Verified from a clean install on **macOS arm64**. **Linux** is partly verified (the Rhino journey on arm64, the demo journeys on x86_64); the unit suite has not yet passed there. **Windows is unverified.** Not yet: coverage collection, regression mode, adaptive allocation, adding your own generator.
+**v0.2.0.** Verified from a clean install on **macOS arm64**. **Linux** is partly verified (the Rhino journey on arm64, the demo journeys on x86_64); the unit suite has not yet passed there. **Windows is unverified.** Not yet: coverage collection, regression mode, adaptive allocation, adding your own generator.
 </details>
 
 <div align="center"><sub>MIT licensed · Built for grammar-based testing research and practice</sub></div>
