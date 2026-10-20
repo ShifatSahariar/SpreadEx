@@ -38,6 +38,8 @@ Step 5 sets the **budgets**, decides **in which order** inputs run and **which g
 - **Best 2 generators**: keep the two with the highest Cluster Coverage.
 :::
 
+When generators reach the same Cluster Coverage, a fixed preference ranking decides: FuzzingBook, Fuzz4All, ISLa, Fandango, then Grammarinator. It comes from the generators' mutation scores in the ICST 2026 study. Generators that study did not evaluate come last.
+
 ### Diversity map
 
 The **Diversity map** choice appears with SpreadEx prioritization. It decides how inputs become vectors before clustering; Cluster Coverage and the ordering both come from this one map.

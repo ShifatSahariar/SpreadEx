@@ -15,6 +15,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Sequence
 
+#: Tie-break for equal Cluster Coverage: a fixed preference ranking computed from published evidence,
+#: the per-generator mutation scores of the ICST 2026 study (replication package
+#: doi:10.5281/zenodo.20071065, `data/Generator_Selection_Results/*/run_*/mutation_metrics.csv`).
+#: Each family's score is the mean over its two evaluated configurations, averaged over 10 runs on each
+#: of the six subjects. Mean mutation score: FuzzingBook 0.845 (best on all six subjects),
+#: LLM-based 0.730 (GPT-4.1 prompting, the study's LLM-based generator; Fuzz4All stands in for that
+#: family here), ISLa 0.675, Fandango 0.654. Grammarinator was not part of the study and follows the
+#: generators with evidence; any other generator follows, by name.
+PREFERENCE: tuple[str, ...] = ("fuzzingbook", "fuzz4all", "isla", "fandango", "grammarinator")
+
+
+def _preference(generator: str) -> int:
+    return PREFERENCE.index(generator) if generator in PREFERENCE else len(PREFERENCE)
+
 
 @dataclass
 class Selection:
@@ -39,14 +53,15 @@ class Selection:
 
 
 def choose(scores: Mapping[str, float], configured: Iterable[str], keep: int) -> tuple[list[str], list[str]] | None:
-    """The `keep` configured generators with the highest CC (ties by name), and the rest.
+    """The `keep` configured generators with the highest CC, and the rest. Equal CC is resolved by the
+    evidence-based PREFERENCE ranking, then by name.
 
     None when there is nothing to choose: no more producing generators than `keep`.
     """
     candidates = [g for g in dict.fromkeys(configured) if g in scores]
     if len(candidates) <= keep:
         return None
-    ranked = sorted(candidates, key=lambda g: (-scores[g], g))
+    ranked = sorted(candidates, key=lambda g: (-scores[g], _preference(g), g))
     return ranked[:keep], ranked[keep:]
 
 

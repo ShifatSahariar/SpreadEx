@@ -24,6 +24,19 @@ def test_choose_keeps_the_highest_cc_and_breaks_ties_by_name():
     assert selection.choose(scores, ["a", "b", "missing"], 1) == (["b"], ["a"])
 
 
+def test_equal_cc_is_resolved_by_the_evidence_based_preference():
+    # Rhino's recorded campaign: Fandango and FuzzingBook reach the same clusters
+    scores = {"fandango": 0.7302, "fuzzingbook": 0.7302, "grammarinator": 0.7143, "isla": 0.6667}
+    assert selection.choose(scores, ["fandango", "fuzzingbook", "grammarinator", "isla"], 1) == \
+        (["fuzzingbook"], ["fandango", "grammarinator", "isla"])
+    tied = {g: 0.5 for g in ("grammarinator", "fandango", "isla", "fuzz4all", "fuzzingbook", "custom")}
+    assert selection.choose(tied, list(tied), 5)[0] == ["fuzzingbook", "fuzz4all", "isla", "fandango", "grammarinator"]
+    assert selection.choose(tied, list(tied), 5)[1] == ["custom"], "generators without evidence come last"
+    # CC still decides first; the preference only breaks ties
+    assert selection.choose({"fandango": 0.6, "fuzzingbook": 0.5}, ["fandango", "fuzzingbook"], 1) == \
+        (["fandango"], ["fuzzingbook"])
+
+
 def test_apply_keeps_order_seeds_and_shared_inputs():
     ordered = [_item("1", "a"), _item("2", "c"), _item("3", "corpus"), _item("4", "c"), _item("5", "a")]
     origins = {"1": {"a"}, "2": {"c"}, "3": {"corpus"}, "4": {"c", "b"}, "5": {"a"}}
